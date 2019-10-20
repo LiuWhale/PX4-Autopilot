@@ -30,14 +30,15 @@
 #include <uORB/topics/offboard_setpoint.h>
 #include <uORB/topics/vehicle_local_position.h>
 #include <uORB/topics/home_position.h>
-
+#include <uORB/topics/read_uart.h>
 static bool thread_should_exit = false;     /**< daemon exit flag */
 static bool thread_running = false;     /**< daemon status flag */
 static int get_gps_data_task;             /**< Handle of daemon task / thread */
 static int gps_sequence = 0;
+int n = 3;				//M的下初始点数量为：3
 //static double CONSTANTS_RADIUS_OF_EARTH = 6371000.0;
 //static double pi = 3.14159265358979323846;
-
+float32* set_point;//根据范围结算目标点
 struct ref_point {
     double lat_rad;
     double lon_rad;
@@ -144,7 +145,14 @@ int get_gps_data_main(int argc, char *argv[])
         gps_sequence = 3;
         return 0;
     }
-
+    if (!strcmp(argv[1], "4")) {
+        gps_sequence = 4;
+        return 0;
+    }
+    if (!strcmp(argv[1], "5")) {
+        gps_sequence = 5;
+        return 0;
+    }
 
     usage("unrecognized command");
     return 1;
@@ -161,10 +169,11 @@ int get_data_thread_main(int argc, char *argv[])
     bool get_a = false;
     bool get_b = false;
     bool get_c = false;
+    bool get_d = false;
+    bool get_e = false;
 
     bool close_a = false;
-    bool close_b = false;
-    bool close_c = false;
+    bool close_point =false;
     bool is_vxy_zero = false;
     bool is_vz_zero = false;
 
@@ -172,23 +181,34 @@ int get_data_thread_main(int argc, char *argv[])
     int count_time = 0;
     int count_drop = 0;
     int token = 1;
+    int inside_token = 0;
+    int point_num_now = 0;
+    int three_point = 0;
+
     float32 sum_x = 0.0;
     float32 sum_y = 0.0;
     float32 sum_z = 0.0;
+    float32 point_y = 0.0;
+    float32 point_x_bc = 0.0;
+    float32 point_x_de = 0.0;
+    float32 point_y_cd = 0.0;
+    float32 point_y_be = 0.0;
+
     double sum_square = 0.0;
+
 
     int rc_channels_sub = orb_subscribe(ORB_ID(rc_channels));//订阅topic
     int vehicle_global_position_sub = orb_subscribe(ORB_ID(vehicle_global_position));
     int vehicle_local_position_sub = orb_subscribe(ORB_ID(vehicle_local_position));
     int home_position_sub = orb_subscribe(ORB_ID(home_position));
-
+    int read_uart_sub = orb_subscribe(ORB_ID(read_uart));
     struct rc_channels_s _rc_channels = {};//定义topic的结构体
     struct vehicle_global_position_s _vehicle_global_position = {};
     struct delivery_signal_s _delivery_signal = {};
     struct vehicle_local_position_s local_now = {};
     struct home_position_s _home_position = {};
     struct offboard_setpoint_s _offboard_sp = {};
-
+    struct read_uart_s _read_uart = {};
 //    struct vehicle_global_position_s global_a = {};
 //    struct vehicle_global_position_s global_b = {};
 //    struct vehicle_global_position_s global_c = {};
@@ -196,6 +216,8 @@ int get_data_thread_main(int argc, char *argv[])
     struct vehicle_local_position_s local_a = {};
     struct vehicle_local_position_s local_b = {};
     struct vehicle_local_position_s local_c = {};
+    struct vehicle_local_position_s local_d = {};
+    struct vehicle_local_position_s local_e = {};
 
 //    float32 local_b.x = 0.0;
 //    float32 local_b.y = 0.0;
@@ -209,7 +231,6 @@ int get_data_thread_main(int argc, char *argv[])
     float32 vz = 0.0;
     float32 vxy_max = 0.0;
     float32 set_high = -7.0;
-    float32 clim_high = -2.0;
 //    float32 set_threshold_up = -6.5;
 //    float32 set_threshold_down = -2.0;
 
@@ -240,12 +261,13 @@ int get_data_thread_main(int argc, char *argv[])
         bool updated_vp_global;
         bool updated_vp_local;
         bool updated_home;
+	bool updated_ru;
 
         orb_check(rc_channels_sub, &updated_rcch);//检测订阅是否成功
         orb_check(vehicle_global_position_sub, &updated_vp_global);
         orb_check(vehicle_local_position_sub, &updated_vp_local);
         orb_check(home_position_sub, &updated_home);
-
+	orb_check(read_uart_sub, &updated_ru);
         if (updated_rcch) {
             orb_copy(ORB_ID(rc_channels), rc_channels_sub, &_rc_channels);
             //printf("channel 1 = %8.4f\n", (double)_rc_channels.channels[0]);
@@ -262,6 +284,16 @@ int get_data_thread_main(int argc, char *argv[])
             vy = local_now.vy;
             vz = local_now.vz;
             vxy_max = local_now.vxy_max;
+
+	    /*定点示意图*/
+	    /****Point-C--------Point-D****/
+	    /******|--------------|******/
+	    /******|--------------|******/
+	    /******|--------------|******/
+	    /******|--------------|******/
+	    /****Point-B--------Point-E****/
+	    /***///***/
+	    /*Point-A*/
 
             if (gps_sequence == 1 && !get_a) {
                 sum_x = sum_x + local_now.x;
@@ -321,6 +353,41 @@ int get_data_thread_main(int argc, char *argv[])
                 }
                 warnx("[gaemon] sequence == 3.\n");
             }
+            if (gps_sequence == 4 && !get_d) {
+                sum_x = sum_x + local_now.x;
+                sum_y = sum_y + local_now.y;
+                sum_z = sum_z + local_now.z;
+                count++;
+                if (count == 10) {
+                    local_d.x = sum_x/count;
+                    local_d.y = sum_y/count;
+                    local_d.z = sum_z/count;
+                    get_d = true;
+                    count = 0;
+                    sum_x = 0.0;
+                    sum_y = 0.0;
+                    sum_z = 0.0;
+                }
+                warnx("[gaemon] sequence == 4.\n");
+            }
+            if (gps_sequence == 5 && !get_e) {
+                sum_x = sum_x + local_now.x;
+                sum_y = sum_y + local_now.y;
+                sum_z = sum_z + local_now.z;
+                count++;
+                if (count == 10) {
+                    local_e.x = sum_x/count;
+                    local_e.y = sum_y/count;
+                    local_e.z = sum_z/count;
+                    get_e = true;
+                    count = 0;
+                    sum_x = 0.0;
+                    sum_y = 0.0;
+                    sum_z = 0.0;
+                }
+                warnx("[gaemon] sequence == 5.\n");
+            }
+
         }
 
         if (updated_home) {
@@ -414,7 +481,8 @@ int get_data_thread_main(int argc, char *argv[])
 //        }
 
 
-        if (get_a && get_b && get_c) {//三个点都定好后
+        if (get_a && get_b && get_c && get_d && get_e) {//5个点都定好后
+	    orb_copy(ORB_ID(read_uart), read_uart_sub, &_read_uart);
             gps_sequence = 0;
             count_time++;
 //            ref_a.cos_lat = cos(global_a.lat * pi / 180);
@@ -425,7 +493,22 @@ int get_data_thread_main(int argc, char *argv[])
 //            wgs_ned(&ref_a, global_c.lat, global_c.lon, &x_c, &y_c);
 //            wgs_ned(&ref_a, _vehicle_global_position.lat, _vehicle_global_position.lon, &x_now, &y_now);
 
+
+	    /*y*/
+	    point_x_bc = ( local_b.x + local_c.x )/2;
+	    point_x_de = ( local_d.x + local_e.x )/2;
+	    point_y_cd = ( local_c.y + local_d.y )/2;
+	    point_y_be = ( local_b.y + local_e.y )/2;
+	    /*M型目标点*/
+	    for(int i = 0;i < n;i++){
+		 set_point[(int)2i] = point_x_bc * (n - i - 1)/n +  point_x_de * ( i + 1 )/n;
+	    }
+    	    for(int i = 0;i < n - 1;i++){
+		 set_point[(int)2i+1] = point_x_bc * ( n - i )/(n + 1) +  point_x_de * ( i + 1 )/(n + 1);
+	    }
+ 
             /* 显示abc点的NED坐标*/
+
             if (count_time == 5) {
                 printf("  a:  x=%6.3f\t", (double)local_a.x);
                 printf("y=%6.3f\t", (double)local_a.y);
@@ -438,6 +521,14 @@ int get_data_thread_main(int argc, char *argv[])
                 printf("  c:  x=%6.3f\t", (double)local_c.x);
                 printf("y=%6.3f\t", (double)local_c.y);
                 printf("z=%6.3f\n", (double)local_c.z);
+
+                printf("  d:  x=%6.3f\t", (double)local_d.x);
+                printf("y=%6.3f\t", (double)local_d.y);
+                printf("z=%6.3f\n", (double)local_d.z);
+
+                printf("  e:  x=%6.3f\t", (double)local_e.x);
+                printf("y=%6.3f\t", (double)local_e.y);
+                printf("z=%6.3f\n", (double)local_e.z);
 
                 printf("now:  x=%6.3f\t", (double)local_now.x);
                 printf("y=%6.3f\t", (double)local_now.y);
@@ -454,18 +545,17 @@ int get_data_thread_main(int argc, char *argv[])
                 printf("close_a\t");
             }
 
-            sum_square = (double)( (local_b.x - local_now.x) * (local_b.x - local_now.x) +
-                                   (local_b.y - local_now.y) * (local_b.y - local_now.y));
-            if (sum_square < 1.0) {
-                close_b = true;
-                printf("close_b\t");
-            }
 
-            sum_square = (double)( (local_c.x - local_now.x) * (local_c.x - local_now.x) +
-                                   (local_c.y - local_now.y) * (local_c.y - local_now.y));
-            if (sum_square < 1.0) {
-                close_c = true;
-                printf("close_c\t");
+    	    if(point_num_now % 2){
+	       point_y = point_y_cd;
+	    }else{
+	       point_y = point_y_be;
+	    }
+	    sum_square = (double)( (set_point[point_num_now] - local_now.x) * (set_point[point_num_now] - local_now.x) +
+                                   (point_y - local_now.y) * (point_y - local_now.y) );
+            if (sum_square < 1.0) {//目标点的范围判断
+                close_point = true;
+                printf("close_point[%d]\t",point_num_now);
             }
 
             sum_square = (double)( vz * vz * 100);
@@ -479,7 +569,10 @@ int get_data_thread_main(int argc, char *argv[])
                 is_vxy_zero = true;
                 printf("vxy_zero\n");
             }
-
+	    if((((local_now.x > point_x_bc )&&(local_now.x < point_x_de))||((local_now.x < point_x_bc )&&(local_now.x > point_x_de))) && (((local_now.y > point_y_be )&&(local_now.y < point_y_cd))||((local_now.y < point_y_be )&&(local_now.y > point_y_cd)))){
+		inside_token = 1;
+                printf("Inside now\n");
+	    }
 
             switch (token) {
             case 1:     //A点起飞
@@ -497,7 +590,7 @@ int get_data_thread_main(int argc, char *argv[])
                 _offboard_sp.z = local_a.z + set_high;
                 _offboard_sp.timestamp = hrt_absolute_time();
                 if (local_now.z < (local_a.z + set_high + (float)0.5)) {//判断是否到达目标位置一定范围
-                    token = 10;//10悬停5s
+                    token = 2;//10悬停5s
                 }
                 printf("A take off\n");
                 break;
@@ -508,92 +601,17 @@ int get_data_thread_main(int argc, char *argv[])
                 _offboard_sp.is_land_sp = false;
                 _offboard_sp.is_takeoff_sp = false;
 		_offboard_sp.is_loiter_sp = false;
-                _offboard_sp.x = local_b.x;
-                _offboard_sp.y = local_b.y;
+                _offboard_sp.x = set_point[0];
+                _offboard_sp.y = point_y_be;
                 _offboard_sp.z = local_a.z + set_high;
-                if ( close_b && is_vxy_zero) {
-                    token = 12;//3
-                }
-                printf("TO B\n");
-                break;
-
-            case 3:     //B点投放
-                _offboard_sp.ignore_alt_hold = false;//true
-                _offboard_sp.ignore_position = false;
-                _offboard_sp.is_land_sp = false;
-                _offboard_sp.is_takeoff_sp = false;
-		_offboard_sp.is_loiter_sp = true;
-                _offboard_sp.x = local_b.x;
-                _offboard_sp.y = local_b.y;
-                _offboard_sp.z = local_a.z + set_high + clim_high;
-                count_drop++;
-                if (count_drop > 30) {
-                    _delivery_signal.is_point_b = true;
-                }
-                if (count_drop > 50) {
-                    count_drop = 0;
+                if ( inside_token && is_vxy_zero) {
                     token = 4;
+		    point_num_now += 1;
                 }
-                printf("Drop B\n");
+                printf("TO B inside\n");
                 break;
 
-            case 4:     //飞向C点
-                _offboard_sp.ignore_alt_hold = false;
-                _offboard_sp.ignore_position = false;
-                _offboard_sp.is_land_sp = false;
-                _offboard_sp.is_takeoff_sp = false;
-		_offboard_sp.is_loiter_sp = false;
-                _offboard_sp.x = local_c.x;
-                _offboard_sp.y = local_c.y;
-                _offboard_sp.z = local_a.z + set_high + clim_high;
-                if ( close_c && is_vxy_zero) {
-                    token = 5;
-                }
-                printf("TO C\n");
-                break;
-
-            case 5:     //C点降落
-                _offboard_sp.ignore_alt_hold = true;
-                _offboard_sp.ignore_position = false;
-                _offboard_sp.is_land_sp = true;
-                _offboard_sp.is_takeoff_sp = false;
-                _offboard_sp.x = local_c.x;
-                _offboard_sp.y = local_c.y;
-                _offboard_sp.z = local_c.z + (float)0.3;
-                if ((local_now.z > (local_c.z - (float32)2.0)) && is_vz_zero) {
-                        token = 6;
-                }
-                printf("Land C\n");
-                printf("token=  %4d\n",token);
-                break;
-
-            case 6:     //C点投放
-                count_drop++;
-                if (count_drop > 30) {
-                    _delivery_signal.is_point_c = true;
-                }
-                if (count_drop > 50) {
-                    count_drop = 0;
-                    token = 7;
-                }
-                printf("Drop C\n");
-                break;
-
-            case 7:     //C点起飞
-                _offboard_sp.ignore_alt_hold = true;
-                _offboard_sp.ignore_position = false;
-                _offboard_sp.is_land_sp = false;
-                _offboard_sp.is_takeoff_sp = true;
-                _offboard_sp.x = local_c.x;
-                _offboard_sp.y = local_c.y;
-                _offboard_sp.z = set_high;
-                if (local_now.z < (local_a.z + set_high + (float)0.5)) {
-                    token = 11;
-                }
-                printf("C take off\n");
-                break;
-
-            case 8:     //飞向A点
+            case 3:     //返回原点
                 _offboard_sp.ignore_alt_hold = false;
                 _offboard_sp.ignore_position = false;
                 _offboard_sp.is_land_sp = false;
@@ -603,91 +621,60 @@ int get_data_thread_main(int argc, char *argv[])
                 _offboard_sp.y = local_a.y;
                 _offboard_sp.z = local_a.z + set_high;
                 if ( close_a && is_vxy_zero) {
-                    token = 9;
+                    token =5;
                 }
-                printf("To A\n");
+		break;
+            case 4:     //飞向目标点
+
+		if(inside_token && (three_point < 3)){
+   		  _offboard_sp.ignore_alt_hold = false;
+                  _offboard_sp.ignore_position = false;
+                  _offboard_sp.is_land_sp = false;
+                  _offboard_sp.is_takeoff_sp = false;
+		  _offboard_sp.is_loiter_sp = false;
+		  _offboard_sp.x = set_point[point_num_now];
+		  if(point_num_now % 2){
+		     _offboard_sp.y = point_y_cd;
+		  }else{
+		     _offboard_sp.y = point_y_be;
+		  }
+                  _offboard_sp.z = local_a.z + set_high;
+		  if(close_point && is_vxy_zero){
+		  	point_num_now++;
+		  }else if(_read_uart.is_valid){
+			
+		  }
+		}else if(three_point == 3){
+		  token = 3;
+		}
+
                 break;
 
-            case 9:     //A点降落
+            case 5:     //A点降落
                 _offboard_sp.ignore_alt_hold = true;
                 _offboard_sp.ignore_position = false;
                 _offboard_sp.is_land_sp = true;
                 _offboard_sp.is_takeoff_sp = false;
                 _offboard_sp.x = local_a.x;
                 _offboard_sp.y = local_a.y;
-                _offboard_sp.z = local_a.z + (float32)0.5;
-                printf("Land A\n");
-                break;
-
-            case 10:    //A起飞后悬停5s,下一步是2
-                _offboard_sp.ignore_alt_hold = false;//true
-                _offboard_sp.ignore_position = false;
-                _offboard_sp.is_land_sp = false;
-                _offboard_sp.is_takeoff_sp = false;
-		_offboard_sp.is_loiter_sp = true;
-                _offboard_sp.x = local_a.x;
-                _offboard_sp.y = local_a.y;
-                _offboard_sp.z = local_a.z + set_high;
-                count_drop++;
-                if (count_drop > 5) {
-                    count_drop = 0;
-                    token = 2;
+                _offboard_sp.z = local_a.z + (float)0.3;
+                if ((local_now.z > (local_a.z - (float32)2.0)) && is_vz_zero) {
+                        token = 6;
                 }
-                printf("Loiter A\n");
-                break;
-
-            case 11:    //C起飞后悬停5s,下一步是8
-                _offboard_sp.ignore_alt_hold = false;//true
-                _offboard_sp.ignore_position = false;
-                _offboard_sp.is_land_sp = false;
-                _offboard_sp.is_takeoff_sp = false;
-		_offboard_sp.is_loiter_sp = true;
-                _offboard_sp.x = local_c.x;
-                _offboard_sp.y = local_c.y;
-                _offboard_sp.z = local_a.z + set_high;
-                count_drop++;
-                if (count_drop > 5) {
-                    count_drop = 0;
-                    token = 8;
-                }
-                printf("Loiter C\n");
-                break;
-	    case 12:     //B点上升2米
-                _offboard_sp.ignore_alt_hold = true;
-                _offboard_sp.ignore_position = false;
-                _offboard_sp.is_land_sp = false;
-                _offboard_sp.is_takeoff_sp = true;//上升时候要true
-                _offboard_sp.x = local_b.x;
-                _offboard_sp.y = local_b.y;
-                _offboard_sp.z = local_a.z +set_high +clim_high;
-               if (local_now.z < (local_a.z + set_high + clim_high + (float)0.1)) {//0.1防止飞过太高
-                      token = 13;
-                }
-                printf("B up 2m\n");
+		count_drop++;
+		if(count_drop == 10){
+                  printf("Land C\n");
+		  count_drop = 0;
+		}
                 printf("token=  %4d\n",token);
                 break;
-            case 13:    //B上升后悬停5s,下一步开始投放
-                _offboard_sp.ignore_alt_hold = false;//true
-                _offboard_sp.ignore_position = false;
-                _offboard_sp.is_land_sp = false;
-                _offboard_sp.is_takeoff_sp = false;
-		_offboard_sp.is_loiter_sp = true;
-                _offboard_sp.x = local_b.x;
-                _offboard_sp.y = local_b.y;
-                _offboard_sp.z = local_a.z + set_high + clim_high;
-                count_drop++;
-                if (count_drop > 15) {
-                    count_drop = 0;
-                    token = 3;
-                }
-                printf("Loiter B\n");
-                break;
+
             default:
                 break;
             }
             close_a = false;
-            close_b = false;
-            close_c = false;
+	    close_point = false;
+            inside_token = 0;
             is_vxy_zero = false;
             is_vz_zero = false;
 
