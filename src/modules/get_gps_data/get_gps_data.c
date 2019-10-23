@@ -35,9 +35,10 @@ static bool thread_should_exit = false;     /**< daemon exit flag */
 static bool thread_running = false;     /**< daemon status flag */
 static int get_gps_data_task;             /**< Handle of daemon task / thread */
 static int gps_sequence = 0;
-int n = 4;				//M的下初始点数量为：3
+int n = 4;				//M的下初始点数量为：3,4等分
 int mw = 0;				//0:为M，1：为W
 int flyToRed = 0;
+int set = 1;
 //static double CONSTANTS_RADIUS_OF_EARTH = 6371000.0;
 //static double pi = 3.14159265358979323846;
 
@@ -412,6 +413,11 @@ int get_data_thread_main(int argc, char *argv[])
 	    if(_read_uart.is_valid){
     	      v_x = _read_uart.datax - (float)160;//原点纠正
               v_y = (float)120 - _read_uart.datay;
+	      sum_square = (double)( v_x * v_x + v_y * v_y);
+              if (sum_square < 1.0) {//红点的范围判断
+                  close_red_point = true;
+                  printf("close_red_point[%d]\t",point_num_now);
+              }
 	      v_x += local_now.x;//向量算目标点
 	      v_y += local_now.y;
 	      if(three_point == 0){//第一个红点不需要检查
@@ -423,7 +429,7 @@ int get_data_thread_main(int argc, char *argv[])
 		      r_point[three_point].y = check_r_p.y;
 	      }
 	    }
-	    if(!mw){
+	    if(!mw && set){
 	      /*M型目标点*/
 	      for(int i = 0;i < n;i++){
 		 set_point[(int)2i].x = local_b.x * (n - i - 1)/n +  local_e.x * ( i + 1 )/n;
@@ -433,7 +439,8 @@ int get_data_thread_main(int argc, char *argv[])
 		 set_point[(int)2i+1].x = local_c.x * ( n - i )/(n + 1) +  local_d.x * ( i + 1 )/(n + 1);
 		 set_point[(int)2i+1].y = local_c.y * ( n - i )/(n + 1) +  local_d.y * ( i + 1 )/(n + 1);
 	      }
-	    }else{
+	      set = 0;
+	    }else if(mw && set){
 	      /*W型目标点*/
 	      for(int i = 0;i < n;i++){
 		 set_point[2*i].x = local_d.x * (n - i - 1)/n +  local_c.x * ( i + 1 )/n;
@@ -443,6 +450,7 @@ int get_data_thread_main(int argc, char *argv[])
 		 set_point[2*i+1].x = local_e.x * ( n - i )/(n + 1) +  local_b.x * ( i + 1 )/(n + 1);
 		 set_point[2*i+1].y = local_e.y * ( n - i )/(n + 1) +  local_b.y * ( i + 1 )/(n + 1);
 	      }
+	      set = 0;
 	    }
  
             /* 显示abc点的NED坐标*/
@@ -490,11 +498,7 @@ int get_data_thread_main(int argc, char *argv[])
                 printf("close_point[%d]\t",point_num_now);
             }
 
-    	    sum_square = (double)( vx * vx + vy * vy);
-            if (sum_square < 1.0) {//目标点的范围判断
-                close_red_point = true;
-                printf("close_red_point[%d]\t",point_num_now);
-            }
+
 
             sum_square = (double)(100 * vx * vx + 100 * vy * vy);
             if (sum_square < 0.5) {//xy方向速度范围内为0
@@ -545,12 +549,6 @@ int get_data_thread_main(int argc, char *argv[])
                 _offboard_sp.z = local_a.z + set_high;
                 if ( inside_token && is_vxy_zero) {
                     token = 4;
-		    if(point_num_now + 1 != n){
-			point_num_now += 1;
-		    }else{
-			n += 3;
-			mw = (mw + 1) % 2;//  M/W切换
-		    }
                 }
                 printf("TO B inside\n");
                 break;
@@ -579,15 +577,23 @@ int get_data_thread_main(int argc, char *argv[])
 		  _offboard_sp.y = set_point[point_num_now].y;
                   _offboard_sp.z = local_a.z + set_high;
 		  if(close_point && is_vxy_zero){
-		  	point_num_now++;
+			if(point_num_now + 1 != 2*n-1){
+				point_num_now++;
+			}else{
+				n += 3;
+				mw = (mw + 1) % 2;//  M/W切换
+				set = 1;
+				point_num_now = 0;
+			}
 			token = 4;
 		  }
 		  if(_read_uart.is_valid && flyToRed){
 			token = 7;
 		  }
-		}else if(three_point == 3){
-		  token = 3;
-		}
+		  
+		 }else if(three_point == 3){
+		  	token = 3;
+		 }
 
                 break;
 
