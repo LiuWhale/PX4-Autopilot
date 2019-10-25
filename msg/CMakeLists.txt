@@ -143,7 +143,8 @@ set(msg_files
 	vehicle_trajectory_waypoint.msg
 	vtol_vehicle_status.msg
 	wind_estimate.msg
-	read_uart.msg
+	read_uart_term3.msg
+	read_uart_term4.msg
 	delivery_signal.msg
 	offboard_setpoint.msg
 	offboard_control_mode.msg

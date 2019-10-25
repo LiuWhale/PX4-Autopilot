@@ -62,6 +62,7 @@ px4_add_board(
 		#test_ppm
 		tone_alarm
 		#uavcan
+		distance_sensor/mb12xx
 
 	MODULES
 		#attitude_estimator_q
@@ -87,11 +88,12 @@ px4_add_board(
 		vmount
 		vtol_att_control
 		#wind_estimator
-		read_uart
+		read_uart_term3
+		read_uart_term4
 		offboard_pub
 		#get_gps_data
 		setpoint_term3
-	
+		setpoint_term4
 	SYSTEMCMDS
 		bl_update
 		#config

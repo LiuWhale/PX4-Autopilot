@@ -1,11 +1,11 @@
 set(MODULE_CFLAGS)
 px4_add_module(
-        MODULE modules__read_uart
-        MAIN read_uart
+        MODULE modules__read_uart_term4
+        MAIN read_uart_term4
     COMPILE_FLAGS
         -Os
     SRCS
-                read_uart.c
+                read_uart_term4.c
     DEPENDS
         #platforms__common
     )

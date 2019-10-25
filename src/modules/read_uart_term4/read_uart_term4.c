@@ -1,5 +1,5 @@
 /*
- * read_uart_sensor.c
+ * read_uart_term4_sensor.c
  * 
  * read sensor through uart
  */
@@ -22,21 +22,21 @@
 #include <nuttx/sched.h>
 
 #include <uORB/uORB.h>
-#include <uORB/topics/read_uart.h>
+#include <uORB/topics/read_uart_term4.h>
 
 
 
-__EXPORT int read_uart_main(int argc, char *argv[]);
+__EXPORT int read_uart_term4_main(int argc, char *argv[]);
 
 
 static bool thread_should_exit = false; /*Ddemon exit flag*/
 static bool thread_running = false;  /*Daemon status flag*/
-static int read_uart_task;
+static int read_uart_term4_task;
 
 /**
  * Main loop
  */
-int read_uart_thread_main(int argc, char *argv[]);
+int read_uart_term4_thread_main(int argc, char *argv[]);
 
 static int uart_init(const char * uart_name);
 static int set_uart_baudrate(const int fd, unsigned int baud);
@@ -104,11 +104,11 @@ static void usage(const char *reason)
         fprintf(stderr, "%s\n", reason);
     }
 
-    fprintf(stderr, "usage: read_uart_sensor {start|stop|status} [param]\n\n");
+    fprintf(stderr, "usage: read_uart_term4_sensor {start|stop|status} [param]\n\n");
     exit(1);
 }
 
-int read_uart_main(int argc, char *argv[])
+int read_uart_term4_main(int argc, char *argv[])
 {
     if (argc < 2) {
         usage("[Read_uart]missing command");
@@ -121,11 +121,11 @@ int read_uart_main(int argc, char *argv[])
         }
 
         thread_should_exit = false;
-        read_uart_task = px4_task_spawn_cmd("read_uart",
+        read_uart_term4_task = px4_task_spawn_cmd("read_uart",
                          SCHED_DEFAULT,
                          SCHED_PRIORITY_MAX - 5,
                          2000,
-                         read_uart_thread_main,
+                         read_uart_term4_thread_main,
                          (argv) ? (char * const *)&argv[2] : (char * const *)NULL);
         return 0;
     }
@@ -152,7 +152,7 @@ int read_uart_main(int argc, char *argv[])
     return 1;
 }
 
-int read_uart_thread_main(int argc, char *argv[])
+int read_uart_term4_thread_main(int argc, char *argv[])
 {
 
     if (argc < 2) {
@@ -185,15 +185,22 @@ int read_uart_thread_main(int argc, char *argv[])
     thread_running = true;
 
     /*初始化数据结构体 */
-    struct read_uart_s _uart_data;
+    struct read_uart_term4_s _uart_data;
     memset(&_uart_data, 0, sizeof(_uart_data));
     _uart_data.is_valid = false;
+
+
+    _uart_data.flag = false;
+
+
     /* 公告主题 */
-    orb_advert_t read_uart_pub = orb_advertise(ORB_ID(read_uart), &_uart_data);
-    orb_publish(ORB_ID(read_uart), read_uart_pub, &_uart_data);
+    orb_advert_t read_uart_term4_pub = orb_advertise(ORB_ID(read_uart_term4), &_uart_data);
+    orb_publish(ORB_ID(read_uart_term4), read_uart_term4_pub, &_uart_data);
 
     while(!thread_should_exit) {
         read(uart_read,&data,1);
+
+
         if (data == 'X'){
             for(int i = 0;i <4;++i){
                 read(uart_read,&data,1);
@@ -201,10 +208,25 @@ int read_uart_thread_main(int argc, char *argv[])
                 data = '0';
             }
             strncpy(_uart_data.datastr,buffer,4);// 复制字符串Buffer中前４个数字到Datastr中
-            _uart_data.datax = atoi(_uart_data.datastr);//将字符串转换成整形数据
+	   // _uart_data.datax = atoi(_uart_data.datastr);//将字符串转换成整形数据     ---室内跟踪
+            _uart_data.datax =(float)0.1*atoi(_uart_data.datastr);//将字符串转换成整形数据    ---室内避障雷达单位为mm
             //printf("[Read_uart]sensor.data=%d\n",_uart_data.datax);
-            //orb_publish(ORB_ID(read_uart), read_uart_pub, &_uart_data);
+            //orb_publish(ORB_ID(read_uart_term4), read_uart_pub, &_uart_data);
         }
+	
+	if (data == 'x'){
+            for(int i = 0;i <4;++i){
+                read(uart_read,&data,1);
+                buffer[i] = data;
+                data = '0';
+            }
+            strncpy(_uart_data.datastr,buffer,4);// 复制字符串Buffer中前４个数字到Datastr中
+            _uart_data.datax =-(float)0.1*atoi(_uart_data.datastr);//将字符串转换成整形数据
+            //printf("[Read_uart]sensor.data=%d\n",_uart_data.datax);
+            //orb_publish(ORB_ID(read_uart_term4), read_uart_pub, &_uart_data);
+        
+	}                          
+
         if (data == 'Y'){
             for(int i = 0;i <4;++i){
                 read(uart_read,&data,1);
@@ -212,14 +234,33 @@ int read_uart_thread_main(int argc, char *argv[])
                 data = '0';
             }
             strncpy(_uart_data.datastr,buffer,4);// 复制字符串Buffer中前４个数字到Datastr中
-            _uart_data.datay = atoi(_uart_data.datastr);//将字符串转换成整形数据
+	   // _uart_data.datax = atoi(_uart_data.datastr);//将字符串转换成整形数据            ---室内跟踪
+            _uart_data.datay =(float)0.1*atoi(_uart_data.datastr);//将字符串转换成整形数据            ---室内避障雷达单位为mm
+			}
+
+	if (data == 'y'){
+            for(int i = 0;i <4;++i){
+                read(uart_read,&data,1);
+                buffer[i] = data;
+                data = '0';
+            }
+            strncpy(_uart_data.datastr,buffer,4);// 复制字符串Buffer中前４个数字到Datastr
+            _uart_data.datay = -(float)0.1*atoi(_uart_data.datastr);//将字符串转换成整形数据
+	
+			}              
+
+	if(data == 'H'){
+		_uart_data.flag = true;
+			}
+
+
             _uart_data.is_valid = true;
             if (_uart_data.datay > 999)
                 _uart_data.is_valid = false;
             _uart_data.timestamp = hrt_absolute_time();
             //printf("[Read_uart]sensor.data=%d\n",_uart_data.datay);
-            orb_publish(ORB_ID(read_uart), read_uart_pub, &_uart_data);
-        }
+            orb_publish(ORB_ID(read_uart_term4), read_uart_term4_pub, &_uart_data);
+        
     }
 
     warnx("[Read_uart]exiting");
