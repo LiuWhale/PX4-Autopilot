@@ -144,12 +144,13 @@ int offboard_pub_thread_main(int argc, char *argv[])
         orb_publish(ORB_ID(offboard_control_mode), offboard_pub_pub, &_offboard_control_mode);
 	orb_copy(ORB_ID(rc_channels), rc_channels_sub, &_rc_channels);//获取数据
 	printf("channel 4 = %8.4f\n", (double)_rc_channels.channels[4]);
+
         bool updated_mode;
         bool updated_data;
-	bool updated_rcch;
+
         orb_check(control_mode_sub, &updated_mode);//检查topic是否获取成功
         orb_check(offboard_setpoint_sub, &updated_data);
-	orb_check(rc_channels_sub, &updated_rcch);//检测订阅是否成功
+
         if (updated_mode) {
             orb_copy(ORB_ID(vehicle_control_mode), control_mode_sub, &_control_mode);
         }
