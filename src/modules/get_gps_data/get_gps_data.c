@@ -660,7 +660,7 @@ int get_data_thread_main(int argc, char *argv[])
                 _offboard_sp.x = local_b.x;
                 _offboard_sp.y = local_b.y;
                 _offboard_sp.z = local_a.z +set_high +clim_high;
-               if (local_now.z < (local_a.z + set_high + clim_high + (float)0.1)) {//0.1防止飞过太高
+               if (local_now.z < (local_a.z + set_high + clim_high)) {//0.1防止飞过太高
                       token = 13;
                 }
                 printf("B up 2m\n");
@@ -676,7 +676,7 @@ int get_data_thread_main(int argc, char *argv[])
                 _offboard_sp.y = local_b.y;
                 _offboard_sp.z = local_a.z + set_high + clim_high;
                 count_drop++;
-                if (count_drop > 15) {
+                if (count_drop > 30) {
                     count_drop = 0;
                     token = 3;
                 }
