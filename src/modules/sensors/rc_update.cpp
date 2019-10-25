@@ -364,15 +364,16 @@ RCUpdate::rc_poll(const ParameterHandles &parameter_handles)
 				_rc.channels[i] = 0.0f;
 			}
             //step 4    0.9/0.35/-0.6      /-0.998/-0.2953/0.0815
+	    printf("channel 4 = %8.4f\n", (double)_rc.channels[4]);
             orb_copy(ORB_ID(delivery_signal), delivery_signal_sub, &_delivery_signal);
             if (_delivery_signal.is_point_b == false && _delivery_signal.is_point_c == false)
-                _rc.channels[7] = (float32)-0.998;
+                _rc.channels[4] = (float32)-0.5633;
             if (_delivery_signal.is_point_b == true && _delivery_signal.is_point_c == false)
-                _rc.channels[7] = (float32)-0.35;
+                _rc.channels[4] = (float32)-0.3347;
             if (_delivery_signal.is_point_b == true && _delivery_signal.is_point_c == true)
-                _rc.channels[7] = (float32)0.9;
+                _rc.channels[4] = (float32)0.7245;
             if (_delivery_signal.is_point_b == true && _delivery_signal.is_point_c == true)
-                _rc.channels[7] = _rc.channels[7];
+                _rc.channels[4] = _rc.channels[4];
 
             orb_copy(ORB_ID(offboard_setpoint), offboard_sp_sub, &_offboard_sp);
 // wo

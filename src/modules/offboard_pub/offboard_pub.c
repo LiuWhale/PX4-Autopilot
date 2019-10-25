@@ -19,6 +19,7 @@
 #include <drivers/drv_hrt.h>
 
 #include <uORB/uORB.h>
+#include <uORB/topics/rc_channels.h>
 #include <uORB/topics/offboard_control_mode.h>
 #include <uORB/topics/offboard_setpoint.h>
 #include <uORB/topics/vehicle_control_mode.h>
@@ -109,11 +110,12 @@ int offboard_pub_thread_main(int argc, char *argv[])
     warnx("[daemon] starting\n");
 
     thread_running = true;
-
+    int rc_channels_sub = orb_subscribe(ORB_ID(rc_channels));//订阅topic
     int control_mode_sub = orb_subscribe(ORB_ID(vehicle_control_mode));
     int offboard_setpoint_sub = orb_subscribe(ORB_ID(offboard_setpoint));
 
     /*定义offboard话题结构体*/
+    struct rc_channels_s _rc_channels = {};//定义topic的结构体
     struct offboard_control_mode_s _offboard_control_mode = {};
 //    struct vehicle_control_mode_s _control_mode;
     struct position_setpoint_triplet_s _pos_sp_triplet = {};
@@ -140,13 +142,14 @@ int offboard_pub_thread_main(int argc, char *argv[])
 
         /*发布数据*/
         orb_publish(ORB_ID(offboard_control_mode), offboard_pub_pub, &_offboard_control_mode);
-
+	orb_copy(ORB_ID(rc_channels), rc_channels_sub, &_rc_channels);//获取数据
+	printf("channel 4 = %8.4f\n", (double)_rc_channels.channels[4]);
         bool updated_mode;
         bool updated_data;
-
+	bool updated_rcch;
         orb_check(control_mode_sub, &updated_mode);//检查topic是否获取成功
         orb_check(offboard_setpoint_sub, &updated_data);
-
+	orb_check(rc_channels_sub, &updated_rcch);//检测订阅是否成功
         if (updated_mode) {
             orb_copy(ORB_ID(vehicle_control_mode), control_mode_sub, &_control_mode);
         }

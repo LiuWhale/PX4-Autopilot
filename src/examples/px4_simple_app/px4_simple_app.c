@@ -50,7 +50,7 @@
 #include <uORB/uORB.h>
 #include <uORB/topics/sensor_combined.h>
 #include <uORB/topics/vehicle_attitude.h>
-
+#include <uORB/topics/rc_channels.h>
 __EXPORT int px4_simple_app_main(int argc, char *argv[]);
 
 int px4_simple_app_main(int argc, char *argv[])
@@ -59,14 +59,18 @@ int px4_simple_app_main(int argc, char *argv[])
 
 	/* subscribe to sensor_combined topic */
 	int sensor_sub_fd = orb_subscribe(ORB_ID(sensor_combined));
+	int rc_channels_sub = orb_subscribe(ORB_ID(rc_channels));
 	/* limit the update rate to 5 Hz */
 	orb_set_interval(sensor_sub_fd, 200);
+	orb_set_interval(rc_channels_sub, 100);
+
 
 	/* advertise attitude topic */
+
 	struct vehicle_attitude_s att;
+	struct rc_channels_s _rc_channels = {};//定义topic的结构体
 	memset(&att, 0, sizeof(att));
 	orb_advert_t att_pub = orb_advertise(ORB_ID(vehicle_attitude), &att);
-
 	/* one could wait for multiple topics with this technique, just using one here */
 	px4_pollfd_struct_t fds[] = {
 		{ .fd = sensor_sub_fd,   .events = POLLIN },
@@ -74,7 +78,8 @@ int px4_simple_app_main(int argc, char *argv[])
 		 * { .fd = other_sub_fd,   .events = POLLIN },
 		 */
 	};
-
+	orb_copy(ORB_ID(rc_channels), rc_channels_sub, &_rc_channels);
+	printf("channel 4 = %8.4f\n", (double)_rc_channels.channels[4]);
 	int error_counter = 0;
 
 	for (int i = 0; i < 5; i++) {
