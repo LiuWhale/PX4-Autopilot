@@ -39,10 +39,10 @@
  * Parameter tool.
  */
 
-#include <px4_config.h>
-#include <px4_log.h>
-#include <px4_module.h>
-#include <px4_posix.h>
+#include <px4_platform_common/px4_config.h>
+#include <px4_platform_common/log.h>
+#include <px4_platform_common/module.h>
+#include <px4_platform_common/posix.h>
 
 #include <errno.h>
 #include <stdio.h>
@@ -56,8 +56,6 @@
 #include <inttypes.h>
 #include <sys/stat.h>
 
-#include <arch/board/board.h>
-
 #include <parameters/param.h>
 #include "systemlib/err.h"
 
@@ -65,10 +63,16 @@ __BEGIN_DECLS
 __EXPORT int param_main(int argc, char *argv[]);
 __END_DECLS
 
-enum COMPARE_OPERATOR {
-	COMPARE_OPERATOR_EQUAL = 0,
-	COMPARE_OPERATOR_GREATER = 1,
+enum class COMPARE_OPERATOR {
+	EQUAL = 0,
+	GREATER = 1,
 };
+
+enum class COMPARE_ERROR_LEVEL {
+	DO_ERROR = 0,
+	SILENT = 1,
+};
+
 
 #ifdef __PX4_QURT
 #define PARAM_PRINT PX4_INFO
@@ -81,15 +85,18 @@ static int	do_save_default();
 static int 	do_load(const char *param_file_name);
 static int	do_import(const char *param_file_name);
 static int	do_show(const char *search_string, bool only_changed);
+static int	do_show_for_airframe();
 static int	do_show_all();
 static int	do_show_quiet(const char *param_name);
 static int	do_show_index(const char *index, bool used_index);
 static void	do_show_print(void *arg, param_t param);
+static void	do_show_print_for_airframe(void *arg, param_t param);
 static int	do_set(const char *name, const char *val, bool fail_on_not_found);
-static int	do_compare(const char *name, char *vals[], unsigned comparisons, enum COMPARE_OPERATOR cmd_op);
-static int 	do_reset(const char *excludes[], int num_excludes);
+static int	do_compare(const char *name, char *vals[], unsigned comparisons, enum COMPARE_OPERATOR cmd_op,
+			   enum COMPARE_ERROR_LEVEL err_level);
+static int 	do_reset_all(const char *excludes[], int num_excludes);
+static int 	do_reset_specific(const char *resets[], int num_resets);
 static int 	do_touch(const char *params[], int num_params);
-static int	do_reset_nostart(const char *excludes[], int num_excludes);
 static int	do_find(const char *name);
 
 static void print_usage()
@@ -132,9 +139,11 @@ $ reboot
 
 	PRINT_MODULE_USAGE_COMMAND_DESCR("show", "Show parameter values");
 	PRINT_MODULE_USAGE_PARAM_FLAG('a', "Show all parameters (not just used)", true);
-	PRINT_MODULE_USAGE_PARAM_FLAG('c', "Show only changed and used params", true);
+	PRINT_MODULE_USAGE_PARAM_FLAG('c', "Show only changed params (unused too)", true);
 	PRINT_MODULE_USAGE_PARAM_FLAG('q', "quiet mode, print only param value (name needs to be exact)", true);
 	PRINT_MODULE_USAGE_ARG("<filter>", "Filter by param name (wildcard at end allowed, eg. sys_*)", true);
+
+	PRINT_MODULE_USAGE_COMMAND_DESCR("show-for-airframe", "Show changed params for airframe config");
 
 	PRINT_MODULE_USAGE_COMMAND_DESCR("status", "Print status of parameter system");
 
@@ -143,19 +152,22 @@ $ reboot
 	PRINT_MODULE_USAGE_ARG("fail", "If provided, let the command fail if param is not found", true);
 
 	PRINT_MODULE_USAGE_COMMAND_DESCR("compare", "Compare a param with a value. Command will succeed if equal");
+	PRINT_MODULE_USAGE_PARAM_FLAG('s', "If provided, silent errors if parameter doesn't exists", true);
 	PRINT_MODULE_USAGE_ARG("<param_name> <value>", "Parameter name and value to compare", false);
 
 	PRINT_MODULE_USAGE_COMMAND_DESCR("greater",
 					 "Compare a param with a value. Command will succeed if param is greater than the value");
+	PRINT_MODULE_USAGE_PARAM_FLAG('s', "If provided, silent errors if parameter doesn't exists", true);
+	PRINT_MODULE_USAGE_ARG("<param_name> <value>", "Parameter name and value to compare", false);
+
 	PRINT_MODULE_USAGE_ARG("<param_name> <value>", "Parameter name and value to compare", false);
 
 	PRINT_MODULE_USAGE_COMMAND_DESCR("touch", "Mark a parameter as used");
 	PRINT_MODULE_USAGE_ARG("<param_name1> [<param_name2>]", "Parameter name (one or more)", true);
 
-	PRINT_MODULE_USAGE_COMMAND_DESCR("reset", "Reset params to default");
-	PRINT_MODULE_USAGE_ARG("<exclude1> [<exclude2>]", "Do not reset matching params (wildcard at end allowed)", true);
-	PRINT_MODULE_USAGE_COMMAND_DESCR("reset_nostart",
-					 "Reset params to default, but keep SYS_AUTOSTART and SYS_AUTOCONFIG");
+	PRINT_MODULE_USAGE_COMMAND_DESCR("reset", "Reset only specified params to default");
+	PRINT_MODULE_USAGE_ARG("<param1> [<param2>]", "Parameter names to reset (wildcard at end allowed)", true);
+	PRINT_MODULE_USAGE_COMMAND_DESCR("reset_all", "Reset all params to default");
 	PRINT_MODULE_USAGE_ARG("<exclude1> [<exclude2>]", "Do not reset matching params (wildcard at end allowed)", true);
 
 	PRINT_MODULE_USAGE_COMMAND_DESCR("index", "Show param for a given index");
@@ -247,6 +259,10 @@ param_main(int argc, char *argv[])
 			}
 		}
 
+		if (!strcmp(argv[1], "show-for-airframe")) {
+			return do_show_for_airframe();
+		}
+
 		if (!strcmp(argv[1], "status")) {
 			param_print_status();
 			return PX4_OK;
@@ -270,9 +286,10 @@ param_main(int argc, char *argv[])
 		}
 
 		if (!strcmp(argv[1], "compare")) {
-			if (argc >= 4) {
-				return do_compare(argv[2], &argv[3], argc - 3, COMPARE_OPERATOR_EQUAL);
-
+			if(argc >= 5 && !strcmp(argv[2], "-s")) {
+				return do_compare(argv[3], &argv[4], argc - 4, COMPARE_OPERATOR::EQUAL, COMPARE_ERROR_LEVEL::SILENT);
+			} else if (argc >= 4) {
+				return do_compare(argv[2], &argv[3], argc - 3, COMPARE_OPERATOR::EQUAL, COMPARE_ERROR_LEVEL::DO_ERROR);
 			} else {
 				PX4_ERR("not enough arguments.\nTry 'param compare PARAM_NAME 3'");
 				return 1;
@@ -280,9 +297,10 @@ param_main(int argc, char *argv[])
 		}
 
 		if (!strcmp(argv[1], "greater")) {
-			if (argc >= 4) {
-				return do_compare(argv[2], &argv[3], argc - 3, COMPARE_OPERATOR_GREATER);
-
+			if(argc >= 5 && !strcmp(argv[2], "-s")) {
+				return do_compare(argv[3], &argv[4], argc - 4, COMPARE_OPERATOR::GREATER, COMPARE_ERROR_LEVEL::SILENT);
+			} else if (argc >= 4) {
+				return do_compare(argv[2], &argv[3], argc - 3, COMPARE_OPERATOR::GREATER, COMPARE_ERROR_LEVEL::DO_ERROR);
 			} else {
 				PX4_ERR("not enough arguments.\nTry 'param greater PARAM_NAME 3'");
 				return 1;
@@ -291,10 +309,20 @@ param_main(int argc, char *argv[])
 
 		if (!strcmp(argv[1], "reset")) {
 			if (argc >= 3) {
-				return do_reset((const char **) &argv[2], argc - 2);
+				return do_reset_specific((const char **) &argv[2], argc - 2);
 
 			} else {
-				return do_reset(nullptr, 0);
+				PX4_ERR("not enough arguments (use 'param reset_all' to reset all).");
+				return 1;
+			}
+		}
+
+		if (!strcmp(argv[1], "reset_all")) {
+			if (argc >= 3) {
+				return do_reset_all((const char **) &argv[2], argc - 2);
+
+			} else {
+				return do_reset_all(nullptr, 0);
 			}
 		}
 
@@ -304,15 +332,6 @@ param_main(int argc, char *argv[])
 			} else {
 				PX4_ERR("not enough arguments.");
 				return 1;
-			}
-		}
-
-		if (!strcmp(argv[1], "reset_nostart")) {
-			if (argc >= 3) {
-				return do_reset_nostart((const char **) &argv[2], argc - 2);
-
-			} else {
-				return do_reset_nostart(nullptr, 0);
 			}
 		}
 
@@ -446,9 +465,20 @@ static int
 do_show(const char *search_string, bool only_changed)
 {
 	PARAM_PRINT("Symbols: x = used, + = saved, * = unsaved\n");
-	param_foreach(do_show_print, (char *)search_string, only_changed, true);
+	// also show unused params if we show non-default values only
+	param_foreach(do_show_print, (char *)search_string, only_changed, !only_changed);
 	PARAM_PRINT("\n %u/%u parameters used.\n", param_count_used(), param_count());
 
+	return 0;
+}
+
+static int
+do_show_for_airframe()
+{
+	PARAM_PRINT("if [ $AUTOCNF = yes ]\n");
+	PARAM_PRINT("then\n");
+	param_foreach(do_show_print_for_airframe, nullptr, true, true);
+	PARAM_PRINT("fi\n");
 	return 0;
 }
 
@@ -566,7 +596,7 @@ do_show_print(void *arg, param_t param)
 	const char *p_name = (const char *)param_name(param);
 
 	/* print nothing if search string is invalid and not matching */
-	if (!(arg == nullptr)) {
+	if (arg != nullptr) {
 
 		/* start search */
 		const char *ss = search_string;
@@ -626,12 +656,51 @@ do_show_print(void *arg, param_t param)
 
 		break;
 
-	case PARAM_TYPE_STRUCT ... PARAM_TYPE_STRUCT_MAX:
-		PARAM_PRINT("<struct type %d size %zu>\n", 0 + param_type(param), param_size(param));
-		return;
-
 	default:
 		PARAM_PRINT("<unknown type %d>\n", 0 + param_type(param));
+		return;
+	}
+
+	PARAM_PRINT("<error fetching parameter %lu>\n", (unsigned long)param);
+}
+
+static void
+do_show_print_for_airframe(void *arg, param_t param)
+{
+	// exceptions
+	const char* p_name = param_name(param);
+	if (!p_name || param_is_volatile(param)) {
+		return;
+	}
+	if (!strcmp(p_name, "SYS_AUTOSTART") || !strcmp(p_name, "SYS_AUTOCONFIG")) {
+		return;
+	}
+	if (!strncmp(p_name, "RC", 2) || !strncmp(p_name, "TC_", 3) || !strncmp(p_name, "CAL_", 4) ||
+			!strncmp(p_name, "SENS_BOARD_", 11) || !strcmp(p_name, "SENS_DPRES_OFF") ||
+			 !strcmp(p_name, "MAV_TYPE")) {
+		return;
+	}
+
+	int32_t i;
+	float f;
+	PARAM_PRINT("\tparam set %s ", p_name);
+
+	switch (param_type(param)) {
+	case PARAM_TYPE_INT32:
+		if (!param_get(param, &i)) {
+			PARAM_PRINT("%ld\n", (long)i);
+			return;
+		}
+		break;
+
+	case PARAM_TYPE_FLOAT:
+		if (!param_get(param, &f)) {
+			PARAM_PRINT("%4.4f\n", (double)f);
+			return;
+		}
+		break;
+
+	default:
 		return;
 	}
 
@@ -708,7 +777,7 @@ do_set(const char *name, const char *val, bool fail_on_not_found)
 }
 
 static int
-do_compare(const char *name, char *vals[], unsigned comparisons, enum COMPARE_OPERATOR cmp_op)
+do_compare(const char *name, char *vals[], unsigned comparisons, enum COMPARE_OPERATOR cmp_op, enum COMPARE_ERROR_LEVEL err_level)
 {
 	int32_t i;
 	float f;
@@ -717,7 +786,10 @@ do_compare(const char *name, char *vals[], unsigned comparisons, enum COMPARE_OP
 	/* set nothing if parameter cannot be found */
 	if (param == PARAM_INVALID) {
 		/* param not found */
-		PX4_DEBUG("Parameter %s not found", name);
+		if(err_level == COMPARE_ERROR_LEVEL::DO_ERROR)
+		{
+			PX4_ERR("Parameter %s not found", name);
+		}
 		return 1;
 	}
 
@@ -738,8 +810,8 @@ do_compare(const char *name, char *vals[], unsigned comparisons, enum COMPARE_OP
 
 				int j = strtol(vals[k], &end, 10);
 
-				if (((cmp_op == COMPARE_OPERATOR_EQUAL) && (i == j)) ||
-				    ((cmp_op == COMPARE_OPERATOR_GREATER) && (i > j))) {
+				if (((cmp_op == COMPARE_OPERATOR::EQUAL) && (i == j)) ||
+				    ((cmp_op == COMPARE_OPERATOR::GREATER) && (i > j))) {
 					PX4_DEBUG(" %ld: ", (long)i);
 					ret = 0;
 				}
@@ -758,8 +830,8 @@ do_compare(const char *name, char *vals[], unsigned comparisons, enum COMPARE_OP
 
 				float g = strtod(vals[k], &end);
 
-				if (((cmp_op == COMPARE_OPERATOR_EQUAL) && (fabsf(f - g) < 1e-7f)) ||
-				    ((cmp_op == COMPARE_OPERATOR_GREATER) && (f > g))) {
+				if (((cmp_op == COMPARE_OPERATOR::EQUAL) && (fabsf(f - g) < 1e-7f)) ||
+				    ((cmp_op == COMPARE_OPERATOR::GREATER) && (f > g))) {
 					PX4_DEBUG(" %4.4f: ", (double)f);
 					ret = 0;
 				}
@@ -783,7 +855,7 @@ do_compare(const char *name, char *vals[], unsigned comparisons, enum COMPARE_OP
 }
 
 static int
-do_reset(const char *excludes[], int num_excludes)
+do_reset_all(const char *excludes[], int num_excludes)
 {
 	if (num_excludes > 0) {
 		param_reset_excludes(excludes, num_excludes);
@@ -792,6 +864,13 @@ do_reset(const char *excludes[], int num_excludes)
 		param_reset_all();
 	}
 
+	return 0;
+}
+
+static int
+do_reset_specific(const char *resets[], int num_resets)
+{
+	param_reset_specific(resets, num_resets);
 	return 0;
 }
 
@@ -803,27 +882,5 @@ do_touch(const char *params[], int num_params)
 			PX4_ERR("param %s not found", params[i]);
 		}
 	}
-	return 0;
-}
-
-static int
-do_reset_nostart(const char *excludes[], int num_excludes)
-{
-	int32_t autostart;
-	int32_t autoconfig;
-
-	(void)param_get(param_find("SYS_AUTOSTART"), &autostart);
-	(void)param_get(param_find("SYS_AUTOCONFIG"), &autoconfig);
-
-	if (num_excludes > 0) {
-		param_reset_excludes(excludes, num_excludes);
-
-	} else {
-		param_reset_all();
-	}
-
-	(void)param_set(param_find("SYS_AUTOSTART"), &autostart);
-	(void)param_set(param_find("SYS_AUTOCONFIG"), &autoconfig);
-
 	return 0;
 }

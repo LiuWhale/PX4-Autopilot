@@ -45,9 +45,10 @@
 #include <drivers/device/i2c.h>
 #include <drivers/drv_range_finder.h>
 #include <perf/perf_counter.h>
-#include <px4_getopt.h>
-#include <px4_module_params.h>
-#include <px4_platform_common/px4_work_queue/ScheduledWorkItem.hpp>
+#include <px4_platform_common/getopt.h>
+#include <px4_platform_common/module_params.h>
+#include <px4_platform_common/i2c_spi_buses.h>
+#include <px4_platform_common/module.h>
 #include <uORB/topics/distance_sensor.h>
 
 /* MappyDot Registers */
@@ -134,20 +135,22 @@
 #define MAPPYDOT_MAX_DISTANCE                               (4.f) // meters
 
 #define MAPPYDOT_BUS_CLOCK                                  400000 // 400kHz bus speed
-#define MAPPYDOT_DEVICE_PATH                                "/dev/mappydot"
 
 /* Configuration Constants */
 #define MAPPYDOT_BASE_ADDR                                  0x08
-#define MAPPYDOT_BUS_DEFAULT                                PX4_I2C_BUS_EXPANSION
 #define MAPPYDOT_MEASUREMENT_INTERVAL_USEC                  50000  // 50ms measurement interval, 20Hz.
 
 using namespace time_literals;
 
-class MappyDot : public device::I2C, public ModuleParams, public px4::ScheduledWorkItem
+class MappyDot : public device::I2C, public ModuleParams, public I2CSPIDriver<MappyDot>
 {
 public:
-	MappyDot(const int bus = MAPPYDOT_BUS_DEFAULT);
+	MappyDot(I2CSPIBusOption bus_option, const int bus, int bus_frequency);
 	virtual ~MappyDot();
+
+	static I2CSPIDriverBase *instantiate(const BusCLIArguments &cli, const BusInstanceIterator &iterator,
+					     int runtime_instance);
+	static void print_usage();
 
 	/**
 	 * Initializes the sensors, advertises uORB topic,
@@ -158,7 +161,7 @@ public:
 	/**
 	 * Prints basic diagnostic information about the driver.
 	 */
-	void print_info();
+	void print_status() override;
 
 	/**
 	 * Initializes the automatic measurement state machine and starts the driver.
@@ -166,9 +169,9 @@ public:
 	void start();
 
 	/**
-	 * Stop the automatic measurement state machine.
-	 */
-	void stop();
+	* Performs a poll cycle; collect from the previous measurement and start a new one.
+	*/
+	void RunImpl();
 
 protected:
 
@@ -177,17 +180,12 @@ private:
 	/**
 	 * Sends an i2c measure command to check for presence of a sensor.
 	 */
-	int probe();
+	int probe() override;
 
 	/**
 	 * Collects the most recent sensor measurement data from the i2c bus.
 	 */
 	int collect();
-
-	/**
-	* Performs a poll cycle; collect from the previous measurement and start a new one.
-	*/
-	void Run() override;
 
 	/**
 	 * Gets the current sensor rotation value.
@@ -197,7 +195,7 @@ private:
 	px4::Array<uint8_t, RANGE_FINDER_MAX_SENSORS> _sensor_addresses {};
 	px4::Array<uint8_t, RANGE_FINDER_MAX_SENSORS> _sensor_rotations {};
 
-	size_t _sensor_count{0};
+	int _sensor_count{0};
 
 	orb_advert_t _distance_sensor_topic{nullptr};
 
@@ -222,17 +220,14 @@ private:
 };
 
 
-MappyDot::MappyDot(const int bus) :
-	I2C("MappyDot", MAPPYDOT_DEVICE_PATH, bus, MAPPYDOT_BASE_ADDR, MAPPYDOT_BUS_CLOCK),
+MappyDot::MappyDot(I2CSPIBusOption bus_option, const int bus, int bus_frequency) :
+	I2C(DRV_DIST_DEVTYPE_MAPPYDOT, MODULE_NAME, bus, MAPPYDOT_BASE_ADDR, bus_frequency),
 	ModuleParams(nullptr),
-	ScheduledWorkItem(px4::device_bus_to_wq(get_device_id()))
+	I2CSPIDriver(MODULE_NAME, px4::device_bus_to_wq(get_device_id()), bus_option, bus)
 {}
 
 MappyDot::~MappyDot()
 {
-	// Ensure we are truly inactive.
-	stop();
-
 	// Unadvertise the distance sensor topic.
 	if (_distance_sensor_topic != nullptr) {
 		orb_unadvertise(_distance_sensor_topic);
@@ -250,7 +245,7 @@ MappyDot::collect()
 	perf_begin(_sample_perf);
 
 	// Increment the sensor index, (limited to the number of sensors connected).
-	for (size_t index = 0; index < _sensor_count; index++) {
+	for (int index = 0; index < _sensor_count; index++) {
 
 		// Set address of the current sensor to collect data from.
 		set_device_address(_sensor_addresses[index]);
@@ -280,8 +275,7 @@ MappyDot::collect()
 		report.variance         = 0;
 
 		int instance_id;
-		orb_publish_auto(ORB_ID(distance_sensor), &_distance_sensor_topic, &report, &instance_id, ORB_PRIO_DEFAULT);
-
+		orb_publish_auto(ORB_ID(distance_sensor), &_distance_sensor_topic, &report, &instance_id);
 	}
 
 	perf_end(_sample_perf);
@@ -337,7 +331,7 @@ MappyDot::init()
 
 	// Check for connected rangefinders on each i2c port,
 	// starting from the base address 0x08 and incrementing
-	for (size_t i = 0; i <= RANGE_FINDER_MAX_SENSORS; i++) {
+	for (int i = 0; i <= RANGE_FINDER_MAX_SENSORS; i++) {
 		set_device_address(MAPPYDOT_BASE_ADDR + i);
 
 		// Check if a sensor is present.
@@ -398,14 +392,15 @@ MappyDot::probe()
 }
 
 void
-MappyDot::print_info()
+MappyDot::print_status()
 {
+	I2CSPIDriverBase::print_status();
 	perf_print_counter(_comms_errors);
 	perf_print_counter(_sample_perf);
 }
 
 void
-MappyDot::Run()
+MappyDot::RunImpl()
 {
 	// Collect the sensor data.
 	if (collect() != PX4_OK) {
@@ -427,188 +422,61 @@ MappyDot::start()
 }
 
 void
-MappyDot::stop()
+MappyDot::print_usage()
 {
-	ScheduleClear();
+	PRINT_MODULE_USAGE_NAME("mappydot", "driver");
+	PRINT_MODULE_USAGE_SUBCATEGORY("distance_sensor");
+	PRINT_MODULE_USAGE_COMMAND("start");
+	PRINT_MODULE_USAGE_PARAMS_I2C_SPI_DRIVER(true, false);
+	PRINT_MODULE_USAGE_DEFAULT_COMMANDS();
 }
 
-
-/**
- * Local functions in support of the shell command.
- */
-namespace mappydot
+I2CSPIDriverBase *MappyDot::instantiate(const BusCLIArguments &cli, const BusInstanceIterator &iterator,
+					int runtime_instance)
 {
+	MappyDot *instance = new MappyDot(iterator.configuredBusOption(), iterator.bus(), cli.bus_frequency);
 
-MappyDot *g_dev;
-
-int start();
-int start_bus(int i2c_bus);
-int status();
-int stop();
-int usage();
-
-/**
- * Attempt to start driver on all available I2C busses.
- *
- * This function will return as soon as the first sensor
- * is detected on one of the available busses or if no
- * sensors are detected.
- */
-int
-start()
-{
-	if (g_dev != nullptr) {
-		PX4_ERR("already started");
-		return PX4_ERROR;
+	if (instance == nullptr) {
+		PX4_ERR("alloc failed");
+		return nullptr;
 	}
 
-	for (size_t i = 0; i < NUM_I2C_BUS_OPTIONS; i++) {
-		if (start_bus(i2c_bus_options[i]) == PX4_OK) {
-			return PX4_OK;
-		}
+	if (instance->init() != PX4_OK) {
+		delete instance;
+		return nullptr;
 	}
 
-	return PX4_ERROR;
+	instance->start();
+	return instance;
 }
 
-/**
- * Start the driver on a specific bus.
- *
- * This function only returns if the sensor is up and running
- * or could not be detected successfully.
- */
-int
-start_bus(int i2c_bus)
-{
-	if (g_dev != nullptr) {
-		PX4_ERR("already started");
-		return PX4_OK;
-	}
-
-	// Instantiate the driver.
-	g_dev = new MappyDot(i2c_bus);
-
-	if (g_dev == nullptr) {
-		delete g_dev;
-		return PX4_ERROR;
-	}
-
-	// Initialize the sensor.
-	if (g_dev->init() != PX4_OK) {
-		delete g_dev;
-		g_dev = nullptr;
-		return PX4_ERROR;
-	}
-
-	// Start the driver.
-	g_dev->start();
-
-	PX4_INFO("driver started");
-	return PX4_OK;
-}
-
-/**
- * Print the driver status.
- */
-int
-status()
-{
-	if (g_dev == nullptr) {
-		PX4_ERR("driver not running");
-		return PX4_ERROR;
-	}
-
-	g_dev->print_info();
-
-	return PX4_OK;
-}
-
-/**
- * Stop the driver.
- */
-int
-stop()
-{
-	if (g_dev != nullptr) {
-		delete g_dev;
-		g_dev = nullptr;
-
-	}
-
-	PX4_INFO("driver stopped");
-	return PX4_OK;
-}
-
-/**
- * Print usage information about the driver.
- */
-int
-usage()
-{
-	PX4_INFO("Usage: mappydot <command> [options]");
-	PX4_INFO("options:");
-	PX4_INFO("\t-a --all");
-	PX4_INFO("\t-b --bus i2cbus (%i)", MAPPYDOT_BUS_DEFAULT);
-	PX4_INFO("command:");
-	PX4_INFO("\tstart|start_bus|status|stop");
-	return PX4_OK;
-}
-
-} // namespace mappydot
-
-
-/**
- * Driver 'main' command.
- */
 extern "C" __EXPORT int mappydot_main(int argc, char *argv[])
 {
-	const char *myoptarg = nullptr;
+	using ThisDriver = MappyDot;
+	BusCLIArguments cli{true, false};
+	cli.default_i2c_frequency = MAPPYDOT_BUS_CLOCK;
 
-	int ch;
-	int i2c_bus = MAPPYDOT_BUS_DEFAULT;
-	int myoptind = 1;
+	const char *verb = cli.parseDefaultArguments(argc, argv);
 
-	bool start_all = false;
-
-	while ((ch = px4_getopt(argc, argv, "ab:", &myoptind, &myoptarg)) != EOF) {
-		switch (ch) {
-		case 'a':
-			start_all = true;
-			break;
-
-		case 'b':
-			i2c_bus = atoi(myoptarg);
-			break;
-
-		default:
-			PX4_WARN("Unknown option!");
-			return mappydot::usage();
-		}
+	if (!verb) {
+		ThisDriver::print_usage();
+		return -1;
 	}
 
-	if (myoptind >= argc) {
-		return mappydot::usage();
+	BusInstanceIterator iterator(MODULE_NAME, cli, DRV_DIST_DEVTYPE_MAPPYDOT);
+
+	if (!strcmp(verb, "start")) {
+		return ThisDriver::module_start(cli, iterator);
 	}
 
-	if (!strcmp(argv[myoptind], "start")) {
-		if (start_all) {
-			return mappydot::start();
-
-		} else {
-			return mappydot::start_bus(i2c_bus);
-		}
+	if (!strcmp(verb, "stop")) {
+		return ThisDriver::module_stop(iterator);
 	}
 
-	// Print the driver status.
-	if (!strcmp(argv[myoptind], "status")) {
-		return mappydot::status();
+	if (!strcmp(verb, "status")) {
+		return ThisDriver::module_status(iterator);
 	}
 
-	// Stop the driver.
-	if (!strcmp(argv[myoptind], "stop")) {
-		return mappydot::stop();
-	}
-
-	// Print driver usage information.
-	return mappydot::usage();
+	ThisDriver::print_usage();
+	return -1;
 }

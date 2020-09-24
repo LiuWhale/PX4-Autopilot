@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2018 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2018-19 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -43,15 +43,17 @@
 /**
  * Target IMU device ID to regulate temperature.
  *
+ * @category system
  * @group Sensors
  */
-PARAM_DEFINE_INT32(SENS_TEMP_ID, 1442826);
+PARAM_DEFINE_INT32(SENS_TEMP_ID, 0);
 
 /**
  * Target IMU temperature.
  *
+ * @category system
  * @group Sensors
- * @unit C
+ * @unit celcius
  * @min 0
  * @max 85.0
  * @decimal 3
@@ -61,20 +63,21 @@ PARAM_DEFINE_FLOAT(SENS_IMU_TEMP, 55.0f);
 /**
  * IMU heater controller integrator gain value.
  *
+ * @category system
  * @group Sensors
- * @unit microseconds/C
+ * @unit us/C
  * @min 0
  * @max 1.0
  * @decimal 3
  */
 PARAM_DEFINE_FLOAT(SENS_IMU_TEMP_I, 0.025f);
 
-
 /**
  * IMU heater controller proportional gain value.
  *
+ * @category system
  * @group Sensors
- * @unit microseconds/C
+ * @unit us/C
  * @min 0
  * @max 2.0
  * @decimal 3

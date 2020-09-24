@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2012-2018 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2012-2020 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,13 +40,20 @@
 PARAM_DEFINE_INT32(CAL_GYRO1_ID, 0);
 
 /**
- * Gyro 1 enabled
+ * Gyro 1 priority.
  *
- * @boolean
+ * @value -1  Uninitialized
+ * @value 0   Disabled
+ * @value 1   Min
+ * @value 25  Low
+ * @value 50  Medium (Default)
+ * @value 75  High
+ * @value 100 Max
+ *
  * @category system
  * @group Sensor Calibration
  */
-PARAM_DEFINE_INT32(CAL_GYRO1_EN, 1);
+PARAM_DEFINE_INT32(CAL_GYRO1_PRIO, -1);
 
 /**
  * Gyro X-axis offset
@@ -71,27 +78,3 @@ PARAM_DEFINE_FLOAT(CAL_GYRO1_YOFF, 0.0f);
  * @group Sensor Calibration
  */
 PARAM_DEFINE_FLOAT(CAL_GYRO1_ZOFF, 0.0f);
-
-/**
- * Gyro X-axis scaling factor
- *
- * @category system
- * @group Sensor Calibration
- */
-PARAM_DEFINE_FLOAT(CAL_GYRO1_XSCALE, 1.0f);
-
-/**
- * Gyro Y-axis scaling factor
- *
- * @category system
- * @group Sensor Calibration
- */
-PARAM_DEFINE_FLOAT(CAL_GYRO1_YSCALE, 1.0f);
-
-/**
- * Gyro Z-axis scaling factor
- *
- * @category system
- * @group Sensor Calibration
- */
-PARAM_DEFINE_FLOAT(CAL_GYRO1_ZSCALE, 1.0f);

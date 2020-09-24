@@ -1,5 +1,5 @@
 /****************************************************************************
- * nuttx-configs/px4_fmu-v2/scripts/ld.script
+ * scripts/ld.script
  *
  *   Copyright (C) 2011 Gregory Nutt. All rights reserved.
  *   Author: Gregory Nutt <gnutt@nuttx.org>
@@ -90,11 +90,6 @@ SECTIONS
 		*(.gnu.linkonce.r.*)
 		_etext = ABSOLUTE(.);
 
-		/*
-		 * This is a hack to make the newlib libm __errno() call
-		 * use the NuttX get_errno_ptr() function.
-		 */
-		__errno = get_errno_ptr;
 	} > flash
 
 	/*

@@ -33,21 +33,21 @@
 
 #include <stdint.h>
 
-#include <px4_defines.h>
-#include <px4_module.h>
-#include <px4_tasks.h>
-#include <px4_getopt.h>
-#include <px4_posix.h>
+#include <px4_platform_common/defines.h>
+#include <px4_platform_common/module.h>
+#include <px4_platform_common/tasks.h>
+#include <px4_platform_common/getopt.h>
+#include <px4_platform_common/posix.h>
 #include <errno.h>
 
-#include <cmath>	// NAN
+#include <math.h>	// NAN
 #include <cstring>
 
 #include <lib/mathlib/mathlib.h>
 #include <lib/cdev/CDev.hpp>
 #include <perf/perf_counter.h>
-#include <px4_module_params.h>
-#include <uORB/uORB.h>
+#include <px4_platform_common/module_params.h>
+#include <uORB/Subscription.hpp>
 #include <uORB/topics/actuator_controls.h>
 #include <uORB/topics/actuator_outputs.h>
 #include <uORB/topics/actuator_armed.h>
@@ -59,7 +59,7 @@
 
 #include <drivers/drv_hrt.h>
 #include <drivers/drv_mixer.h>
-#include <mixer/mixer.h>
+#include <lib/mixer/MixerGroup.hpp>
 
 #include "tap_esc_common.h"
 
@@ -114,7 +114,9 @@ private:
 	bool 			_is_armed = false;
 	int			_armed_sub = -1;
 	int 			_test_motor_sub = -1;
-	int 			_params_sub = -1;
+
+	uORB::Subscription	_parameter_update_sub{ORB_ID(parameter_update)};
+
 	orb_advert_t        	_outputs_pub = nullptr;
 	actuator_outputs_s      _outputs = {};
 	actuator_armed_s	_armed = {};
@@ -154,7 +156,7 @@ const uint8_t TAP_ESC::_device_mux_map[TAP_ESC_MAX_MOTOR_NUM] = ESC_POS;
 const uint8_t TAP_ESC::_device_dir_map[TAP_ESC_MAX_MOTOR_NUM] = ESC_DIR;
 
 TAP_ESC::TAP_ESC(char const *const device, uint8_t channels_count):
-	CDev(TAP_ESC_DEVICE_PATH),
+	CDev(nullptr),
 	ModuleParams(nullptr),
 	_perf_control_latency(perf_alloc(PC_ELAPSED, "tap_esc control latency")),
 	_channels_count(channels_count)
@@ -191,7 +193,6 @@ TAP_ESC::~TAP_ESC()
 
 	orb_unsubscribe(_armed_sub);
 	orb_unsubscribe(_test_motor_sub);
-	orb_unsubscribe(_params_sub);
 
 	orb_unadvertise(_outputs_pub);
 	orb_unadvertise(_esc_feedback_pub);
@@ -336,7 +337,6 @@ int TAP_ESC::init()
 
 	_armed_sub = orb_subscribe(ORB_ID(actuator_armed));
 	_test_motor_sub = orb_subscribe(ORB_ID(test_motor));
-	_params_sub = orb_subscribe(ORB_ID(parameter_update));
 
 	return ret;
 }
@@ -496,7 +496,14 @@ void TAP_ESC::cycle()
 			if (test_motor_updated) {
 				struct test_motor_s test_motor;
 				orb_copy(ORB_ID(test_motor), _test_motor_sub, &test_motor);
-				_outputs.output[test_motor.motor_number] = RPMSTOPPED + ((RPMMAX - RPMSTOPPED) * test_motor.value);
+
+				if (test_motor.action == test_motor_s::ACTION_STOP) {
+					_outputs.output[test_motor.motor_number] = RPMSTOPPED;
+
+				} else {
+					_outputs.output[test_motor.motor_number] = RPMSTOPPED + ((RPMMAX - RPMSTOPPED) * test_motor.value);
+				}
+
 				PX4_INFO("setting motor %i to %.1lf", test_motor.motor_number,
 					 (double)_outputs.output[test_motor.motor_number]);
 			}
@@ -563,10 +570,11 @@ void TAP_ESC::cycle()
 				if (feed_back_data.channelID < esc_status_s::CONNECTED_ESC_MAX) {
 					_esc_feedback.esc[feed_back_data.channelID].esc_rpm = feed_back_data.speed;
 					_esc_feedback.esc[feed_back_data.channelID].esc_state = feed_back_data.ESCStatus;
-					_esc_feedback.esc[feed_back_data.channelID].esc_vendor = esc_status_s::ESC_VENDOR_TAP;
 					_esc_feedback.esc_connectiontype = esc_status_s::ESC_CONNECTION_TYPE_SERIAL;
 					_esc_feedback.counter++;
 					_esc_feedback.esc_count = num_outputs;
+					_esc_feedback.esc_online_flags = (1 << num_outputs) - 1;
+					_esc_feedback.esc_armed_flags = (1 << num_outputs) - 1;
 
 					_esc_feedback.timestamp = hrt_absolute_time();
 
@@ -609,13 +617,13 @@ void TAP_ESC::cycle()
 
 	}
 
-	/* check for parameter updates */
-	bool param_updated = false;
-	orb_check(_params_sub, &param_updated);
+	// check for parameter updates
+	if (_parameter_update_sub.updated()) {
+		// clear update
+		parameter_update_s pupdate;
+		_parameter_update_sub.copy(&pupdate);
 
-	if (param_updated) {
-		struct parameter_update_s update;
-		orb_copy(ORB_ID(parameter_update), _params_sub, &update);
+		// update parameters from storage
 		updateParams();
 	}
 }
@@ -631,12 +639,7 @@ int TAP_ESC::control_callback(uint8_t control_group, uint8_t control_index, floa
 	input = _controls[control_group].control[control_index];
 
 	/* limit control input */
-	if (input > 1.0f) {
-		input = 1.0f;
-
-	} else if (input < -1.0f) {
-		input = -1.0f;
-	}
+	input = math::constrain(input, -1.f, 1.f);
 
 	/* throttle not arming - mark throttle input as invalid */
 	if (_armed.prearmed && !_armed.armed) {
@@ -671,7 +674,7 @@ int TAP_ESC::ioctl(cdev::file_t *filp, int cmd, unsigned long arg)
 			unsigned buflen = strlen(buf);
 
 			if (_mixers == nullptr) {
-				_mixers = new MixerGroup(control_callback_trampoline, (uintptr_t)this);
+				_mixers = new MixerGroup();
 			}
 
 			if (_mixers == nullptr) {
@@ -679,8 +682,7 @@ int TAP_ESC::ioctl(cdev::file_t *filp, int cmd, unsigned long arg)
 				ret = -ENOMEM;
 
 			} else {
-
-				ret = _mixers->load_from_buf(buf, buflen);
+				ret = _mixers->load_from_buf(control_callback_trampoline, (uintptr_t)this, buf, buflen);
 
 				if (ret != 0) {
 					PX4_DEBUG("mixer load failed with %d", ret);
@@ -772,9 +774,7 @@ tap_esc start -d /dev/ttyS2 -n <1-8>
 	return PX4_OK;
 }
 
-extern "C" __EXPORT int tap_esc_main(int argc, char *argv[]);
-
-int tap_esc_main(int argc, char *argv[])
+extern "C" __EXPORT int tap_esc_main(int argc, char *argv[])
 {
 	return TAP_ESC::main(argc, argv);
 }

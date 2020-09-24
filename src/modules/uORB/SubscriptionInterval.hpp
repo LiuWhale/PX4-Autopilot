@@ -39,13 +39,15 @@
 #pragma once
 
 #include <uORB/uORB.h>
-#include <px4_defines.h>
+#include <px4_platform_common/defines.h>
 
 #include "uORBDeviceNode.hpp"
 #include "uORBManager.hpp"
 #include "uORBUtils.hpp"
 
 #include "Subscription.hpp"
+
+#include <mathlib/mathlib.h>
 
 namespace uORB
 {
@@ -54,6 +56,18 @@ namespace uORB
 class SubscriptionInterval
 {
 public:
+
+	/**
+	 * Constructor
+	 *
+	 * @param id The uORB ORB_ID enum for the topic.
+	 * @param interval The requested maximum update interval in microseconds.
+	 * @param instance The instance for multi sub.
+	 */
+	SubscriptionInterval(ORB_ID id, uint32_t interval_us = 0, uint8_t instance = 0) :
+		_subscription{id, instance},
+		_interval_us(interval_us)
+	{}
 
 	/**
 	 * Constructor
@@ -72,15 +86,16 @@ public:
 	~SubscriptionInterval() = default;
 
 	bool subscribe() { return _subscription.subscribe(); }
+	void unsubscribe() { _subscription.unsubscribe(); }
 
-	bool published() { return _subscription.published(); }
+	bool advertised() { return _subscription.advertised(); }
 
 	/**
 	 * Check if there is a new update.
 	 * */
 	bool updated()
 	{
-		if (published() && (hrt_elapsed_time(&_last_update) >= _interval_us)) {
+		if (advertised() && (hrt_elapsed_time(&_last_update) >= _interval_us)) {
 			return _subscription.updated();
 		}
 
@@ -109,7 +124,9 @@ public:
 	bool copy(void *dst)
 	{
 		if (_subscription.copy(dst)) {
-			_last_update = hrt_absolute_time();
+			const hrt_abstime now = hrt_absolute_time();
+			// shift last update time forward, but don't let it get further behind than the interval
+			_last_update = math::constrain(_last_update + _interval_us, now - _interval_us, now);
 			return true;
 		}
 
@@ -119,6 +136,8 @@ public:
 	bool		valid() const { return _subscription.valid(); }
 
 	uint8_t		get_instance() const { return _subscription.get_instance(); }
+	uint32_t        get_interval_us() const { return _interval_us; }
+	unsigned	get_last_generation() const { return _subscription.get_last_generation(); }
 	orb_id_t	get_topic() const { return _subscription.get_topic(); }
 
 	/**
@@ -137,7 +156,7 @@ protected:
 
 	Subscription	_subscription;
 	uint64_t	_last_update{0};	// last update in microseconds
-	uint32_t	_interval_us{0};		// maximum update interval in microseconds
+	uint32_t	_interval_us{0};	// maximum update interval in microseconds
 
 };
 

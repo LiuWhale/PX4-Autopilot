@@ -50,22 +50,17 @@
 #include <math.h>
 
 #include <drivers/drv_hrt.h>
-#include <px4_config.h>
-#include <px4_defines.h>
-#include <px4_posix.h>
-#include <px4_sem.h>
-#include <px4_shutdown.h>
+#include <px4_platform_common/px4_config.h>
+#include <px4_platform_common/defines.h>
+#include <px4_platform_common/posix.h>
+#include <px4_platform_common/sem.h>
+#include <px4_platform_common/shutdown.h>
 
 #include <perf/perf_counter.h>
 #include <systemlib/uthash/utarray.h>
 
-//#define PARAM_NO_ORB ///< if defined, avoid uorb dependency. This disables publication of parameter_update on param change
-//#define PARAM_NO_AUTOSAVE ///< if defined, do not autosave (avoids LP work queue dependency)
-
-#if !defined(PARAM_NO_ORB)
-# include "uORB/uORB.h"
-# include "uORB/topics/parameter_update.h"
-#endif
+#include "uORB/uORB.h"
+#include "uORB/topics/parameter_update.h"
 
 #if defined(FLASH_BASED_PARAMS)
 #include "flashparams/flashparams.h"
@@ -73,7 +68,7 @@
 
 #include <sys/stat.h>
 
-#include "shmem.h"
+#include <px4_platform_common/shmem.h>
 
 #ifdef __PX4_QURT
 static const char *param_default_file = "/dev/fs/params";
@@ -90,14 +85,12 @@ static char *param_user_file = nullptr;
 #endif
 #define PARAM_CLOSE	close
 
-#ifndef PARAM_NO_AUTOSAVE
-#include <px4_workqueue.h>
+#include <px4_platform_common/workqueue.h>
 /* autosaving variables */
 static hrt_abstime last_autosave_timestamp = 0;
 static struct work_s autosave_work;
 static bool autosave_scheduled = false;
 static bool autosave_disabled = false;
-#endif /* PARAM_NO_AUTOSAVE */
 
 /**
  * Array of static parameter info.
@@ -156,11 +149,8 @@ UT_array *param_values{nullptr};
 /** array info for the modified parameters array */
 const UT_icd param_icd = {sizeof(param_wbuf_s), nullptr, nullptr, nullptr};
 
-#if !defined(PARAM_NO_ORB)
-/** parameter update topic handle */
 static orb_advert_t param_topic = nullptr;
 static unsigned int param_instance = 0;
-#endif
 
 static void param_set_used_internal(param_t param);
 
@@ -330,7 +320,6 @@ param_find_changed(param_t param)
 static void
 _param_notify_changes()
 {
-#if !defined(PARAM_NO_ORB)
 	parameter_update_s pup = {};
 	pup.timestamp = hrt_absolute_time();
 	pup.instance = param_instance++;
@@ -345,8 +334,6 @@ _param_notify_changes()
 	} else {
 		orb_publish(ORB_ID(parameter_update), param_topic, &pup);
 	}
-
-#endif
 }
 
 void
@@ -554,16 +541,10 @@ size_t
 param_size(param_t param)
 {
 	if (handle_in_range(param)) {
-
 		switch (param_type(param)) {
-
 		case PARAM_TYPE_INT32:
 		case PARAM_TYPE_FLOAT:
 			return 4;
-
-		case PARAM_TYPE_STRUCT ... PARAM_TYPE_STRUCT_MAX:
-			/* decode structure size from type value */
-			return param_type(param) - PARAM_TYPE_STRUCT;
 
 		default:
 			return 0;
@@ -601,14 +582,7 @@ param_get_value_ptr(param_t param)
 			v = &param_info_base[param].val;
 		}
 
-		if (param_type(param) >= PARAM_TYPE_STRUCT &&
-		    param_type(param) <= PARAM_TYPE_STRUCT_MAX) {
-
-			result = v->p;
-
-		} else {
-			result = v;
-		}
+		result = v;
 	}
 
 	return result;
@@ -663,7 +637,6 @@ param_get(param_t param, void *val)
 	return result;
 }
 
-#ifndef PARAM_NO_AUTOSAVE
 /**
  * worker callback method to save the parameters
  * @param arg unused
@@ -690,7 +663,6 @@ autosave_worker(void *arg)
 		PX4_ERR("param save failed (%i)", ret);
 	}
 }
-#endif /* PARAM_NO_AUTOSAVE */
 
 /**
  * Automatically save the parameters after a timeout and limited rate.
@@ -701,8 +673,6 @@ autosave_worker(void *arg)
 static void
 param_autosave()
 {
-#ifndef PARAM_NO_AUTOSAVE
-
 	if (autosave_scheduled || autosave_disabled) {
 		return;
 	}
@@ -722,13 +692,11 @@ param_autosave()
 
 	autosave_scheduled = true;
 	work_queue(LPWORK, &autosave_work, (worker_t)&autosave_worker, nullptr, USEC2TICK(delay));
-#endif /* PARAM_NO_AUTOSAVE */
 }
 
 void
 param_control_autosave(bool enable)
 {
-#ifndef PARAM_NO_AUTOSAVE
 	param_lock_writer();
 
 	if (!enable && autosave_scheduled) {
@@ -738,7 +706,6 @@ param_control_autosave(bool enable)
 
 	autosave_disabled = !enable;
 	param_unlock_writer();
-#endif /* PARAM_NO_AUTOSAVE */
 }
 
 static int
@@ -781,7 +748,6 @@ param_set_internal(param_t param, const void *val, bool mark_saved, bool notify_
 
 		/* update the changed value */
 		switch (param_type(param)) {
-
 		case PARAM_TYPE_INT32:
 			params_changed = params_changed || s->val.i != *(int32_t *)val;
 			s->val.i = *(int32_t *)val;
@@ -790,27 +756,6 @@ param_set_internal(param_t param, const void *val, bool mark_saved, bool notify_
 		case PARAM_TYPE_FLOAT:
 			params_changed = params_changed || fabsf(s->val.f - * (float *)val) > FLT_EPSILON;
 			s->val.f = *(float *)val;
-			break;
-
-		case PARAM_TYPE_STRUCT ... PARAM_TYPE_STRUCT_MAX:
-			if (s->val.p == nullptr) {
-				size_t psize = param_size(param);
-
-				if (psize > 0) {
-					s->val.p = malloc(psize);
-
-				} else {
-					s->val.p = nullptr;
-				}
-
-				if (s->val.p == nullptr) {
-					PX4_ERR("failed to allocate parameter storage");
-					goto out;
-				}
-			}
-
-			memcpy(s->val.p, val, param_size(param));
-			params_changed = true;
 			break;
 
 		default:
@@ -1219,22 +1164,6 @@ param_export(int fd, bool only_unsaved)
 			}
 			break;
 
-		case PARAM_TYPE_STRUCT ... PARAM_TYPE_STRUCT_MAX: {
-				const void *value_ptr = param_get_value_ptr(s->param);
-
-				/* lock as short as possible */
-				if (bson_encoder_append_binary(&encoder,
-							       name,
-							       BSON_BIN_BINARY,
-							       size,
-							       value_ptr)) {
-
-					PX4_ERR("BSON append failed for '%s'", name);
-					goto out;
-				}
-			}
-			break;
-
 		default:
 			PX4_ERR("unrecognized parameter type");
 			goto out;
@@ -1497,14 +1426,11 @@ void param_print_status()
 			 utarray_len(param_values), param_values->n, param_values->n * sizeof(UT_icd));
 	}
 
-#ifndef PARAM_NO_AUTOSAVE
 	PX4_INFO("auto save: %s", autosave_disabled ? "off" : "on");
 
 	if (!autosave_disabled && (last_autosave_timestamp > 0)) {
 		PX4_INFO("last auto save: %.3f seconds ago", hrt_elapsed_time(&last_autosave_timestamp) * 1e-6);
 	}
-
-#endif /* PARAM_NO_AUTOSAVE */
 
 	perf_print_counter(param_export_perf);
 	perf_print_counter(param_find_perf);

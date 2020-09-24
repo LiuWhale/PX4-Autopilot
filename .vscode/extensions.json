@@ -4,15 +4,19 @@
     "recommendations": [
         "chiehyu.vscode-astyle",
         "dan-c-underwood.arm",
+        "fredericbonnet.cmake-test-adapter",
         "github.vscode-pull-request-github",
         "marus25.cortex-debug",
         "ms-azuretools.vscode-docker",
         "ms-iot.vscode-ros",
         "ms-python.python",
+        "ms-vscode.cmake-tools",
         "ms-vscode.cpptools",
+        "ms-vscode.cpptools-extension-pack",
+        "redhat.vscode-yaml",
+        "streetsidesoftware.code-spell-checker",
         "twxs.cmake",
         "uavcan.dsdl",
-        "vector-of-bool.cmake-tools",
         "wholroyd.jinja",
         "zixuanwang.linkerscript"
     ]

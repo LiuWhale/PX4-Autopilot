@@ -43,8 +43,8 @@
 
 #include <stdint.h>
 
-#include <px4_config.h>
-#include <px4_defines.h>
+#include <px4_platform_common/px4_config.h>
+#include <px4_platform_common/defines.h>
 
 __BEGIN_DECLS
 
@@ -87,8 +87,8 @@ enum DSM_CMD {							/* DSM bind states */
 	DSM_CMD_BIND_REINIT_UART
 };
 
-#define DSM2_BIND_PULSES 3	/* DSM_BIND_START parameter, pulses required to start dsm2 pairing */
-#define DSMX_BIND_PULSES 7	/* DSM_BIND_START parameter, pulses required to start dsmx pairing */
-#define DSMX8_BIND_PULSES 9 /* DSM_BIND_START parameter, pulses required to start 8 or more channel dsmx pairing */
+#define DSM2_BIND_PULSES 3	/* DSM_BIND_START parameter, pulses required to start pairing DSM2 22ms */
+#define DSMX_BIND_PULSES 7	/* DSM_BIND_START parameter, pulses required to start pairing DSMx 22ms */
+#define DSMX8_BIND_PULSES 9     /* DSM_BIND_START parameter, pulses required to start pairing DSMx 11ms */
 
 __END_DECLS

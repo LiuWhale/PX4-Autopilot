@@ -33,57 +33,57 @@
 
 #pragma once
 
-#include <drivers/device/integrator.h>
-#include <drivers/drv_accel.h>
 #include <drivers/drv_hrt.h>
-#include <lib/cdev/CDev.hpp>
 #include <lib/conversion/rotation.h>
-#include <mathlib/math/filter/LowPassFilter2pVector3f.hpp>
-#include <px4_module_params.h>
-#include <uORB/uORB.h>
+#include <lib/ecl/geo/geo.h>
+#include <px4_platform_common/module_params.h>
 #include <uORB/PublicationMulti.hpp>
 #include <uORB/topics/sensor_accel.h>
+#include <uORB/topics/sensor_accel_fifo.h>
 
-class PX4Accelerometer : public cdev::CDev, public ModuleParams
+class PX4Accelerometer : public ModuleParams
 {
-
 public:
-	PX4Accelerometer(uint32_t device_id, uint8_t priority = ORB_PRIO_DEFAULT, enum Rotation rotation = ROTATION_NONE);
+	PX4Accelerometer(uint32_t device_id, enum Rotation rotation = ROTATION_NONE);
 	~PX4Accelerometer() override;
 
-	int	ioctl(cdev::file_t *filp, int cmd, unsigned long arg) override;
+	uint32_t get_device_id() const { return _device_id; }
 
+	float get_max_rate_hz() const { return _param_imu_gyro_rate_max.get(); }
+
+	void set_device_id(uint32_t device_id) { _device_id = device_id; }
 	void set_device_type(uint8_t devtype);
-	void set_error_count(uint64_t error_count) { _sensor_accel_pub.get().error_count = error_count; }
-	void set_scale(float scale) { _sensor_accel_pub.get().scaling = scale; }
-	void set_temperature(float temperature) { _sensor_accel_pub.get().temperature = temperature; }
+	void set_error_count(uint32_t error_count) { _error_count = error_count; }
+	void increase_error_count() { _error_count++; }
+	void set_range(float range) { _range = range; UpdateClipLimit(); }
+	void set_scale(float scale) { _scale = scale; UpdateClipLimit(); }
+	void set_temperature(float temperature) { _temperature = temperature; }
 
-	void set_sample_rate(unsigned rate);
+	void update(const hrt_abstime &timestamp_sample, float x, float y, float z);
 
-	void update(hrt_abstime timestamp, float x, float y, float z);
-
-	void print_status();
+	void updateFIFO(sensor_accel_fifo_s &sample);
 
 private:
+	void Publish(const hrt_abstime &timestamp_sample, float x, float y, float z, uint8_t clip_count[3]);
+	void UpdateClipLimit();
 
-	void configure_filter(float cutoff_freq) { _filter.set_cutoff_frequency(_sample_rate, cutoff_freq); }
+	uORB::PublicationQueuedMulti<sensor_accel_s> _sensor_pub;
+	uORB::PublicationMulti<sensor_accel_fifo_s>  _sensor_fifo_pub;
 
-	uORB::PublicationMultiData<sensor_accel_s>	_sensor_accel_pub;
-
-	math::LowPassFilter2pVector3f _filter{1000, 100};
-	Integrator _integrator{4000, false};
-
+	uint32_t		_device_id{0};
 	const enum Rotation	_rotation;
 
-	matrix::Vector3f	_calibration_scale{1.0f, 1.0f, 1.0f};
-	matrix::Vector3f	_calibration_offset{0.0f, 0.0f, 0.0f};
+	float			_range{16 * CONSTANTS_ONE_G};
+	float			_scale{1.f};
+	float			_temperature{NAN};
 
-	int			_class_device_instance{-1};
+	float			_clip_limit{_range / _scale};
 
-	unsigned		_sample_rate{1000};
+	uint32_t		_error_count{0};
+
+	int16_t			_last_sample[3] {};
 
 	DEFINE_PARAMETERS(
-		(ParamFloat<px4::params::IMU_ACCEL_CUTOFF>) _param_imu_accel_cutoff
+		(ParamInt<px4::params::IMU_GYRO_RATEMAX>) _param_imu_gyro_rate_max
 	)
-
 };

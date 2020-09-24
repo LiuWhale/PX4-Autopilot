@@ -11,10 +11,11 @@ import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 from pyulog import ULog
 
-from analysis.post_processing import magnetic_field_estimates_from_status, get_estimator_check_flags
+from analysis.post_processing import magnetic_field_estimates_from_states, get_estimator_check_flags
 from plotting.data_plots import TimeSeriesPlot, InnovationPlot, ControlModeSummaryPlot, \
     CheckFlagsPlot
 from analysis.detectors import PreconditionError
+import analysis.data_version_handler as dvh
 
 def create_pdf_report(ulog: ULog, output_plot_filename: str) -> None:
     """
@@ -34,16 +35,21 @@ def create_pdf_report(ulog: ULog, output_plot_filename: str) -> None:
         raise PreconditionError('could not find estimator_status data')
 
     try:
-        ekf2_innovations = ulog.get_dataset('ekf2_innovations').data
-        print('found ekf2_innovation data')
+        estimator_states = ulog.get_dataset('estimator_states').data
+        print('found estimator_states data')
     except:
-        raise PreconditionError('could not find ekf2_innovation data')
+        raise PreconditionError('could not find estimator_states data')
 
     try:
-        sensor_preflight = ulog.get_dataset('sensor_preflight').data
-        print('found sensor_preflight data')
+        estimator_innovations = ulog.get_dataset('estimator_innovations').data
+        estimator_innovation_variances = ulog.get_dataset('estimator_innovation_variances').data
+        innovation_data = estimator_innovations
+        for key in estimator_innovation_variances:
+            # append 'var' to the field name such that we can distingush between innov and innov_var
+            innovation_data.update({str('var_'+key): estimator_innovation_variances[key]})
+        print('found innovation data')
     except:
-        raise PreconditionError('could not find sensor_preflight data')
+        raise PreconditionError('could not find innovation data')
 
     control_mode, innov_flags, gps_fail_flags = get_estimator_check_flags(estimator_status)
 
@@ -54,21 +60,10 @@ def create_pdf_report(ulog: ULog, output_plot_filename: str) -> None:
 
     with PdfPages(output_plot_filename) as pdf_pages:
 
-        # plot IMU consistency data
-        if ('accel_inconsistency_m_s_s' in sensor_preflight.keys()) and (
-                'gyro_inconsistency_rad_s' in sensor_preflight.keys()):
-            data_plot = TimeSeriesPlot(
-                sensor_preflight, [['accel_inconsistency_m_s_s'], ['gyro_inconsistency_rad_s']],
-                x_labels=['data index', 'data index'],
-                y_labels=['acceleration (m/s/s)', 'angular rate (rad/s)'],
-                plot_title='IMU Consistency Check Levels', pdf_handle=pdf_pages)
-            data_plot.save()
-            data_plot.close()
-
         # vertical velocity and position innovations
         data_plot = InnovationPlot(
-            ekf2_innovations, [('vel_pos_innov[2]', 'vel_pos_innov_var[2]'),
-                               ('vel_pos_innov[5]', 'vel_pos_innov_var[5]')],
+            innovation_data, [('gps_vpos', 'var_gps_vpos'),
+                               ('gps_vvel', 'var_gps_vvel')],
             x_labels=['time (sec)', 'time (sec)'],
             y_labels=['Down Vel (m/s)', 'Down Pos (m)'], plot_title='Vertical Innovations',
             pdf_handle=pdf_pages)
@@ -77,8 +72,8 @@ def create_pdf_report(ulog: ULog, output_plot_filename: str) -> None:
 
         # horizontal velocity innovations
         data_plot = InnovationPlot(
-            ekf2_innovations, [('vel_pos_innov[0]', 'vel_pos_innov_var[0]'),
-                               ('vel_pos_innov[1]','vel_pos_innov_var[1]')],
+            innovation_data, [('gps_hvel[0]', 'var_gps_hvel[0]'),
+                              ('gps_hvel[1]', 'var_gps_hvel[1]')],
             x_labels=['time (sec)', 'time (sec)'],
             y_labels=['North Vel (m/s)', 'East Vel (m/s)'],
             plot_title='Horizontal Velocity  Innovations', pdf_handle=pdf_pages)
@@ -87,8 +82,8 @@ def create_pdf_report(ulog: ULog, output_plot_filename: str) -> None:
 
         # horizontal position innovations
         data_plot = InnovationPlot(
-            ekf2_innovations, [('vel_pos_innov[3]', 'vel_pos_innov_var[3]'), ('vel_pos_innov[4]',
-                                                                              'vel_pos_innov_var[4]')],
+            innovation_data, [('gps_hpos[0]', 'var_gps_hpos[0]'),
+                              ('gps_hpos[1]', 'var_gps_hpos[1]')],
             x_labels=['time (sec)', 'time (sec)'],
             y_labels=['North Pos (m)', 'East Pos (m)'], plot_title='Horizontal Position Innovations',
             pdf_handle=pdf_pages)
@@ -97,8 +92,9 @@ def create_pdf_report(ulog: ULog, output_plot_filename: str) -> None:
 
         # magnetometer innovations
         data_plot = InnovationPlot(
-            ekf2_innovations, [('mag_innov[0]', 'mag_innov_var[0]'),
-           ('mag_innov[1]', 'mag_innov_var[1]'), ('mag_innov[2]', 'mag_innov_var[2]')],
+            innovation_data, [('mag_field[0]', 'var_mag_field[0]'),
+                              ('mag_field[1]', 'var_mag_field[1]'),
+                              ('mag_field[2]', 'var_mag_field[2]')],
             x_labels=['time (sec)', 'time (sec)', 'time (sec)'],
             y_labels=['X (Gauss)', 'Y (Gauss)', 'Z (Gauss)'], plot_title='Magnetometer Innovations',
             pdf_handle=pdf_pages)
@@ -107,7 +103,7 @@ def create_pdf_report(ulog: ULog, output_plot_filename: str) -> None:
 
         # magnetic heading innovations
         data_plot = InnovationPlot(
-            ekf2_innovations, [('heading_innov', 'heading_innov_var')],
+            innovation_data, [('heading', 'var_heading')],
             x_labels=['time (sec)'], y_labels=['Heading (rad)'],
             plot_title='Magnetic Heading Innovations', pdf_handle=pdf_pages)
         data_plot.save()
@@ -115,8 +111,8 @@ def create_pdf_report(ulog: ULog, output_plot_filename: str) -> None:
 
         # air data innovations
         data_plot = InnovationPlot(
-            ekf2_innovations,
-            [('airspeed_innov', 'airspeed_innov_var'), ('beta_innov', 'beta_innov_var')],
+            innovation_data, [('airspeed', 'var_airspeed'),
+                              ('beta', 'var_beta')],
             x_labels=['time (sec)', 'time (sec)'],
             y_labels=['innovation (m/sec)', 'innovation (rad)'],
             sub_titles=['True Airspeed Innovations', 'Synthetic Sideslip Innovations'],
@@ -126,8 +122,8 @@ def create_pdf_report(ulog: ULog, output_plot_filename: str) -> None:
 
         # optical flow innovations
         data_plot = InnovationPlot(
-            ekf2_innovations, [('flow_innov[0]', 'flow_innov_var[0]'), ('flow_innov[1]',
-                                                                        'flow_innov_var[1]')],
+            innovation_data, [('flow[0]', 'var_flow[0]'),
+                              ('flow[1]', 'var_flow[1]')],
             x_labels=['time (sec)', 'time (sec)'],
             y_labels=['X (rad/sec)', 'Y (rad/sec)'],
             plot_title='Optical Flow Innovations', pdf_handle=pdf_pages)
@@ -219,11 +215,11 @@ def create_pdf_report(ulog: ULog, output_plot_filename: str) -> None:
         # gps_check_fail_flags summary
         data_plot = CheckFlagsPlot(
             status_time, gps_fail_flags,
-            [['nsat_fail', 'gdop_fail', 'herr_fail', 'verr_fail', 'gfix_fail', 'serr_fail'],
+            [['nsat_fail', 'pdop_fail', 'herr_fail', 'verr_fail', 'gfix_fail', 'serr_fail'],
              ['hdrift_fail', 'vdrift_fail', 'hspd_fail', 'veld_diff_fail']],
             x_label='time (sec)', y_lim=(-0.1, 1.1), y_labels=['failed', 'failed'],
             sub_titles=['GPS Direct Output Check Failures', 'GPS Derived Output Check Failures'],
-            legend=[['N sats', 'GDOP', 'horiz pos error', 'vert pos error', 'fix type',
+            legend=[['N sats', 'PDOP', 'horiz pos error', 'vert pos error', 'fix type',
                      'speed error'], ['horiz drift', 'vert drift', 'horiz speed',
                                       'vert vel inconsistent']], annotate=False, pdf_handle=pdf_pages)
         data_plot.save()
@@ -252,12 +248,12 @@ def create_pdf_report(ulog: ULog, output_plot_filename: str) -> None:
 
         # Plot the EKF output observer tracking errors
         scaled_innovations = {
-            'output_tracking_error[0]': 1000. * ekf2_innovations['output_tracking_error[0]'],
-            'output_tracking_error[1]': ekf2_innovations['output_tracking_error[1]'],
-            'output_tracking_error[2]': ekf2_innovations['output_tracking_error[2]']
+            'output_tracking_error[0]': 1000. * estimator_status['output_tracking_error[0]'],
+            'output_tracking_error[1]': estimator_status['output_tracking_error[1]'],
+            'output_tracking_error[2]': estimator_status['output_tracking_error[2]']
             }
         data_plot = CheckFlagsPlot(
-            1e-6 * ekf2_innovations['timestamp'], scaled_innovations,
+            1e-6 * estimator_status['timestamp'], scaled_innovations,
             [['output_tracking_error[0]'], ['output_tracking_error[1]'],
              ['output_tracking_error[2]']], x_label='time (sec)',
             y_labels=['angles (mrad)', 'velocity (m/s)', 'position (m)'],
@@ -268,7 +264,7 @@ def create_pdf_report(ulog: ULog, output_plot_filename: str) -> None:
 
         # Plot the delta angle bias estimates
         data_plot = CheckFlagsPlot(
-            1e-6 * estimator_status['timestamp'], estimator_status,
+            1e-6 * estimator_states['timestamp'], estimator_states,
             [['states[10]'], ['states[11]'], ['states[12]']],
             x_label='time (sec)', y_labels=['X (rad)', 'Y (rad)', 'Z (rad)'],
             plot_title='Delta Angle Bias Estimates', annotate=False, pdf_handle=pdf_pages)
@@ -277,7 +273,7 @@ def create_pdf_report(ulog: ULog, output_plot_filename: str) -> None:
 
         # Plot the delta velocity bias estimates
         data_plot = CheckFlagsPlot(
-            1e-6 * estimator_status['timestamp'], estimator_status,
+            1e-6 * estimator_states['timestamp'], estimator_states,
             [['states[13]'], ['states[14]'], ['states[15]']],
             x_label='time (sec)', y_labels=['X (m/s)', 'Y (m/s)', 'Z (m/s)'],
             plot_title='Delta Velocity Bias Estimates', annotate=False, pdf_handle=pdf_pages)
@@ -285,10 +281,10 @@ def create_pdf_report(ulog: ULog, output_plot_filename: str) -> None:
         data_plot.close()
 
         # Plot the earth frame magnetic field estimates
-        declination, field_strength, inclination = magnetic_field_estimates_from_status(
-            estimator_status)
+        declination, field_strength, inclination = magnetic_field_estimates_from_states(
+            estimator_states)
         data_plot = CheckFlagsPlot(
-            1e-6 * estimator_status['timestamp'],
+            1e-6 * estimator_states['timestamp'],
             {'strength': field_strength, 'declination': declination, 'inclination': inclination},
             [['declination'], ['inclination'], ['strength']],
             x_label='time (sec)', y_labels=['declination (deg)', 'inclination (deg)',
@@ -300,7 +296,7 @@ def create_pdf_report(ulog: ULog, output_plot_filename: str) -> None:
 
         # Plot the body frame magnetic field estimates
         data_plot = CheckFlagsPlot(
-            1e-6 * estimator_status['timestamp'], estimator_status,
+            1e-6 * estimator_states['timestamp'], estimator_states,
             [['states[19]'], ['states[20]'], ['states[21]']],
             x_label='time (sec)', y_labels=['X (Gauss)', 'Y (Gauss)', 'Z (Gauss)'],
             plot_title='Magnetometer Bias Estimates', annotate=False, pdf_handle=pdf_pages)
@@ -309,7 +305,7 @@ def create_pdf_report(ulog: ULog, output_plot_filename: str) -> None:
 
         # Plot the EKF wind estimates
         data_plot = CheckFlagsPlot(
-            1e-6 * estimator_status['timestamp'], estimator_status,
+            1e-6 * estimator_states['timestamp'], estimator_states,
             [['states[22]'], ['states[23]']], x_label='time (sec)',
             y_labels=['North (m/s)', 'East (m/s)'], plot_title='Wind Velocity Estimates',
             annotate=False, pdf_handle=pdf_pages)

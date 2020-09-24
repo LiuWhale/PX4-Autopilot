@@ -41,7 +41,7 @@
  * Included Files
  ************************************************************************************/
 
-#include <px4_config.h>
+#include <px4_platform_common/px4_config.h>
 
 #include <errno.h>
 #include <debug.h>
@@ -50,7 +50,7 @@
 #include <arch/board/board.h>
 
 #include "chip.h"
-#include "up_arch.h"
+#include "arm_arch.h"
 
 #include "stm32.h"
 #include "stm32_can.h"

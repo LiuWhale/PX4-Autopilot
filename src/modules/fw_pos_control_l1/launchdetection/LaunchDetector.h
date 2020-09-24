@@ -42,7 +42,7 @@
 #define LAUNCHDETECTOR_H
 
 #include "LaunchMethod.h"
-#include <px4_module_params.h>
+#include <px4_platform_common/module_params.h>
 
 namespace launchdetection
 {
@@ -58,7 +58,7 @@ public:
 
 	void reset();
 
-	void update(float accel_x);
+	void update(const float dt, float accel_x);
 	LaunchDetectionResult getLaunchDetected();
 	bool launchDetectionEnabled() { return _param_laun_all_on.get(); }
 

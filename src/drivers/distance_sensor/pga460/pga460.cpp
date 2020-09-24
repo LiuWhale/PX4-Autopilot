@@ -84,7 +84,7 @@ uint8_t PGA460::calc_checksum(uint8_t *data, const uint8_t size)
 
 int PGA460::close_serial()
 {
-	int ret = px4_close(_fd);
+	int ret = ::close(_fd);
 
 	if (ret != 0) {
 		PX4_WARN("Could not close serial port");
@@ -292,7 +292,7 @@ float PGA460::get_temperature()
 
 int PGA460::open_serial()
 {
-	_fd = px4_open(_port, O_RDWR | O_NOCTTY | O_NONBLOCK);
+	_fd = ::open(_port, O_RDWR | O_NOCTTY | O_NONBLOCK);
 
 	if (_fd < 0) {
 		PX4_WARN("Failed to open serial port");
@@ -464,12 +464,6 @@ void PGA460::print_diagnostics(const uint8_t diagnostic_byte)
 	}
 }
 
-int PGA460::print_status()
-{
-	PX4_INFO("Distance: %2.2f", (double)_previous_valid_report_distance);
-	return PX4_OK;
-}
-
 int PGA460::print_usage(const char *reason)
 {
 	if (reason) {
@@ -490,8 +484,9 @@ to be invalid or unstable.
 )DESCR_STR");
 
 	PRINT_MODULE_USAGE_NAME("pga460", "driver");
-	PRINT_MODULE_USAGE_COMMAND("start <device_path>");
-	PRINT_MODULE_USAGE_ARG("device_path", "The pga460 sensor device path, (e.g: /dev/ttyS6", true);
+	PRINT_MODULE_USAGE_SUBCATEGORY("distance_sensor");
+	PRINT_MODULE_USAGE_COMMAND("start");
+	PRINT_MODULE_USAGE_ARG("device_path", "The pga460 sensor device path, (e.g: /dev/ttyS6)", true);
 	PRINT_MODULE_USAGE_COMMAND("status");
 	PRINT_MODULE_USAGE_COMMAND("stop");
 	PRINT_MODULE_USAGE_COMMAND("help");

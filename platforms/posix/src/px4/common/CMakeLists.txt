@@ -50,11 +50,13 @@ endif()
 
 add_library(px4_layer
 	px4_posix_impl.cpp
-	px4_posix_tasks.cpp
+	tasks.cpp
 	px4_sem.cpp
 	px4_init.cpp
 	lib_crc32.c
 	drv_hrt.cpp
+	cpuload.cpp
+	print_load.cpp
 	${SHMEM_SRCS}
 )
 target_compile_definitions(px4_layer PRIVATE MODULE_NAME="px4")
@@ -67,13 +69,12 @@ if(ENABLE_LOCKSTEP_SCHEDULER)
 endif()
 
 
-if (EXTRA_DEPENDS)
+if(EXTRA_DEPENDS)
 	add_dependencies(px4_layer ${EXTRA_DEPENDS})
 endif()
 
 
-if (BUILD_TESTING)
+if(BUILD_TESTING)
 	add_subdirectory(test_stubs)
 	add_subdirectory(gtest_runner)
 endif()
-

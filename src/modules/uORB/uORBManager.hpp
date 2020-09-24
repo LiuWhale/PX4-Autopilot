@@ -106,8 +106,7 @@ public:
 	 * Any number of advertisers may publish to a topic; publications are atomic
 	 * but co-ordination between publishers is not provided by the ORB.
 	 *
-	 * Internally this will call orb_advertise_multi with an instance of 0 and
-	 * default priority.
+	 * Internally this will call orb_advertise_multi with an instance of 0.
 	 *
 	 * @param meta    The uORB metadata (usually from the ORB_ID() macro)
 	 *      for the topic.
@@ -124,7 +123,7 @@ public:
 	 */
 	orb_advert_t orb_advertise(const struct orb_metadata *meta, const void *data, unsigned int queue_size = 1)
 	{
-		return orb_advertise_multi(meta, data, nullptr, ORB_PRIO_DEFAULT, queue_size);
+		return orb_advertise_multi(meta, data, nullptr, queue_size);
 	}
 
 	/**
@@ -149,10 +148,6 @@ public:
 	 * @param instance  Pointer to an integer which will yield the instance ID (0-based)
 	 *      of the publication. This is an output parameter and will be set to the newly
 	 *      created instance, ie. 0 for the first advertiser, 1 for the next and so on.
-	 * @param priority  The priority of the instance. If a subscriber subscribes multiple
-	 *      instances, the priority allows the subscriber to prioritize the best
-	 *      data source as long as its available. The subscriber is responsible to check
-	 *      and handle different priorities (@see orb_priority()).
 	 * @param queue_size  Maximum number of buffered elements. If this is 1, no queuing is
 	 *      used.
 	 * @return    PX4_ERROR on error, otherwise returns a handle
@@ -162,7 +157,7 @@ public:
 	 *      this function will return -1 and set errno to ENOENT.
 	 */
 	orb_advert_t orb_advertise_multi(const struct orb_metadata *meta, const void *data, int *instance,
-					 int priority, unsigned int queue_size = 1);
+					 unsigned int queue_size = 1);
 
 	/**
 	 * Unadvertise a topic.
@@ -177,7 +172,7 @@ public:
 	 *
 	 * The data is atomically published to the topic and any waiting subscribers
 	 * will be notified.  Subscribers that are not waiting can check the topic
-	 * for updates using orb_check and/or orb_stat.
+	 * for updates using orb_check.
 	 *
 	 * @param meta    The uORB metadata (usually from the ORB_ID() macro)
 	 *      for the topic.
@@ -192,7 +187,7 @@ public:
 	 *
 	 * The returned value is a file descriptor that can be passed to poll()
 	 * in order to wait for updates to a topic, as well as topic_read,
-	 * orb_check and orb_stat.
+	 * orb_check.
 	 *
 	 * If there were any publications of the topic prior to the subscription,
 	 * an orb_check right after orb_subscribe will return true.
@@ -222,7 +217,7 @@ public:
 	 *
 	 * The returned value is a file descriptor that can be passed to poll()
 	 * in order to wait for updates to a topic, as well as topic_read,
-	 * orb_check and orb_stat.
+	 * orb_check.
 	 *
 	 * If there were any publications of the topic prior to the subscription,
 	 * an orb_check right after orb_subscribe_multi will return true.
@@ -289,9 +284,7 @@ public:
 	 * topic is likely to have updated.
 	 *
 	 * Updates are tracked on a per-handle basis; this call will continue to
-	 * return true until orb_copy is called using the same handle. This interface
-	 * should be preferred over calling orb_stat due to the race window between
-	 * stat and copy that can lead to missed updates.
+	 * return true until orb_copy is called using the same handle.
 	 *
 	 * @param handle  A handle returned from orb_subscribe.
 	 * @param updated Set to true if the topic has been updated since the
@@ -302,17 +295,6 @@ public:
 	int  orb_check(int handle, bool *updated);
 
 	/**
-	 * Return the last time that the topic was updated. If a queue is used, it returns
-	 * the timestamp of the latest element in the queue.
-	 *
-	 * @param handle  A handle returned from orb_subscribe.
-	 * @param time    Returns the absolute time that the topic was updated, or zero if it has
-	 *      never been updated. Time is measured in microseconds.
-	 * @return    OK on success, PX4_ERROR otherwise with errno set accordingly.
-	 */
-	int  orb_stat(int handle, uint64_t *time);
-
-	/**
 	 * Check if a topic has already been created and published (advertised)
 	 *
 	 * @param meta    ORB topic metadata.
@@ -320,18 +302,6 @@ public:
 	 * @return    OK if the topic exists, PX4_ERROR otherwise.
 	 */
 	int  orb_exists(const struct orb_metadata *meta, int instance);
-
-	/**
-	 * Return the priority of the topic
-	 *
-	 * @param handle  A handle returned from orb_subscribe.
-	 * @param priority  Returns the priority of this topic. This is only relevant for
-	 *      topics which are published by multiple publishers (e.g. mag0, mag1, etc.)
-	 *      and allows a subscriber to pick the topic with the highest priority,
-	 *      independent of the startup order of the associated publishers.
-	 * @return    OK on success, PX4_ERROR otherwise with errno set accordingly.
-	 */
-	int  orb_priority(int handle, int32_t *priority);
 
 	/**
 	 * Set the minimum interval between which updates are seen for a subscription.
@@ -389,14 +359,6 @@ public:
 #endif /* ORB_COMMUNICATOR */
 
 private: // class methods
-	/**
-	 * Advertise a node; don't consider it an error if the node has
-	 * already been advertised.
-	 *
-	 * @todo verify that the existing node is the same as the one
-	 *       we tried to advertise.
-	 */
-	int node_advertise(const struct orb_metadata *meta, int *instance = nullptr, int priority = ORB_PRIO_DEFAULT);
 
 	/**
 	 * Common implementation for orb_advertise and orb_subscribe.
@@ -404,8 +366,7 @@ private: // class methods
 	 * Handles creation of the object and the initial publication for
 	 * advertisers.
 	 */
-	int node_open(const struct orb_metadata *meta, bool advertiser, int *instance = nullptr,
-		      int priority = ORB_PRIO_DEFAULT);
+	int node_open(const struct orb_metadata *meta, bool advertiser, int *instance = nullptr);
 
 private: // data members
 	static Manager *_Instance;

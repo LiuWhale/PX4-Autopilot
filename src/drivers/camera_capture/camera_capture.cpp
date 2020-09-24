@@ -48,8 +48,10 @@ namespace camera_capture
 CameraCapture *g_camera_capture{nullptr};
 }
 
+struct work_s CameraCapture::_work_publisher;
+
 CameraCapture::CameraCapture() :
-	ScheduledWorkItem(px4::wq_configurations::lp_default)
+	ScheduledWorkItem(MODULE_NAME, px4::wq_configurations::lp_default)
 {
 	memset(&_work_publisher, 0, sizeof(_work_publisher));
 
@@ -67,9 +69,7 @@ CameraCapture::CameraCapture() :
 CameraCapture::~CameraCapture()
 {
 	/* free any existing reports */
-	if (_trig_buffer != nullptr) {
-		delete _trig_buffer;
-	}
+	delete _trig_buffer;
 
 	camera_capture::g_camera_capture = nullptr;
 }
@@ -88,7 +88,7 @@ CameraCapture::capture_callback(uint32_t chan_index, hrt_abstime edge_time, uint
 int
 CameraCapture::gpio_interrupt_routine(int irq, void *context, void *arg)
 {
-	CameraCapture *dev = reinterpret_cast<CameraCapture *>(arg);
+	CameraCapture *dev = static_cast<CameraCapture *>(arg);
 
 	dev->_trigger.chan_index = 0;
 	dev->_trigger.edge_time = hrt_absolute_time();
@@ -103,7 +103,7 @@ CameraCapture::gpio_interrupt_routine(int irq, void *context, void *arg)
 void
 CameraCapture::publish_trigger_trampoline(void *arg)
 {
-	CameraCapture *dev = reinterpret_cast<CameraCapture *>(arg);
+	CameraCapture *dev = static_cast<CameraCapture *>(arg);
 
 	dev->publish_trigger();
 }
@@ -209,7 +209,15 @@ CameraCapture::Run()
 void
 CameraCapture::set_capture_control(bool enabled)
 {
-#if !defined CONFIG_ARCH_BOARD_AV_X_V1
+// a board can define BOARD_CAPTURE_GPIO to use a separate capture pin
+#if defined(BOARD_CAPTURE_GPIO)
+
+	px4_arch_gpiosetevent(BOARD_CAPTURE_GPIO, true, false, true, &CameraCapture::gpio_interrupt_routine, this);
+	_capture_enabled = enabled;
+	_gpio_capture = true;
+	reset_statistics(false);
+
+#else
 
 	int fd = ::open(PX4FMU_DEVICE_PATH, O_RDWR);
 
@@ -229,8 +237,8 @@ CameraCapture::set_capture_control(bool enabled)
 		conf.edge = Both;
 	}
 
-	conf.callback = NULL;
-	conf.context = NULL;
+	conf.callback = nullptr;
+	conf.context = nullptr;
 
 	if (enabled) {
 
@@ -264,22 +272,11 @@ CameraCapture::set_capture_control(bool enabled)
 		goto err_out;
 	}
 
-#else
-
-	px4_arch_gpiosetevent(GPIO_TRIG_AVX, true, false, true, &CameraCapture::gpio_interrupt_routine, this);
-	_capture_enabled = enabled;
-	_gpio_capture = true;
-
-#endif
-
 	reset_statistics(false);
 
-#if !defined CONFIG_ARCH_BOARD_AV_X_V1
 err_out:
 	::close(fd);
 #endif
-
-	return;
 }
 
 void
@@ -328,7 +325,14 @@ CameraCapture::status()
 {
 	PX4_INFO("Capture enabled : %s", _capture_enabled ? "YES" : "NO");
 	PX4_INFO("Frame sequence : %u", _capture_seq);
-	PX4_INFO("Last trigger timestamp : %llu", _last_trig_time);
+
+	if (_last_trig_time != 0) {
+		PX4_INFO("Last trigger timestamp : %" PRIu64 " (%i ms ago)", _last_trig_time,
+			 (int)(hrt_elapsed_time(&_last_trig_time) / 1000));
+
+	} else {
+		PX4_INFO("No trigger yet");
+	}
 
 	if (_camera_capture_mode != 0) {
 		PX4_INFO("Last exposure time : %0.2f ms", double(_last_exposure_time) / 1000.0);

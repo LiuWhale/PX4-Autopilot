@@ -43,9 +43,9 @@
  *
  */
 
-#include <px4_config.h>
-#include <px4_log.h>
-#include <px4_module.h>
+#include <px4_platform_common/px4_config.h>
+#include <px4_platform_common/log.h>
+#include <px4_platform_common/module.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -54,7 +54,7 @@
 
 #include <parameters/param.h>
 
-#include <arch/board/board.h>
+
 #include "RoboClaw.hpp"
 
 static bool thread_running = false;     /**< Deamon status flag */
@@ -82,7 +82,7 @@ static void usage()
 	PRINT_MODULE_DESCRIPTION(R"DESCR_STR(
 ### Description
 
-This driver communicates over UART with the [Roboclaw motor driver](http://downloads.ionmc.com/docs/roboclaw_user_manual.pdf).
+This driver communicates over UART with the [Roboclaw motor driver](http://downloads.basicmicro.com/docs/roboclaw_user_manual.pdf).
 It performs two tasks:
 
  - Control the motors based on the `actuator_controls_0` UOrb topic.

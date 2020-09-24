@@ -41,7 +41,7 @@
 
 #pragma once
 
-#include <px4_config.h>
+#include <px4_platform_common/px4_config.h>
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -51,12 +51,6 @@
 #include "protocol.h"
 
 #include <output_limit/output_limit.h>
-
-/*
- hotfix: we are critically short of memory in px4io and this is the
- easiest way to reclaim about 800 bytes.
- */
-#define perf_alloc(a,b) NULL
 
 /*
  * Constants and limits.
@@ -165,7 +159,12 @@ extern output_limit_t pwm_limit;
 /*
  * GPIO handling.
  */
+/* HEX Cube Orange and Cube Yellow uses an inverted signal to control the IMU heater */
+#ifdef CONFIG_ARCH_BOARD_CUBEPILOT_IO_V2
+#define LED_BLUE(_s)			px4_arch_gpiowrite(GPIO_LED1, (_s))
+#else
 #define LED_BLUE(_s)			px4_arch_gpiowrite(GPIO_LED1, !(_s))
+#endif
 #define LED_AMBER(_s)			px4_arch_gpiowrite(GPIO_LED2, !(_s))
 #define LED_SAFETY(_s)			px4_arch_gpiowrite(GPIO_LED3, !(_s))
 #define LED_RING(_s)			px4_arch_gpiowrite(GPIO_LED4, (_s))
@@ -186,11 +185,9 @@ extern output_limit_t pwm_limit;
 
 #define PX4_CRITICAL_SECTION(cmd)	{ irqstate_t flags = px4_enter_critical_section(); cmd; px4_leave_critical_section(flags); }
 
-#define PX4_ATOMIC_MODIFY_OR(target, modification)	{ if ((target | (modification)) != target) { PX4_CRITICAL_SECTION(target |= (modification)); } }
-
-#define PX4_ATOMIC_MODIFY_CLEAR(target, modification)	{ if ((target & ~(modification)) != target) { PX4_CRITICAL_SECTION(target &= ~(modification)); } }
-
-#define PX4_ATOMIC_MODIFY_AND(target, modification)	{ if ((target & (modification)) != target) { PX4_CRITICAL_SECTION(target &= (modification)); } }
+void atomic_modify_or(volatile uint16_t *target, uint16_t modification);
+void atomic_modify_clear(volatile uint16_t *target, uint16_t modification);
+void atomic_modify_and(volatile uint16_t *target, uint16_t modification);
 
 /*
  * Mixer

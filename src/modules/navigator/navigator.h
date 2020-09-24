@@ -41,7 +41,6 @@
 
 #pragma once
 
-#include "datalinkloss.h"
 #include "enginefailure.h"
 #include "follow_target.h"
 #include "geofence.h"
@@ -51,16 +50,15 @@
 #include "loiter.h"
 #include "mission.h"
 #include "navigator_mode.h"
-#include "rcloss.h"
 #include "rtl.h"
 #include "takeoff.h"
 
 #include "navigation.h"
 
 #include <lib/perf/perf_counter.h>
-#include <px4_module.h>
-#include <px4_module_params.h>
-#include <uORB/PublicationQueued.hpp>
+#include <px4_platform_common/module.h>
+#include <px4_platform_common/module_params.h>
+#include <uORB/Publication.hpp>
 #include <uORB/Subscription.hpp>
 #include <uORB/topics/geofence_result.h>
 #include <uORB/topics/home_position.h>
@@ -83,7 +81,7 @@
 /**
  * Number of navigation modes that need on_active/on_inactive calls
  */
-#define NAVIGATOR_MODE_ARRAY_SIZE 11
+#define NAVIGATOR_MODE_ARRAY_SIZE 9
 
 
 class Navigator : public ModuleBase<Navigator>, public ModuleParams
@@ -129,9 +127,10 @@ public:
 	 * @param altitude_diff Altitude difference, positive is up
 	 * @param hor_velocity Horizontal velocity of traffic, in m/s
 	 * @param ver_velocity Vertical velocity of traffic, in m/s
+	 * @param emitter_type, Type of vehicle, as a number
 	 */
 	void		fake_traffic(const char *callsign, float distance, float direction, float traffic_heading, float altitude_diff,
-				     float hor_velocity, float ver_velocity);
+				     float hor_velocity, float ver_velocity, int emitter_type);
 
 	/**
 	 * Check nearby traffic for potential collisions
@@ -221,11 +220,15 @@ public:
 	 */
 	void		reset_cruising_speed();
 
-
 	/**
 	 *  Set triplets to invalid
 	 */
 	void 		reset_triplets();
+
+	/**
+	 *  Set position setpoint to safe defaults
+	 */
+	void		reset_position_setpoint(position_setpoint_s &sp);
 
 	/**
 	 * Get the target throttle
@@ -237,7 +240,7 @@ public:
 	/**
 	 * Set the target throttle
 	 */
-	void		set_cruising_throttle(float throttle = -1.0f) { _mission_throttle = throttle; }
+	void		set_cruising_throttle(float throttle = NAN) { _mission_throttle = throttle; }
 
 	/**
 	 * Get the acceptance radius given the mission item preset radius
@@ -258,6 +261,7 @@ public:
 	 */
 	float 		get_yaw_acceptance(float mission_item_yaw);
 
+
 	orb_advert_t	*get_mavlink_log_pub() { return &_mavlink_log_pub; }
 
 	void		increment_mission_instance_count() { _mission_result.instance_count++; }
@@ -268,7 +272,11 @@ public:
 	bool		is_planned_mission() const { return _navigation_mode == &_mission; }
 	bool		on_mission_landing() { return _mission.landing(); }
 	bool		start_mission_landing() { return _mission.land_start(); }
-	bool		mission_start_land_available() { return _mission.get_land_start_available(); }
+	bool		get_mission_start_land_available() { return _mission.get_land_start_available(); }
+	int 		get_mission_landing_index() { return _mission.get_land_start_index(); }
+	double 	get_mission_landing_lat() { return _mission.get_landing_lat(); }
+	double 	get_mission_landing_lon() { return _mission.get_landing_lon(); }
+	float 	get_mission_landing_alt() { return _mission.get_landing_alt(); }
 
 	// RTL
 	bool		mission_landing_required() { return _rtl.rtl_type() == RTL::RTL_LAND; }
@@ -282,7 +290,7 @@ public:
 	float		get_takeoff_min_alt() const { return _param_mis_takeoff_alt.get(); }
 	bool		get_takeoff_required() const { return _param_mis_takeoff_req.get(); }
 	float		get_yaw_timeout() const { return _param_mis_yaw_tmt.get(); }
-	float		get_yaw_threshold() const { return _param_mis_yaw_err.get(); }
+	float		get_yaw_threshold() const { return math::radians(_param_mis_yaw_err.get()); }
 
 	float		get_vtol_back_trans_deceleration() const { return _param_back_trans_dec_mss; }
 	float		get_vtol_reverse_delay() const { return _param_reverse_delay; }
@@ -301,6 +309,8 @@ private:
 		_param_nav_mc_alt_rad,	/**< acceptance radius for multicopter altitude */
 		(ParamInt<px4::params::NAV_FORCE_VT>) _param_nav_force_vt,	/**< acceptance radius for multicopter altitude */
 		(ParamInt<px4::params::NAV_TRAFF_AVOID>) _param_nav_traff_avoid,	/**< avoiding other aircraft is enabled */
+		(ParamFloat<px4::params::NAV_TRAFF_A_RADU>) _param_nav_traff_a_radu,	/**< avoidance Distance Unmanned*/
+		(ParamFloat<px4::params::NAV_TRAFF_A_RADM>) _param_nav_traff_a_radm,	/**< avoidance Distance Manned*/
 
 		// non-navigator parameters
 		// Mission (MIS_*)
@@ -312,16 +322,16 @@ private:
 	)
 
 	int		_local_pos_sub{-1};		/**< local position subscription */
+	int		_vehicle_status_sub{-1};	/**< local position subscription */
 
 	uORB::Subscription _global_pos_sub{ORB_ID(vehicle_global_position)};	/**< global position subscription */
 	uORB::Subscription _gps_pos_sub{ORB_ID(vehicle_gps_position)};		/**< gps position subscription */
 	uORB::Subscription _home_pos_sub{ORB_ID(home_position)};		/**< home position subscription */
 	uORB::Subscription _land_detected_sub{ORB_ID(vehicle_land_detected)};	/**< vehicle land detected subscription */
-	uORB::Subscription _param_update_sub{ORB_ID(parameter_update)};		/**< param update subscription */
+	uORB::Subscription _parameter_update_sub{ORB_ID(parameter_update)};	/**< param update subscription */
 	uORB::Subscription _pos_ctrl_landing_status_sub{ORB_ID(position_controller_landing_status)};	/**< position controller landing status subscription */
 	uORB::Subscription _traffic_sub{ORB_ID(transponder_report)};		/**< traffic subscription */
 	uORB::Subscription _vehicle_command_sub{ORB_ID(vehicle_command)};	/**< vehicle commands (onboard and offboard) */
-	uORB::Subscription _vstatus_sub{ORB_ID(vehicle_status)};		/**< vehicle status subscription */
 
 	uORB::SubscriptionData<position_controller_status_s>	_position_controller_status_sub{ORB_ID(position_controller_status)};
 
@@ -370,8 +380,6 @@ private:
 	Land		_land;			/**< class for handling land commands */
 	PrecLand	_precland;			/**< class for handling precision land commands */
 	RTL 		_rtl;				/**< class that handles RTL */
-	RCLoss 		_rcLoss;				/**< class that handles RTL according to OBC rules (rc loss mode) */
-	DataLinkLoss	_dataLinkLoss;			/**< class that handles the OBC datalink loss mode */
 	EngineFailure	_engineFailure;			/**< class that handles the engine failure mode (FW only!) */
 	GpsFailure	_gpsFailure;			/**< class that handles the OBC gpsfailure loss mode */
 	FollowTarget	_follow_target;
@@ -385,7 +393,7 @@ private:
 
 	float _mission_cruising_speed_mc{-1.0f};
 	float _mission_cruising_speed_fw{-1.0f};
-	float _mission_throttle{-1.0f};
+	float _mission_throttle{NAN};
 
 	// update subscriptions
 	void		params_update();

@@ -134,8 +134,6 @@ def calculate_innov_fail_metrics(
 def calculate_imu_metrics(
         ulog: ULog, in_air_no_ground_effects: InAirDetector) -> dict:
 
-    ekf2_innovation_data = ulog.get_dataset('ekf2_innovations').data
-
     estimator_status_data = ulog.get_dataset('estimator_status').data
 
     imu_metrics = dict()
@@ -145,7 +143,7 @@ def calculate_imu_metrics(
                            ('output_tracking_error[1]', 'output_obs_vel_err_median'),
                            ('output_tracking_error[2]', 'output_obs_pos_err_median')]:
         imu_metrics[result] = calculate_stat_from_signal(
-            ekf2_innovation_data, 'ekf2_innovations', signal, in_air_no_ground_effects, np.median)
+            estimator_status_data, 'estimator_status', signal, in_air_no_ground_effects, np.median)
 
     # calculates peak and mean for IMU vibration checks
     for signal, result in [('vibe[0]', 'imu_coning'),
@@ -160,11 +158,13 @@ def calculate_imu_metrics(
                 in_air_no_ground_effects, np.mean)
 
     # IMU bias checks
+    estimator_states_data = ulog.get_dataset('estimator_states').data
+
     imu_metrics['imu_dang_bias_median'] = np.sqrt(np.sum([np.square(calculate_stat_from_signal(
-        estimator_status_data, 'estimator_status', signal, in_air_no_ground_effects, np.median))
+        estimator_states_data, 'estimator_states', signal, in_air_no_ground_effects, np.median))
         for signal in ['states[10]', 'states[11]', 'states[12]']]))
     imu_metrics['imu_dvel_bias_median'] = np.sqrt(np.sum([np.square(calculate_stat_from_signal(
-        estimator_status_data, 'estimator_status', signal, in_air_no_ground_effects, np.median))
+        estimator_states_data, 'estimator_states', signal, in_air_no_ground_effects, np.median))
         for signal in ['states[13]', 'states[14]', 'states[15]']]))
 
     return imu_metrics

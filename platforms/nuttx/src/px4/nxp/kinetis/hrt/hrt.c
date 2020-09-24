@@ -46,9 +46,8 @@
  * claim the timer and then drive it directly.
  */
 
-#include <px4_config.h>
+#include <px4_platform_common/px4_config.h>
 #include <systemlib/px4_macros.h>
-#include <lib/perf/perf_counter.h>
 #include <nuttx/arch.h>
 #include <nuttx/irq.h>
 
@@ -67,7 +66,7 @@
 
 
 #include "kinetis.h"
-#include "chip/kinetis_sim.h"
+#include "hardware/kinetis_sim.h"
 #include "kinetis_tpm.h"
 
 #undef PPM_DEBUG
@@ -178,6 +177,11 @@ static uint16_t           latency_baseline;
 
 /* timer count at interrupt (for latency purposes) */
 static uint16_t           latency_actual;
+
+/* latency histogram */
+const uint16_t latency_bucket_count = LATENCY_BUCKET_COUNT;
+const uint16_t latency_buckets[LATENCY_BUCKET_COUNT] = { 1, 2, 5, 10, 20, 50, 100, 1000 };
+__EXPORT uint32_t latency_counters[LATENCY_BUCKET_COUNT + 1];
 
 /* timer-specific functions */
 static void hrt_tim_init(void);
@@ -612,16 +616,12 @@ hrt_elapsed_time_atomic(const volatile hrt_abstime *then)
 /**
  * Store the absolute time in an interrupt-safe fashion
  */
-hrt_abstime
-hrt_store_absolute_time(volatile hrt_abstime *now)
+void
+hrt_store_absolute_time(volatile hrt_abstime *t)
 {
 	irqstate_t flags = px4_enter_critical_section();
-
-	hrt_abstime ts = hrt_absolute_time();
-
+	*t = hrt_absolute_time();
 	px4_leave_critical_section(flags);
-
-	return ts;
 }
 
 /**

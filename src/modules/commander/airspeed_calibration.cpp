@@ -41,14 +41,13 @@
 #include "calibration_routines.h"
 #include "commander_helper.h"
 
-#include <px4_defines.h>
-#include <px4_posix.h>
-#include <px4_time.h>
+#include <px4_platform_common/defines.h>
+#include <px4_platform_common/posix.h>
+#include <px4_platform_common/time.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <poll.h>
-#include <cmath>
+#include <math.h>
 #include <drivers/drv_hrt.h>
 #include <drivers/drv_airspeed.h>
 #include <uORB/topics/differential_pressure.h>
@@ -66,6 +65,8 @@ static void feedback_calibration_failed(orb_advert_t *mavlink_log_pub)
 
 int do_airspeed_calibration(orb_advert_t *mavlink_log_pub)
 {
+	const hrt_abstime calibration_started = hrt_absolute_time();
+
 	int result = PX4_OK;
 	unsigned calibration_counter = 0;
 	const unsigned maxcount = 2400;
@@ -89,7 +90,7 @@ int do_airspeed_calibration(orb_advert_t *mavlink_log_pub)
 	bool paramreset_successful = false;
 	int  fd = px4_open(AIRSPEED0_DEVICE_PATH, 0);
 
-	if (fd > 0) {
+	if (fd >= 0) {
 		if (PX4_OK == px4_ioctl(fd, AIRSPEEDIOCSSCALE, (long unsigned int)&airscale)) {
 			paramreset_successful = true;
 
@@ -99,8 +100,6 @@ int do_airspeed_calibration(orb_advert_t *mavlink_log_pub)
 
 		px4_close(fd);
 	}
-
-	int cancel_sub = calibrate_cancel_subscribe();
 
 	if (!paramreset_successful) {
 
@@ -115,7 +114,7 @@ int do_airspeed_calibration(orb_advert_t *mavlink_log_pub)
 
 		/* set scaling offset parameter */
 		if (param_set(param_find("SENS_DPRES_OFF"), &(diff_pres_offset))) {
-			calibration_log_critical(mavlink_log_pub, CAL_ERROR_SET_PARAMS_MSG, 1);
+			calibration_log_critical(mavlink_log_pub, CAL_ERROR_SET_PARAMS_MSG);
 			goto error_return;
 		}
 	}
@@ -125,7 +124,7 @@ int do_airspeed_calibration(orb_advert_t *mavlink_log_pub)
 
 	while (calibration_counter < calibration_count) {
 
-		if (calibrate_cancel_check(mavlink_log_pub, cancel_sub)) {
+		if (calibrate_cancel_check(mavlink_log_pub, calibration_started)) {
 			goto error_return;
 		}
 
@@ -146,7 +145,7 @@ int do_airspeed_calibration(orb_advert_t *mavlink_log_pub)
 			if (diff_pres.error_count != 0) {
 				calibration_log_critical(mavlink_log_pub, "[cal] Airspeed sensor is reporting errors (%" PRIu64 ")",
 							 diff_pres.error_count);
-				calibration_log_critical(mavlink_log_pub, "[cal] Check your wiring before trying again");
+				calibration_log_critical(mavlink_log_pub, "[cal] Check wiring, reboot vehicle, and try again");
 				feedback_calibration_failed(mavlink_log_pub);
 				goto error_return;
 			}
@@ -169,7 +168,7 @@ int do_airspeed_calibration(orb_advert_t *mavlink_log_pub)
 		int fd_scale = px4_open(AIRSPEED0_DEVICE_PATH, 0);
 		airscale.offset_pa = diff_pres_offset;
 
-		if (fd_scale > 0) {
+		if (fd_scale >= 0) {
 			if (PX4_OK != px4_ioctl(fd_scale, AIRSPEEDIOCSSCALE, (long unsigned int)&airscale)) {
 				calibration_log_critical(mavlink_log_pub, "[cal] airspeed offset update failed");
 			}
@@ -186,7 +185,7 @@ int do_airspeed_calibration(orb_advert_t *mavlink_log_pub)
 		}
 
 		if (param_set(param_find("SENS_DPRES_OFF"), &(diff_pres_offset))) {
-			calibration_log_critical(mavlink_log_pub, CAL_ERROR_SET_PARAMS_MSG, 1);
+			calibration_log_critical(mavlink_log_pub, CAL_ERROR_SET_PARAMS_MSG);
 			goto error_return;
 		}
 
@@ -207,7 +206,7 @@ int do_airspeed_calibration(orb_advert_t *mavlink_log_pub)
 	/* just take a few samples and make sure pitot tubes are not reversed, timeout after ~30 seconds */
 	while (calibration_counter < maxcount) {
 
-		if (calibrate_cancel_check(mavlink_log_pub, cancel_sub)) {
+		if (calibrate_cancel_check(mavlink_log_pub, calibration_started)) {
 			goto error_return;
 		}
 
@@ -237,7 +236,7 @@ int do_airspeed_calibration(orb_advert_t *mavlink_log_pub)
 					diff_pres_offset = 0.0f;
 
 					if (param_set(param_find("SENS_DPRES_OFF"), &(diff_pres_offset))) {
-						calibration_log_critical(mavlink_log_pub, CAL_ERROR_SET_PARAMS_MSG, 1);
+						calibration_log_critical(mavlink_log_pub, CAL_ERROR_SET_PARAMS_MSG);
 						goto error_return;
 					}
 
@@ -280,7 +279,6 @@ int do_airspeed_calibration(orb_advert_t *mavlink_log_pub)
 	px4_usleep(2e6);
 
 normal_return:
-	calibrate_cancel_unsubscribe(cancel_sub);
 	px4_close(diff_pres_sub);
 
 	// This give a chance for the log messages to go out of the queue before someone else stomps on then

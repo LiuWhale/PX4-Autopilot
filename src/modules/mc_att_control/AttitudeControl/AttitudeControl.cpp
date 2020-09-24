@@ -37,27 +37,24 @@
 
 #include <AttitudeControl.hpp>
 
-#include <mathlib/math/Limits.hpp>
 #include <mathlib/math/Functions.hpp>
 
 using namespace matrix;
 
-void AttitudeControl::setProportionalGain(const matrix::Vector3f &proportional_gain)
+void AttitudeControl::setProportionalGain(const matrix::Vector3f &proportional_gain, const float yaw_weight)
 {
 	_proportional_gain = proportional_gain;
+	_yaw_w = math::constrain(yaw_weight, 0.f, 1.f);
 
-	// prepare yaw weight from the ratio between roll/pitch and yaw gains
-	const float roll_pitch_gain = (proportional_gain(0) + proportional_gain(1)) / 2.f;
-	_yaw_w = math::constrain(proportional_gain(2) / roll_pitch_gain, 0.f, 1.f);
-
-	_proportional_gain(2) = roll_pitch_gain;
+	// compensate for the effect of the yaw weight rescaling the output
+	if (_yaw_w > 1e-4f) {
+		_proportional_gain(2) /= _yaw_w;
+	}
 }
 
-matrix::Vector3f AttitudeControl::update(matrix::Quatf q, matrix::Quatf qd, float yawspeed_feedforward)
+matrix::Vector3f AttitudeControl::update(const Quatf &q) const
 {
-	// ensure input quaternions are exactly normalized because acosf(1.00001) == NaN
-	q.normalize();
-	qd.normalize();
+	Quatf qd = _attitude_setpoint_q;
 
 	// calculate reduced desired attitude neglecting vehicle's yaw to prioritize roll and pitch
 	const Vector3f e_z = q.dcm_z();
@@ -77,7 +74,7 @@ matrix::Vector3f AttitudeControl::update(matrix::Quatf q, matrix::Quatf qd, floa
 
 	// mix full and reduced desired attitude
 	Quatf q_mix = qd_red.inversed() * qd;
-	q_mix *= math::signNoZero(q_mix(0));
+	q_mix.canonicalize();
 	// catch numerical problems with the domain of acosf and asinf
 	q_mix(0) = math::constrain(q_mix(0), -1.f, 1.f);
 	q_mix(3) = math::constrain(q_mix(3), -1.f, 1.f);
@@ -88,19 +85,19 @@ matrix::Vector3f AttitudeControl::update(matrix::Quatf q, matrix::Quatf qd, floa
 
 	// using sin(alpha/2) scaled rotation axis as attitude error (see quaternion definition by axis angle)
 	// also taking care of the antipodal unit quaternion ambiguity
-	const Vector3f eq = 2.f * math::signNoZero(qe(0)) * qe.imag();
+	const Vector3f eq = 2.f * qe.canonical().imag();
 
 	// calculate angular rates setpoint
 	matrix::Vector3f rate_setpoint = eq.emult(_proportional_gain);
 
 	// Feed forward the yaw setpoint rate.
-	// yaw_sp_move_rate is the feed forward commanded rotation around the world z-axis,
+	// yawspeed_setpoint is the feed forward commanded rotation around the world z-axis,
 	// but we need to apply it in the body frame (because _rates_sp is expressed in the body frame).
 	// Therefore we infer the world z-axis (expressed in the body frame) by taking the last column of R.transposed (== q.inversed)
-	// and multiply it by the yaw setpoint rate (yaw_sp_move_rate).
+	// and multiply it by the yaw setpoint rate (yawspeed_setpoint).
 	// This yields a vector representing the commanded rotatation around the world z-axis expressed in the body frame
 	// such that it can be added to the rates setpoint.
-	rate_setpoint += q.inversed().dcm_z() * yawspeed_feedforward;
+	rate_setpoint += q.inversed().dcm_z() * _yawspeed_setpoint;
 
 	// limit rates
 	for (int i = 0; i < 3; i++) {

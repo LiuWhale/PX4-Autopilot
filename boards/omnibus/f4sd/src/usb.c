@@ -41,7 +41,7 @@
  * Included Files
  ************************************************************************************/
 
-#include <px4_config.h>
+#include <px4_platform_common/px4_config.h>
 
 #include <sys/types.h>
 #include <stdint.h>
@@ -51,7 +51,7 @@
 #include <nuttx/usb/usbdev.h>
 #include <nuttx/usb/usbdev_trace.h>
 
-#include <up_arch.h>
+#include <arm_arch.h>
 #include <stm32.h>
 #include "board_config.h"
 

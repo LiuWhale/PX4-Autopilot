@@ -28,6 +28,7 @@ class RCOutput():
                     "# 12000 ..  12999       Octo Cox\n"
                     "# 13000 ..  13999       VTOL\n"
                     "# 14000 ..  14999       Tri Y\n"
+                    "# 17000 ..  17999       Autogyro\n"
                     "\n")
         result += "\n"
         result += "set AIRFRAME none\n"
@@ -73,11 +74,13 @@ class RCOutput():
         result += "\n"
         result += "if [ ${AIRFRAME} != none ]\n"
         result += "then\n"
-        result += "\tsh /etc/init.d/airframes/${AIRFRAME}\n"
+        result += "\t. /etc/init.d/airframes/${AIRFRAME}\n"
         if not post_start:
             result += "else\n"
             result += "\techo \"ERROR  [init] No file matches SYS_AUTOSTART value found in : /etc/init.d/airframes\"\n"
             result += "\techo \"ERROR  [init] No file matches SYS_AUTOSTART value found in : /etc/init.d/airframes\" >> $LOG_FILE\n"
+            # Reset the configuration
+            result += "\tparam set SYS_AUTOSTART 0\n"
             result += "\ttone_alarm ${TUNE_ERR}\n"
         result += "fi\n"
         result += "unset AIRFRAME"

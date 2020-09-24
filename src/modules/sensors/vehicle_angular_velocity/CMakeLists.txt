@@ -31,7 +31,16 @@
 #
 ############################################################################
 
-px4_add_library(sensors__vehicle_angular_velocity
+px4_add_library(vehicle_angular_velocity
 	VehicleAngularVelocity.cpp
+	VehicleAngularVelocity.hpp
 )
-target_link_libraries(sensors__vehicle_angular_velocity PRIVATE px4_work_queue)
+
+target_compile_options(vehicle_angular_velocity PRIVATE ${MAX_CUSTOM_OPT_LEVEL})
+
+target_link_libraries(vehicle_angular_velocity
+	PRIVATE
+		mathlib
+		px4_work_queue
+		sensor_calibration
+)

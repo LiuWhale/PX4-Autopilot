@@ -43,7 +43,7 @@
  * Included Files
  ****************************************************************************************************/
 
-#include <px4_config.h>
+#include <px4_platform_common/px4_config.h>
 #include <nuttx/compiler.h>
 #include <stdint.h>
 
@@ -77,13 +77,13 @@
 
 /* PX4FMU GPIOs ***********************************************************************************/
 
-/* Trace Clock and D0-D3 are available on the debug connector and adjacent pads
+/* Trace Clock and D0-D3 are available on the trace connector
  *
- * TRACECLK PE2  - Dedicated  - Debug Connector Pin 7
- * TRACED0  PE3  - nLED_RED   - Debug Connector Pin 8
- * TRACED1  PE4  - nLED_GREEN - Test Point next to Debug Connector
- * TRACED2  PE5  - nLED_BLUE  - Test Point next to Debug Connector
- * TRACED3  PC12 - nARMED     - Test Point next to Debug Connector
+ * TRACECLK PE2  - Dedicated  - Trace Connector Pin 1
+ * TRACED0  PE3  - nLED_RED   - Trace Connector Pin 3
+ * TRACED1  PE4  - nLED_GREEN - Trace Connector Pin 5
+ * TRACED2  PE5  - nLED_BLUE  - Trace Connector Pin 7
+ * TRACED3  PC12 - nARMED     - Trace Connector Pin 8
 
  */
 #undef TRACE_PINS
@@ -100,187 +100,21 @@
 #  define BOARD_ARMED_STATE_LED  LED_BLUE
 #endif
 
-/* SPI
- *
- * SPI1 is sensors1
- *  ICM-20602
- *    CS        PI9
- *    DRDY      PF2
- *
- * SPI2 is sensors2
- *  ISM330
- *    CS        PH5
- *    DRDY      PH12
- *
- * SPI3 is sensors3
- *   BMI088
- *    CS ACCL   PI4
- *    CS GYRO   PI8
- *    DRDY ACCL PI6
- *    DRDY GYRO PI7
- *
- * SPI4 is MAG
- *  BMM150
- *    CS        PH15
- *    DRDY      PF3
- *
- * SPI5 is FRAM
- *  FM25V02A
- *    CS        PG7
- *
- * SPI6 is EXTERNAL1
- *
- *    CS1       PI10
- *    CS2       PA15
- *    DRDY1     PD11
- *    DRDY2     PD12
- *
- */
+/* SPI */
 
-#define PX4_SPI_BUS_SENSORS1   1
-#define PX4_SPI_BUS_SENSORS2   2
-#define PX4_SPI_BUS_SENSORS3   3
-#define PX4_SPI_BUS_SENSORS4   4
-
-#define PX4_SPI_BUS_MAG        PX4_SPI_BUS_SENSORS4
-#define PX4_SPI_BUS_MEMORY     5
-#define PX4_SPI_BUS_EXTERNAL1  6
-
-/*  Define the Chip Selects, Data Ready and Control signals per SPI bus */
-
-/* SPI 1 CS */
-
-#define GPIO_SPI1_nCS1_ICM20602     /* PI9 */  (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_SET|GPIO_PORTI|GPIO_PIN9)
-
-/*  Define the SPI1 Data Ready interrupts */
-
-#define GPIO_SPI1_DRDY1_ICM20602    /* PF2  */  (GPIO_INPUT|GPIO_FLOAT|GPIO_EXTI|GPIO_PORTF|GPIO_PIN2)
-
-/*  SPI1 off */
-
-#define GPIO_SPI1_SCK_OFF   _PIN_OFF(GPIO_SPI1_SCK)
-#define GPIO_SPI1_MISO_OFF  _PIN_OFF(GPIO_SPI1_MISO)
-#define GPIO_SPI1_MOSI_OFF  _PIN_OFF(GPIO_SPI1_MOSI)
-
-#define GPIO_DRDY_OFF_SPI1_DRDY1_ICM20602    _PIN_OFF(GPIO_SPI1_DRDY1_ICM20602)
-
-/* SPI 2 CS */
-
-#define GPIO_SPI2_nCS1_ISM330       /* PH5 */  (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_SET|GPIO_PORTH|GPIO_PIN5)
-
-/*  Define the SPI2 Data Ready interrupts */
-
-#define GPIO_SPI2_DRDY1_ISM330      /* PH12  */  (GPIO_INPUT|GPIO_FLOAT|GPIO_EXTI|GPIO_PORTH|GPIO_PIN12)
-
-/*  SPI2 off */
-
-#define GPIO_SPI2_SCK_OFF   _PIN_OFF(GPIO_SPI2_SCK)
-#define GPIO_SPI2_MISO_OFF  _PIN_OFF(GPIO_SPI2_MISO)
-#define GPIO_SPI2_MOSI_OFF  _PIN_OFF(GPIO_SPI2_MOSI)
-
-#define GPIO_DRDY_OFF_SPI2_DRDY1_ISM330    _PIN_OFF(GPIO_SPI2_DRDY1_ISM330)
-
-/* SPI 3 CS */
-
-#define GPIO_SPI3_nCS1_BMI088_ACCEL /* PI4 */  (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_SET|GPIO_PORTI|GPIO_PIN4)
-#define GPIO_SPI3_nCS2_BMI088_GYRO  /* PI8 */  (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_SET|GPIO_PORTI|GPIO_PIN8)
-
-/*  Define the SPI3 Data Ready interrupts */
-
-#define GPIO_SPI3_DRDY1_BMI088_INT1_ACCEL /* PI6  */  (GPIO_INPUT|GPIO_FLOAT|GPIO_EXTI|GPIO_PORTI|GPIO_PIN6)
-#define GPIO_SPI3_DRDY2_BMI088_INT3_GYRO  /* PI7  */  (GPIO_INPUT|GPIO_FLOAT|GPIO_EXTI|GPIO_PORTI|GPIO_PIN7)
-
-/*  SPI3 off */
-
-#define GPIO_SPI3_SCK_OFF   _PIN_OFF(GPIO_SPI3_SCK)
-#define GPIO_SPI3_MISO_OFF  _PIN_OFF(GPIO_SPI3_MISO)
-#define GPIO_SPI3_MOSI_OFF  _PIN_OFF(GPIO_SPI3_MOSI)
-
-#define GPIO_DRDY_OFF_SPI3_DRDY1_BMI088    _PIN_OFF(GPIO_SPI3_DRDY1_BMI088_INT1_ACCEL)
-#define GPIO_DRDY_OFF_SPI3_DRDY2_BMI088    _PIN_OFF(GPIO_SPI3_DRDY2_BMI088_INT3_GYRO)
-
-
-/* SPI 4 CS */
-
-#define GPIO_SPI4_nCS1_BMM150       /* PH15 */ (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_SET|GPIO_PORTH|GPIO_PIN15)
-
-/*  Define the SPI4 Data Ready interrupts */
-
-#define GPIO_SPI4_DRDY1_BMM150     /* PF3  */  (GPIO_INPUT|GPIO_FLOAT|GPIO_EXTI|GPIO_PORTF|GPIO_PIN3)
-
-/*  SPI4 off */
-
-#define GPIO_SPI4_SCK_OFF   _PIN_OFF(GPIO_SPI4_SCK)
-#define GPIO_SPI4_MISO_OFF  _PIN_OFF(GPIO_SPI4_MISO)
-#define GPIO_SPI4_MOSI_OFF  _PIN_OFF(GPIO_SPI4_MOSI)
-
-#define GPIO_DRDY_OFF_SPI4_DRDY1_BMM150    _PIN_OFF(GPIO_SPI4_DRDY1_BMM150)
-
-/* SPI 5 CS */
-
-#define GPIO_SPI5_nCS1_FRAM          /* PG7  */  (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_SET|GPIO_PORTG|GPIO_PIN7)
-
-/* SPI 6 */
-
-#define GPIO_SPI6_nCS1_EXTERNAL1    /* PI10  */  (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_SET|GPIO_PORTI|GPIO_PIN10)
-#define GPIO_SPI6_nCS2_EXTERNAL1    /* PA15  */  (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_SET|GPIO_PORTA|GPIO_PIN15)
-
-/*  Define the SPI6 Data Ready interrupts */
-
-#define GPIO_SPI6_DRDY1_EXTERNAL1   /* PD11  */  (GPIO_INPUT|GPIO_FLOAT|GPIO_EXTI|GPIO_PORTD|GPIO_PIN11)
-#define GPIO_SPI6_DRDY2_EXTERNAL1   /* PD12  */  (GPIO_INPUT|GPIO_FLOAT|GPIO_EXTI|GPIO_PORTD|GPIO_PIN12)
-
-/*  SPI6 off */
-
-#define GPIO_SPI6_SCK_OFF   _PIN_OFF(GPIO_SPI6_SCK)
-#define GPIO_SPI6_MISO_OFF  _PIN_OFF(GPIO_SPI6_MISO)
-#define GPIO_SPI6_MOSI_OFF  _PIN_OFF(GPIO_SPI6_MOSI)
-
-#define GPIO_DRDY_OFF_SPI6_DRDY1    _PIN_OFF(GPIO_SPI6_DRDY1_EXTERNAL1)
-#define GPIO_DRDY_OFF_SPI6_DRDY2    _PIN_OFF(GPIO_SPI6_DRDY2_EXTERNAL1)
-
-/*
- *  Define the ability to shut off off the sensor signals
- *  by changing the signals to inputs
- */
-
-#define _PIN_OFF(def) (((def) & (GPIO_PORT_MASK | GPIO_PIN_MASK)) | (GPIO_INPUT|GPIO_PULLDOWN|GPIO_SPEED_2MHz))
-#define PX4_SPI_BUS_RAMTRON  PX4_SPI_BUS_MEMORY
-
-#define PX4_SPIDEV_ICM_20602        PX4_MK_SPI_SEL(PX4_SPI_BUS_SENSORS1,0)
-#define PX4_SENSORS1_BUS_CS_GPIO    {GPIO_SPI1_nCS1_ICM20602}
-
-#define PX4_SPIDEV_ISM330           PX4_MK_SPI_SEL(PX4_SPI_BUS_SENSORS2,0)
-#define PX4_SENSORS2_BUS_CS_GPIO    {GPIO_SPI2_nCS1_ISM330}
-
-#define PX4_SPIDEV_BMI088_GYR       PX4_MK_SPI_SEL(PX4_SPI_BUS_SENSORS3,0)
-#define PX4_SPIDEV_BMI088_ACC       PX4_MK_SPI_SEL(PX4_SPI_BUS_SENSORS3,1)
-#define PX4_SENSORS3_BUS_CS_GPIO    {GPIO_SPI3_nCS2_BMI088_GYRO, GPIO_SPI3_nCS1_BMI088_ACCEL}
-
-#define PX4_SPIDEV_BMM150           PX4_MK_SPI_SEL(PX4_SPI_BUS_SENSORS4,0)
-#define PX4_SENSORS4_BUS_CS_GPIO    {GPIO_SPI4_nCS1_BMM150}
-
-#define PX4_SPIDEV_MEMORY           PX4_MK_SPI_SEL(PX4_SPI_BUS_MEMORY,0)
-#define PX4_MEMORY_BUS_CS_GPIO      {GPIO_SPI5_nCS1_FRAM}
-
-#define PX4_SPIDEV_EXTERNAL1_1      PX4_MK_SPI_SEL(PX4_SPI_BUS_EXTERNAL1,0)
-#define PX4_SPIDEV_EXTERNAL1_2      PX4_MK_SPI_SEL(PX4_SPI_BUS_EXTERNAL1,1)
-#define PX4_EXTERNAL1_BUS_CS_GPIO   {GPIO_SPI6_nCS1_EXTERNAL1, GPIO_SPI6_nCS2_EXTERNAL1}
-
+#define SPI6_nRESET_EXTERNAL1       /* PF10  */  (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_CLEAR|GPIO_PORTF|GPIO_PIN10)
+#define GPIO_SYNC                   /* PH10 */ (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_100MHz|GPIO_OUTPUT_CLEAR|GPIO_PORTH|GPIO_PIN10)
 
 /* I2C busses */
 
-#define PX4_I2C_BUS_EXPANSION       1
-#define PX4_I2C_BUS_EXPANSION1      2
-#define PX4_I2C_BUS_EXPANSION2      3
-#define PX4_I2C_BUS_ONBOARD         4
-#define PX4_I2C_BUS_LED             PX4_I2C_BUS_EXPANSION
-
-#define BOARD_NUMBER_I2C_BUSES      4
-#define BOARD_I2C_BUS_CLOCK_INIT    {100000, 100000, 100000, 100000}
+/* Devices on the onboard buses.
+ *
+ * Note that these are unshifted addresses.
+ */
+#define PX4_I2C_OBDEV_SE050         0x48
 
 #define GPIO_I2C4_DRDY1_BMP388      /* PG5  */  (GPIO_INPUT|GPIO_FLOAT|GPIO_EXTI|GPIO_PORTG|GPIO_PIN5)
-#define A71CH_nRST                  /* PG6  */  (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_CLEAR|GPIO_PORTG|GPIO_PIN6)
+#define GPIO_PG6                    /* PG6  */  (GPIO_INPUT|GPIO_PULLUP|GPIO_PORTG|GPIO_PIN6)
 
 /*
  * ADC channels
@@ -382,71 +216,11 @@
 #  define BOARD_INDICATE_ARMED_STATE(on_armed)  px4_arch_configgpio((on_armed) ? GPIO_nARMED : GPIO_nARMED_INIT)
 #endif
 /* PWM
- *
- * 8  PWM outputs are configured.
- *
- * Pins:
- *
- * FMU_CH1 : PE14 : TIM1_CH4
- * FMU_CH2 : PA10 : TIM1_CH3
- * FMU_CH3 : PE11 : TIM1_CH2
- * FMU_CH4 : PA8  : TIM1_CH1
- * FMU_CH5 : PD13 : TIM4_CH2
- * FMU_CH6 : PD14 : TIM4_CH3
- * FMU_CH7 : PH6  : TIM12_CH1
- * FMU_CH8 : PH9  : TIM12_CH2
- *
  */
-#define GPIO_TIM12_CH2OUT     /* PH9   T12C2  FMU8 */ GPIO_TIM12_CH2OUT_2
-#define GPIO_TIM12_CH1OUT     /* PH6   T12C1  FMU7 */ GPIO_TIM12_CH1OUT_2
-#define GPIO_TIM4_CH3OUT      /* PD14  T4C3   FMU6 */ GPIO_TIM4_CH3OUT_2
-#define GPIO_TIM4_CH2OUT      /* PD13  T4C2   FMU5 */ GPIO_TIM4_CH2OUT_2
-#define GPIO_TIM1_CH1OUT      /* PA8   T1C1   FMU4 */ GPIO_TIM1_CH1OUT_1
-#define GPIO_TIM1_CH2OUT      /* PE11  T1C2   FMU3 */ GPIO_TIM1_CH2OUT_2
-#define GPIO_TIM1_CH3OUT      /* PA10  T1C3   FMU2 */ GPIO_TIM1_CH3OUT_1
-#define GPIO_TIM1_CH4OUT      /* PE14  T1C4   FMU1 */ GPIO_TIM1_CH4OUT_2
-
 #define DIRECT_PWM_OUTPUT_CHANNELS  8
-
-#define GPIO_TIM12_CH2IN      /* PH9   T12C2  FMU8 */ GPIO_TIM12_CH2IN_2
-#define GPIO_TIM12_CH1IN      /* PH6   T12C1  FMU7 */ GPIO_TIM12_CH1IN_2
-#define GPIO_TIM4_CH3IN       /* PD14  T4C3   FMU6 */ GPIO_TIM4_CH3IN_2
-#define GPIO_TIM4_CH2IN       /* PD13  T4C2   FMU5 */ GPIO_TIM4_CH2IN_2
-#define GPIO_TIM1_CH1IN       /* PA8   T1C1   FMU4 */ GPIO_TIM1_CH1IN_1
-#define GPIO_TIM1_CH2IN       /* PE11  T1C2   FMU3 */ GPIO_TIM1_CH2IN_2
-#define GPIO_TIM1_CH3IN       /* PA10  T1C3   FMU2 */ GPIO_TIM1_CH3IN_1
-#define GPIO_TIM1_CH4IN       /* PE14  T1C4   FMU1 */ GPIO_TIM1_CH4IN_2
-
 #define DIRECT_INPUT_TIMER_CHANNELS  8
 
-
-/* User GPIOs
- *
- * GPIO0-5 are the PWM servo outputs.
- */
-
-#define _MK_GPIO_INPUT(def) (((def) & (GPIO_PORT_MASK | GPIO_PIN_MASK)) | (GPIO_INPUT|GPIO_PULLUP))
-
-#define GPIO_GPIO7_INPUT        /* PH9   T12C2  FMU8 */ _MK_GPIO_INPUT(GPIO_TIM12_CH2IN)
-#define GPIO_GPIO6_INPUT        /* PH6   T12C1  FMU7 */ _MK_GPIO_INPUT(GPIO_TIM12_CH1IN)
-#define GPIO_GPIO5_INPUT        /* PD14  T4C3   FMU6 */ _MK_GPIO_INPUT(GPIO_TIM4_CH3IN)
-#define GPIO_GPIO4_INPUT        /* PD13  T4C2   FMU5 */ _MK_GPIO_INPUT(GPIO_TIM4_CH2IN)
-#define GPIO_GPIO3_INPUT        /* PA8   T1C1   FMU4 */ _MK_GPIO_INPUT(GPIO_TIM1_CH1IN)
-#define GPIO_GPIO2_INPUT        /* PE11  T1C2   FMU3 */ _MK_GPIO_INPUT(GPIO_TIM1_CH2IN)
-#define GPIO_GPIO1_INPUT        /* PA10  T1C3   FMU2 */ _MK_GPIO_INPUT(GPIO_TIM1_CH3IN)
-#define GPIO_GPIO0_INPUT        /* PE14  T1C4   FMU1 */ _MK_GPIO_INPUT(GPIO_TIM1_CH4IN)
-
-#define _MK_GPIO_OUTPUT(def) (((def) & (GPIO_PORT_MASK | GPIO_PIN_MASK)) | (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_CLEAR))
-
-#define GPIO_GPIO7_OUTPUT        /* PH9   T12C2  FMU8 */ _MK_GPIO_OUTPUT(GPIO_TIM12_CH2OUT)
-#define GPIO_GPIO6_OUTPUT        /* PH6   T12C1  FMU7 */ _MK_GPIO_OUTPUT(GPIO_TIM12_CH1OUT)
-#define GPIO_GPIO5_OUTPUT        /* PD14  T4C3   FMU6 */ _MK_GPIO_OUTPUT(GPIO_TIM4_CH3OUT)
-#define GPIO_GPIO4_OUTPUT        /* PD13  T4C2   FMU5 */ _MK_GPIO_OUTPUT(GPIO_TIM4_CH2OUT)
-#define GPIO_GPIO3_OUTPUT        /* PA8   T1C1   FMU4 */ _MK_GPIO_OUTPUT(GPIO_TIM1_CH1OUT)
-#define GPIO_GPIO2_OUTPUT        /* PE11  T1C2   FMU3 */ _MK_GPIO_OUTPUT(GPIO_TIM1_CH2OUT)
-#define GPIO_GPIO1_OUTPUT        /* PA10  T1C3   FMU2 */ _MK_GPIO_OUTPUT(GPIO_TIM1_CH3OUT)
-#define GPIO_GPIO0_OUTPUT        /* PE14  T1C4   FMU1 */ _MK_GPIO_OUTPUT(GPIO_TIM1_CH4OUT)
-
+#define BOARD_DSHOT_MOTOR_ASSIGNMENT {3, 2, 1, 0, 4, 5, 6, 7};
 
 /* Power supply control and monitoring GPIOs */
 
@@ -461,19 +235,16 @@
 #define GPIO_nVDD_USB_VALID             GPIO_nPOWER_IN_C /* USB     Is Chosen */
 
 #define GPIO_VDD_5V_PERIPH_nEN          /* PG4  */ (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_SET|GPIO_PORTG|GPIO_PIN4)
-#define GPIO_VDD_5V_PERIPH_nOC          /* PE15 */ (GPIO_INPUT |GPIO_PULLUP|GPIO_PORTE|GPIO_PIN15)
+#define GPIO_VDD_5V_PERIPH_nOC          /* PE15 */ (GPIO_INPUT |GPIO_FLOAT|GPIO_PORTE|GPIO_PIN15)
 #define GPIO_VDD_5V_HIPOWER_nEN         /* PF12 */ (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_SET|GPIO_PORTF|GPIO_PIN12)
-#define GPIO_VDD_5V_HIPOWER_nOC         /* PF13 */ (GPIO_INPUT |GPIO_PULLUP|GPIO_PORTF|GPIO_PIN13)
-#define GPIO_VDD_3V3_SENSORS1_EN        /* PI11 */ (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_CLEAR|GPIO_PORTI|GPIO_PIN11)
-#define GPIO_VDD_3V3_SENSORS2_EN        /* PD15 */ (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_CLEAR|GPIO_PORTD|GPIO_PIN15)
-#define GPIO_VDD_3V3_SENSORS3_EN        /* PE7  */ (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_CLEAR|GPIO_PORTE|GPIO_PIN7)
+#define GPIO_VDD_5V_HIPOWER_nOC         /* PF13 */ (GPIO_INPUT |GPIO_FLOAT|GPIO_PORTF|GPIO_PIN13)
 #define GPIO_VDD_3V3_SENSORS4_EN        /* PG8  */ (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_CLEAR|GPIO_PORTG|GPIO_PIN8)
 #define GPIO_VDD_3V3_SPEKTRUM_POWER_EN  /* PH2  */ (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_CLEAR|GPIO_PORTH|GPIO_PIN2)
 #define GPIO_VDD_3V3_SD_CARD_EN         /* PC13 */ (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_CLEAR|GPIO_PORTC|GPIO_PIN13)
 
 /* Spare GPIO */
 
-#define GPIO_PH11                       /* PH11  */  (GPIO_INPUT|GPIO_FLOAT|GPIO_PORTH|GPIO_PIN1)
+#define GPIO_PH11                       /* PH11  */  (GPIO_INPUT|GPIO_FLOAT|GPIO_PORTH|GPIO_PIN11)
 
 /* ETHERNET GPIO */
 
@@ -488,14 +259,12 @@
 
 #define VDD_5V_PERIPH_EN(on_true)          px4_arch_gpiowrite(GPIO_VDD_5V_PERIPH_nEN, !(on_true))
 #define VDD_5V_HIPOWER_EN(on_true)         px4_arch_gpiowrite(GPIO_VDD_5V_HIPOWER_nEN, !(on_true))
-#define VDD_3V3_SENSORS1_EN(on_true)       px4_arch_gpiowrite(GPIO_VDD_3V3_SENSORS1_EN, (on_true))
-#define VDD_3V3_SENSORS2_EN(on_true)       px4_arch_gpiowrite(GPIO_VDD_3V3_SENSORS2_EN, (on_true))
-#define VDD_3V3_SENSORS3_EN(on_true)       px4_arch_gpiowrite(GPIO_VDD_3V3_SENSORS3_EN, (on_true))
 #define VDD_3V3_SENSORS4_EN(on_true)       px4_arch_gpiowrite(GPIO_VDD_3V3_SENSORS4_EN, (on_true))
 #define VDD_3V3_SPEKTRUM_POWER_EN(on_true) px4_arch_gpiowrite(GPIO_VDD_3V3_SPEKTRUM_POWER_EN, (on_true))
 #define READ_VDD_3V3_SPEKTRUM_POWER_EN()   px4_arch_gpioread(GPIO_VDD_3V3_SPEKTRUM_POWER_EN)
 #define VDD_3V3_SD_CARD_EN(on_true)        px4_arch_gpiowrite(GPIO_VDD_3V3_SD_CARD_EN, (on_true))
-#define VDD_3V3_ETH_POWER_EN(on_true)        px4_arch_gpiowrite(GPIO_ETH_POWER_EN, (on_true))
+#define VDD_3V3_ETH_POWER_EN(on_true)      px4_arch_gpiowrite(GPIO_ETH_POWER_EN, (on_true))
+
 
 /* Tone alarm output */
 
@@ -528,12 +297,13 @@
 /* Input Capture Channels. */
 #define INPUT_CAP1_TIMER                  5
 #define INPUT_CAP1_CHANNEL     /* T5C4 */ 4
-#define GPIO_INPUT_CAP1        /*  PI0 */ GPIO_TIM5_CH4_IN
+#define GPIO_INPUT_CAP1        /*  PI0 */ GPIO_TIM5_CH4IN
+#define BOARD_CAPTURE_GPIO /* PI0 */  (GPIO_INPUT|GPIO_FLOAT|GPIO_EXTI|GPIO_PORTI|GPIO_PIN0)
 
 /* PWM input driver. Use FMU AUX5 pins attached to timer4 channel 2 */
 #define PWMIN_TIMER                       4
 #define PWMIN_TIMER_CHANNEL    /* T4C2 */ 2
-#define GPIO_PWM_IN            /* PD13 */ GPIO_TIM4_CH2IN
+#define GPIO_PWM_IN            /* PD13 */ GPIO_TIM4_CH2IN_2
 
 /* Safety Switch is HW version dependent on having an PX4IO
  * So we init to a benign state with the _INIT definition
@@ -620,25 +390,11 @@
 #define BOARD_HAS_PWM  DIRECT_PWM_OUTPUT_CHANNELS
 
 /* This board provides a DMA pool and APIs */
-
 #define BOARD_DMA_ALLOC_POOL_SIZE 5120
 
 /* This board provides the board_on_reset interface */
 
 #define BOARD_HAS_ON_RESET 1
-
-/* The list of GPIO that will be initialized */
-
-#define PX4_GPIO_PWM_INIT_LIST { \
-		GPIO_GPIO7_INPUT, \
-		GPIO_GPIO6_INPUT, \
-		GPIO_GPIO5_INPUT, \
-		GPIO_GPIO4_INPUT, \
-		GPIO_GPIO3_INPUT, \
-		GPIO_GPIO2_INPUT, \
-		GPIO_GPIO1_INPUT, \
-		GPIO_GPIO0_INPUT, \
-	}
 
 #define PX4_GPIO_INIT_LIST { \
 		PX4_ADC_GPIO,                     \
@@ -655,22 +411,24 @@
 		GPIO_VDD_5V_PERIPH_nOC,           \
 		GPIO_VDD_5V_HIPOWER_nEN,          \
 		GPIO_VDD_5V_HIPOWER_nOC,          \
-		GPIO_VDD_3V3_SENSORS1_EN,         \
-		GPIO_VDD_3V3_SENSORS2_EN,         \
-		GPIO_VDD_3V3_SENSORS3_EN,         \
 		GPIO_VDD_3V3_SENSORS4_EN,         \
 		GPIO_VDD_3V3_SPEKTRUM_POWER_EN,   \
 		GPIO_VDD_3V3_SD_CARD_EN,          \
 		GPIO_PH11,                        \
+		GPIO_SYNC,                        \
+		SPI6_nRESET_EXTERNAL1,            \
 		GPIO_ETH_POWER_EN,                \
 		GPIO_NFC_GPIO,                    \
 		GPIO_TONE_ALARM_IDLE,             \
 		GPIO_nSAFETY_SWITCH_LED_OUT_INIT, \
 		GPIO_SAFETY_SWITCH_IN,            \
+		GPIO_PG6,                         \
 		GPIO_nARMED_INIT                  \
 	}
 
 #define BOARD_ENABLE_CONSOLE_BUFFER
+
+#define BOARD_NUM_IO_TIMERS 5
 
 __BEGIN_DECLS
 
@@ -708,33 +466,11 @@ int stm32_sdio_initialize(void);
 
 extern void stm32_spiinitialize(void);
 
-void board_spi_reset(int ms);
-
 extern void stm32_usbinitialize(void);
 
 extern void board_peripheral_reset(int ms);
 
-
-/****************************************************************************
- * Name: nsh_archinitialize
- *
- * Description:
- *   Perform architecture specific initialization for NSH.
- *
- *   CONFIG_NSH_ARCHINIT=y :
- *     Called from the NSH library
- *
- *   CONFIG_BOARD_INITIALIZE=y, CONFIG_NSH_LIBRARY=y, &&
- *   CONFIG_NSH_ARCHINIT=n :
- *     Called from board_initialize().
- *
- ****************************************************************************/
-
-#ifdef CONFIG_NSH_LIBRARY
-int nsh_archinitialize(void);
-#endif
-
-#include <drivers/boards/common/board_common.h>
+#include <px4_platform_common/board_common.h>
 
 #endif /* __ASSEMBLY__ */
 

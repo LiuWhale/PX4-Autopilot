@@ -33,29 +33,44 @@
 
 #pragma once
 
-
 #include "WorkQueueManager.hpp"
 #include "WorkQueue.hpp"
 
 #include <containers/IntrusiveQueue.hpp>
-#include <px4_defines.h>
+#include <containers/IntrusiveSortedList.hpp>
+#include <px4_platform_common/defines.h>
 #include <drivers/drv_hrt.h>
+#include <lib/mathlib/mathlib.h>
+#include <lib/perf/perf_counter.h>
+
+#include <string.h>
 
 namespace px4
 {
 
-class WorkItem : public IntrusiveQueueNode<WorkItem *>
+class WorkItem : public IntrusiveSortedListNode<WorkItem *>, public IntrusiveQueueNode<WorkItem *>
 {
 public:
 
-	explicit WorkItem(const wq_config_t &config);
 	WorkItem() = delete;
 
-	virtual ~WorkItem();
+	// no copy, assignment, move, move assignment
+	WorkItem(const WorkItem &) = delete;
+	WorkItem &operator=(const WorkItem &) = delete;
+	WorkItem(WorkItem &&) = delete;
+	WorkItem &operator=(WorkItem &&) = delete;
 
-	inline void ScheduleNow() { if (_wq != nullptr) _wq->Add(this); }
+	// WorkItems sorted by name
+	bool operator<=(const WorkItem &rhs) const { return (strcmp(ItemName(), rhs.ItemName()) <= 0); }
 
-	virtual void Run() = 0;
+	inline void ScheduleNow()
+	{
+		if (_wq != nullptr) {
+			_wq->Add(this);
+		}
+	}
+
+	virtual void print_run_status();
 
 	/**
 	 * Switch to a different WorkQueue.
@@ -66,7 +81,35 @@ public:
 	 */
 	bool ChangeWorkQeue(const wq_config_t &config) { return Init(config); }
 
+	const char *ItemName() const { return _item_name; }
+
 protected:
+
+	explicit WorkItem(const char *name, const wq_config_t &config);
+
+	explicit WorkItem(const char *name, const WorkItem &work_item);
+
+	virtual ~WorkItem();
+
+	/**
+	 * Remove work item from the runnable queue, if it's there
+	 */
+	void ScheduleClear();
+protected:
+
+	void RunPreamble()
+	{
+		if (_run_count == 0) {
+			_time_first_run = hrt_absolute_time();
+			_run_count = 1;
+
+		} else {
+			_run_count++;
+		}
+	}
+
+	friend void WorkQueue::Run();
+	virtual void Run() = 0;
 
 	/**
 	 * Initialize WorkItem given a WorkQueue config. This call
@@ -79,9 +122,17 @@ protected:
 	bool Init(const wq_config_t &config);
 	void Deinit();
 
+	float elapsed_time() const;
+	float average_rate() const;
+	float average_interval() const;
+
+	hrt_abstime	_time_first_run{0};
+	const char 	*_item_name;
+	uint32_t	_run_count{0};
+
 private:
 
-	WorkQueue *_wq{nullptr};
+	WorkQueue	*_wq{nullptr};
 
 };
 

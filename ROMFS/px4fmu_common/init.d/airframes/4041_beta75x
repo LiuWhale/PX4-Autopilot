@@ -5,14 +5,6 @@
 # @type Quadrotor H
 # @class Copter
 #
-# @board px4_fmu-v2 exclude
-# @board px4_fmu-v3 exclude
-# @board px4_fmu-v4 exclude
-# @board px4_fmu-v4pro exclude
-# @board px4_fmu-v5 exclude
-# @board px4_fmu-v5x exclude
-# @board intel_aerofc-v1 exclude
-#
 # @output MAIN1 motor 1
 # @output MAIN2 motor 2
 # @output MAIN3 motor 3
@@ -20,8 +12,17 @@
 #
 # @maintainer Beat Kueng <beat-kueng@gmx.net>
 #
+# @board px4_fmu-v2 exclude
+# @board px4_fmu-v3 exclude
+# @board px4_fmu-v4 exclude
+# @board px4_fmu-v4pro exclude
+# @board px4_fmu-v5 exclude
+# @board px4_fmu-v5x exclude
+# @board intel_aerofc-v1 exclude
+# @board bitcraze_crazyflie exclude
+#
 
-sh /etc/init.d/rc.mc_defaults
+. /etc/init.d/rc.mc_defaults
 
 if [ $AUTOCNF = yes ]
 then
@@ -29,18 +30,18 @@ then
 	param set CBRK_USB_CHK 197848
 
 	param set IMU_GYRO_CUTOFF 100
-	param set MC_DTERM_CUTOFF 60
+	param set IMU_DGYRO_CUTOFF 60
 
 	param set MC_AIRMODE 2
-	param set MC_PITCHRATE_D 0.0010
+	param set MC_PITCHRATE_D 0.001
 	param set MC_PITCHRATE_I 0.5
 	param set MC_PITCHRATE_MAX 600
-	param set MC_PITCHRATE_P 0.0750
+	param set MC_PITCHRATE_P 0.075
 	param set MC_PITCH_P 6
-	param set MC_ROLLRATE_D 0.0010
+	param set MC_ROLLRATE_D 0.001
 	param set MC_ROLLRATE_I 0.4
 	param set MC_ROLLRATE_MAX 600
-	param set MC_ROLLRATE_P 0.0750
+	param set MC_ROLLRATE_P 0.075
 	param set MC_YAWRATE_I 0.3
 	param set MC_YAWRATE_MAX 400
 	param set MC_YAWRATE_P 0.12
@@ -50,12 +51,7 @@ then
 	param set MPC_MAN_TILT_MAX 60
 
 	param set MOT_ORDERING 1
-	param set PWM_DISARMED 950
-	param set PWM_MAX 1900
-	param set PWM_MIN 1250
-	param set PWM_RATE 0
-
-	param set RC_FLT_CUTOFF 0
+	param set DSHOT_CONFIG 600
 
 	param set SYS_HAS_BARO 0
 	param set SYS_HAS_MAG 0

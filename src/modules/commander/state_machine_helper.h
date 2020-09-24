@@ -44,6 +44,8 @@
 
 #include <drivers/drv_hrt.h>
 
+#include "Arming/PreFlightCheck/PreFlightCheck.hpp"
+
 #include <uORB/uORB.h>
 #include <uORB/topics/vehicle_status.h>
 #include <uORB/topics/battery_status.h>
@@ -63,7 +65,6 @@ enum class link_loss_actions_t {
 	AUTO_LOITER = 1,	// Hold mode
 	AUTO_RTL = 2,		// Return mode
 	AUTO_LAND = 3,		// Land mode
-	AUTO_RECOVER = 4,	// Data Link Auto Recovery (CASA Outback Challenge rules)
 	TERMINATE = 5,		// Terminate flight (set actuator outputs to failsafe values, and stop controllers)
 	LOCKDOWN = 6,		// Lock actuators (set actuator outputs to disarmed values)
 };
@@ -94,22 +95,30 @@ enum class position_nav_loss_actions_t {
 	LAND_TERMINATE = 1,	// Land/Terminate.  Assume no use of remote control after fallback. Switch to Land mode if a height estimate is available, else switch to TERMINATION.
 };
 
-typedef enum {
-	ARM_REQ_NONE = 0,
-	ARM_REQ_MISSION_BIT = (1 << 0),
-	ARM_REQ_ARM_AUTH_BIT = (1 << 1),
-	ARM_REQ_GPS_BIT = (1 << 2),
-	ARM_REQ_ESCS_CHECK_BIT = (1 << 3)
-} arm_requirements_t;
-
 extern const char *const arming_state_names[];
 
-bool is_safe(const safety_s &safety, const actuator_armed_s &armed);
+enum class arm_disarm_reason_t {
+	TRANSITION_TO_STANDBY = 0,
+	RC_STICK = 1,
+	RC_SWITCH = 2,
+	COMMAND_INTERNAL = 3,
+	COMMAND_EXTERNAL = 4,
+	MISSION_START = 5,
+	SAFETY_BUTTON = 6,
+	AUTO_DISARM_LAND = 7,
+	AUTO_DISARM_PREFLIGHT = 8,
+	KILL_SWITCH = 9,
+	LOCKDOWN = 10,
+	FAILURE_DETECTOR = 11,
+	SHUTDOWN = 12,
+	UNIT_TEST = 13
+};
 
 transition_result_t
 arming_state_transition(vehicle_status_s *status, const safety_s &safety, const arming_state_t new_arming_state,
 			actuator_armed_s *armed, const bool fRunPreArmChecks, orb_advert_t *mavlink_log_pub,
-			vehicle_status_flags_s *status_flags, const uint8_t arm_requirements, const hrt_abstime &time_since_boot);
+			vehicle_status_flags_s *status_flags, const PreFlightCheck::arm_requirements_t &arm_requirements,
+			const hrt_abstime &time_since_boot, arm_disarm_reason_t calling_reason);
 
 transition_result_t
 main_state_transition(const vehicle_status_s &status, const main_state_t new_main_state,
@@ -125,14 +134,11 @@ bool set_nav_state(vehicle_status_s *status, actuator_armed_s *armed, commander_
 		   const position_nav_loss_actions_t posctl_nav_loss_act);
 
 /*
- * Checks the validty of position data aaainst the requirements of the current navigation
+ * Checks the validty of position data against the requirements of the current navigation
  * mode and switches mode if position data required is not available.
  */
 bool check_invalid_pos_nav_state(vehicle_status_s *status, bool old_failsafe, orb_advert_t *mavlink_log_pub,
 				 const vehicle_status_flags_s &status_flags, const bool use_rc, const bool using_global_pos);
-
-bool prearm_check(orb_advert_t *mavlink_log_pub, const vehicle_status_flags_s &status_flags, const safety_s &safety,
-		  const uint8_t arm_requirements);
 
 
 // COM_LOW_BAT_ACT parameter values

@@ -57,16 +57,12 @@ __BEGIN_DECLS
 /**
  * Parameter types.
  */
-#define PARAM_TYPE_INT32		0
-#define PARAM_TYPE_FLOAT		1
-#define PARAM_TYPE_STRUCT		100
-#define PARAM_TYPE_STRUCT_MAX	(16384 + PARAM_TYPE_STRUCT)
-#define PARAM_TYPE_UNKNOWN		(0xffff)
+#define PARAM_TYPE_UNKNOWN		0
+#define PARAM_TYPE_INT32		1
+#define PARAM_TYPE_FLOAT		2
 
-typedef uint16_t param_type_t;
+typedef uint8_t param_type_t;
 
-
-#ifdef __PX4_NUTTX // on NuttX use 16 bits to save RAM
 /**
  * Parameter handle.
  *
@@ -85,29 +81,6 @@ typedef uint16_t	param_t;
  * Magic handle for hash check param
  */
 #define PARAM_HASH      ((uint16_t)INT16_MAX)
-
-#else // on other platforms use 32 bits for better performance
-
-/**
- * Parameter handle.
- *
- * Parameters are represented by parameter handles, which can
- * be obtained by looking up parameters. They are an offset into a global
- * constant parameter array.
- */
-typedef uint32_t	param_t;
-
-/**
- * Handle returned when a parameter cannot be found.
- */
-#define PARAM_INVALID	((uint32_t)0xffffffff)
-
-/**
- * Magic handle for hash check param
- */
-#define PARAM_HASH      ((uint32_t)INT32_MAX)
-
-#endif /* __PX4_NUTTX */
 
 
 /**
@@ -306,6 +279,16 @@ __EXPORT void		param_reset_all(void);
 __EXPORT void		param_reset_excludes(const char *excludes[], int num_excludes);
 
 /**
+ * Reset only specific parameters to their default values.
+ *
+ * This function also releases the storage used by struct parameters.
+ *
+ * @param resets Array of param names to reset. Use a wildcard at the end to reset parameters with a certain prefix.
+ * @param num_resets The number of passed reset conditions in the resets array.
+ */
+__EXPORT void		param_reset_specific(const char *resets[], int num_resets);
+
+/**
  * Export changed parameters to a file.
  * Note: this method requires a large amount of stack size!
  *
@@ -410,27 +393,6 @@ __EXPORT void	param_print_status(void);
  */
 __EXPORT void	param_control_autosave(bool enable);
 
-/*
- * Macros creating static parameter definitions.
- *
- * Note that these structures are not known by name; they are
- * collected into a section that is iterated by the parameter
- * code.
- *
- * Note that these macros cannot be used in C++ code due to
- * their use of designated initializers.  They should probably
- * be refactored to avoid the use of a union for param_value_u.
- */
-
-/** define an int32 parameter */
-#define PARAM_DEFINE_INT32(_name, _default)
-
-/** define a float parameter */
-#define PARAM_DEFINE_FLOAT(_name, _default)
-
-/** define a parameter that points to a structure */
-#define PARAM_DEFINE_STRUCT(_name, _default)
-
 /**
  * Parameter value union.
  */
@@ -473,7 +435,7 @@ __END_DECLS
 
 
 
-#ifdef	__cplusplus
+#if defined(__cplusplus) && !defined(PARAM_IMPLEMENTATION)
 #if 0 // set to 1 to debug param type mismatches
 #include <cstdio>
 #define CHECK_PARAM_TYPE(param, type) \
@@ -488,17 +450,19 @@ __END_DECLS
 // param is a C-interface. This means there is no overloading, and thus no type-safety for param_get().
 // So for C++ code we redefine param_get() to inlined overloaded versions, which gives us type-safety
 // w/o having to use a different interface
-static inline int param_get(param_t param, float *val)
+static inline int param_get_cplusplus(param_t param, float *val)
 {
 	CHECK_PARAM_TYPE(param, PARAM_TYPE_FLOAT);
 	return param_get(param, (void *)val);
 }
-static inline int param_get(param_t param, int32_t *val)
+static inline int param_get_cplusplus(param_t param, int32_t *val)
 {
 	CHECK_PARAM_TYPE(param, PARAM_TYPE_INT32);
 	return param_get(param, (void *)val);
 }
 #undef CHECK_PARAM_TYPE
+
+#define param_get(param, val) param_get_cplusplus(param, val)
 
 #endif /* __cplusplus */
 

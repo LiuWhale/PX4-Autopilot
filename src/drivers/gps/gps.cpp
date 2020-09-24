@@ -47,12 +47,15 @@
 
 #include <termios.h>
 
+#include <lib/parameters/param.h>
 #include <mathlib/mathlib.h>
 #include <matrix/math.hpp>
-#include <px4_cli.h>
-#include <px4_getopt.h>
-#include <px4_module.h>
-#include <uORB/PublicationQueued.hpp>
+#include <px4_platform_common/atomic.h>
+#include <px4_platform_common/cli.h>
+#include <px4_platform_common/getopt.h>
+#include <px4_platform_common/module.h>
+#include <uORB/Publication.hpp>
+#include <uORB/PublicationMulti.hpp>
 #include <uORB/Subscription.hpp>
 #include <uORB/topics/gps_dump.h>
 #include <uORB/topics/gps_inject_data.h>
@@ -82,6 +85,8 @@ struct GPS_Sat_Info {
 	struct satellite_info_s 	_data;
 };
 
+static constexpr int TASK_STACK_SIZE = 1760;
+
 
 class GPS : public ModuleBase<GPS>
 {
@@ -97,7 +102,7 @@ public:
 
 	GPS(const char *path, gps_driver_mode_t mode, GPSHelper::Interface interface, bool fake_gps, bool enable_sat_info,
 	    Instance instance, unsigned configured_baudrate);
-	virtual ~GPS();
+	~GPS() override;
 
 	/** @see ModuleBase */
 	static int task_spawn(int argc, char *argv[]);
@@ -158,11 +163,8 @@ private:
 	vehicle_gps_position_s		_report_gps_pos{};				///< uORB topic for gps position
 	satellite_info_s		*_p_report_sat_info{nullptr};			///< pointer to uORB topic for satellite info
 
-	orb_advert_t			_report_gps_pos_pub{nullptr};			///< uORB pub for gps position
-	orb_advert_t			_report_sat_info_pub{nullptr};			///< uORB pub for satellite info
-
-	int				_gps_orb_instance{-1};				///< uORB multi-topic instance
-	int				_gps_sat_orb_instance{-1};			///< uORB multi-topic instance for satellite info
+	uORB::PublicationMulti<vehicle_gps_position_s>	_report_gps_pos_pub{ORB_ID(vehicle_gps_position)};	///< uORB pub for gps position
+	uORB::PublicationMulti<satellite_info_s>	_report_sat_info_pub{ORB_ID(satellite_info)};		///< uORB pub for satellite info
 
 	float				_rate{0.0f};					///< position update rate
 	float				_rate_rtcm_injection{0.0f};			///< RTCM message injection rate
@@ -178,12 +180,12 @@ private:
 	gps_dump_s			*_dump_from_device{nullptr};
 	bool				_should_dump_communication{false};			///< if true, dump communication
 
-	static volatile bool _is_gps_main_advertised; ///< for the second gps we want to make sure that it gets instance 1
+	static px4::atomic_bool _is_gps_main_advertised; ///< for the second gps we want to make sure that it gets instance 1
 	/// and thus we wait until the first one publishes at least one message.
 
-	static volatile GPS *_secondary_instance;
+	static px4::atomic<GPS *> _secondary_instance;
 
-	volatile GPSRestartType _scheduled_reset{GPSRestartType::None};
+	px4::atomic<int> _scheduled_reset{(int)GPSRestartType::None};
 
 	/**
 	 * Publish the gps struct
@@ -242,8 +244,8 @@ private:
 	void initializeCommunicationDump();
 };
 
-volatile bool GPS::_is_gps_main_advertised = false;
-volatile GPS *GPS::_secondary_instance = nullptr;
+px4::atomic_bool GPS::_is_gps_main_advertised{false};
+px4::atomic<GPS *> GPS::_secondary_instance{nullptr};
 
 /*
  * Driver 'main' command.
@@ -279,7 +281,7 @@ GPS::GPS(const char *path, gps_driver_mode_t mode, GPSHelper::Interface interfac
 
 GPS::~GPS()
 {
-	GPS *secondary_instance = (GPS *) _secondary_instance;
+	GPS *secondary_instance = _secondary_instance.load();
 
 	if (_instance == Instance::Main && secondary_instance) {
 		secondary_instance->request_stop();
@@ -290,21 +292,13 @@ GPS::~GPS()
 		do {
 			px4_usleep(20000); // 20 ms
 			++i;
-		} while (_secondary_instance && i < 100);
+		} while (_secondary_instance.load() && i < 100);
 	}
 
-	if (_sat_info) {
-		delete (_sat_info);
-	}
-
-	if (_dump_to_device) {
-		delete (_dump_to_device);
-	}
-
-	if (_dump_from_device) {
-		delete (_dump_from_device);
-	}
-
+	delete _sat_info;
+	delete _dump_to_device;
+	delete _dump_from_device;
+	delete _helper;
 }
 
 int GPS::callback(GPSCallbackType type, void *data1, int data2, void *user)
@@ -417,7 +411,7 @@ void GPS::handleInjectDataTopic()
 	bool updated = false;
 
 	// Limit maximum number of GPS injections to 6 since usually
-	// GPS injections should consist of 1-4 packets (GPS, Glonass, Baidu, Galileo).
+	// GPS injections should consist of 1-4 packets (GPS, Glonass, BeiDou, Galileo).
 	// Looking at 6 packets thus guarantees, that at least a full injection
 	// data set is evaluated.
 	const size_t max_num_injections = 6;
@@ -429,15 +423,17 @@ void GPS::handleInjectDataTopic()
 
 		if (updated) {
 			gps_inject_data_s msg;
-			_orb_inject_data_sub.copy(&msg);
 
-			/* Write the message to the gps device. Note that the message could be fragmented.
-			 * But as we don't write anywhere else to the device during operation, we don't
-			 * need to assemble the message first.
-			 */
-			injectData(msg.data, msg.len);
+			if (_orb_inject_data_sub.copy(&msg)) {
 
-			++_last_rate_rtcm_injection_count;
+				/* Write the message to the gps device. Note that the message could be fragmented.
+				 * But as we don't write anywhere else to the device during operation, we don't
+				 * need to assemble the message first.
+				 */
+				injectData(msg.data, msg.len);
+
+				++_last_rate_rtcm_injection_count;
+			}
 		}
 	} while (updated && num_injections < max_num_injections);
 }
@@ -834,8 +830,6 @@ GPS::run()
 		::close(_serial_fd);
 		_serial_fd = -1;
 	}
-
-	orb_unadvertise(_report_gps_pos_pub);
 }
 
 int
@@ -899,8 +893,8 @@ GPS::print_status()
 		print_message(_report_gps_pos);
 	}
 
-	if (_instance == Instance::Main && _secondary_instance) {
-		GPS *secondary_instance = (GPS *)_secondary_instance;
+	if (_instance == Instance::Main && _secondary_instance.load()) {
+		GPS *secondary_instance = _secondary_instance.load();
 		secondary_instance->print_status();
 	}
 
@@ -910,10 +904,10 @@ GPS::print_status()
 void
 GPS::schedule_reset(GPSRestartType restart_type)
 {
-	_scheduled_reset = restart_type;
+	_scheduled_reset.store((int)restart_type);
 
-	if (_instance == Instance::Main && _secondary_instance) {
-		GPS *secondary_instance = (GPS *)_secondary_instance;
+	if (_instance == Instance::Main && _secondary_instance.load()) {
+		GPS *secondary_instance = _secondary_instance.load();
 		secondary_instance->schedule_reset(restart_type);
 	}
 }
@@ -921,10 +915,10 @@ GPS::schedule_reset(GPSRestartType restart_type)
 void
 GPS::reset_if_scheduled()
 {
-	GPSRestartType restart_type = _scheduled_reset;
+	GPSRestartType restart_type = (GPSRestartType)_scheduled_reset.load();
 
 	if (restart_type != GPSRestartType::None) {
-		_scheduled_reset = GPSRestartType::None;
+		_scheduled_reset.store((int)GPSRestartType::None);
 		int res = _helper->reset(restart_type);
 
 		if (res == -1) {
@@ -942,13 +936,12 @@ GPS::reset_if_scheduled()
 void
 GPS::publish()
 {
-	if (_instance == Instance::Main || _is_gps_main_advertised) {
-		orb_publish_auto(ORB_ID(vehicle_gps_position), &_report_gps_pos_pub, &_report_gps_pos, &_gps_orb_instance,
-				 ORB_PRIO_DEFAULT);
+	if (_instance == Instance::Main || _is_gps_main_advertised.load()) {
+		_report_gps_pos_pub.publish(_report_gps_pos);
 		// Heading/yaw data can be updated at a lower rate than the other navigation data.
 		// The uORB message definition requires this data to be set to a NAN if no new valid data is available.
 		_report_gps_pos.heading = NAN;
-		_is_gps_main_advertised = true;
+		_is_gps_main_advertised.store(true);
 	}
 }
 
@@ -956,8 +949,9 @@ void
 GPS::publishSatelliteInfo()
 {
 	if (_instance == Instance::Main) {
-		orb_publish_auto(ORB_ID(satellite_info), &_report_sat_info_pub, _p_report_sat_info, &_gps_sat_orb_instance,
-				 ORB_PRIO_DEFAULT);
+		if (_p_report_sat_info != nullptr) {
+			_report_sat_info_pub.publish(*_p_report_sat_info);
+		}
 
 	} else {
 		//we don't publish satellite info for the secondary gps
@@ -1068,7 +1062,7 @@ int GPS::task_spawn(int argc, char *argv[], Instance instance)
 	}
 
 	int task_id = px4_task_spawn_cmd("gps", SCHED_DEFAULT,
-				   SCHED_PRIORITY_SLOW_DRIVER, 1700,
+				   SCHED_PRIORITY_SLOW_DRIVER, TASK_STACK_SIZE,
 				   entry_point, (char *const *)argv);
 
 	if (task_id < 0) {
@@ -1094,10 +1088,10 @@ int GPS::run_trampoline_secondary(int argc, char *argv[])
 
 	GPS *gps = instantiate(argc, argv, Instance::Secondary);
 	if (gps) {
-		_secondary_instance = gps;
+		_secondary_instance.store(gps);
 		gps->run();
 
-		_secondary_instance = nullptr;
+		_secondary_instance.store(nullptr);
 		delete gps;
 	}
 	return 0;
@@ -1214,7 +1208,7 @@ GPS *GPS::instantiate(int argc, char *argv[], Instance instance)
 				/* wait up to 1s */
 				px4_usleep(2500);
 
-			} while (!_secondary_instance && ++i < 400);
+			} while (!_secondary_instance.load() && ++i < 400);
 
 			if (i == 400) {
 				PX4_ERR("Timed out while waiting for thread to start");

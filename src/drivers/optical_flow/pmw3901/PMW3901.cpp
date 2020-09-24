@@ -35,9 +35,10 @@
 
 static constexpr uint32_t TIME_us_TSWW = 11; //  - actually 10.5us
 
-PMW3901::PMW3901(int bus, enum Rotation yaw_rotation) :
-	SPI("PMW3901", PMW3901_DEVICE_PATH, bus, PMW3901_SPIDEV, SPIDEV_MODE0, PMW3901_SPI_BUS_SPEED),
-	ScheduledWorkItem(px4::device_bus_to_wq(get_device_id())),
+PMW3901::PMW3901(I2CSPIBusOption bus_option, int bus, int devid, enum Rotation yaw_rotation, int bus_frequency,
+		 spi_mode_e spi_mode) :
+	SPI(DRV_FLOW_DEVTYPE_PMW3901, MODULE_NAME, bus, devid, spi_mode, bus_frequency),
+	I2CSPIDriver(MODULE_NAME, px4::device_bus_to_wq(get_device_id()), bus_option, bus),
 	_sample_perf(perf_alloc(PC_ELAPSED, "pmw3901: read")),
 	_comms_errors(perf_alloc(PC_COUNT, "pmw3901: com err")),
 	_yaw_rotation(yaw_rotation)
@@ -46,9 +47,6 @@ PMW3901::PMW3901(int bus, enum Rotation yaw_rotation) :
 
 PMW3901::~PMW3901()
 {
-	// make sure we are truly inactive
-	stop();
-
 	// free perf counters
 	perf_free(_sample_perf);
 	perf_free(_comms_errors);
@@ -296,7 +294,7 @@ PMW3901::writeRegister(unsigned reg, uint8_t data)
 }
 
 void
-PMW3901::Run()
+PMW3901::RunImpl()
 {
 	perf_begin(_sample_perf);
 
@@ -314,8 +312,12 @@ PMW3901::Run()
 
 	readMotionCount(delta_x_raw, delta_y_raw, qual);
 
-	_flow_sum_x += delta_x_raw;
-	_flow_sum_y += delta_y_raw;
+	if (qual > 0) {
+		_flow_sum_x += delta_x_raw;
+		_flow_sum_y += delta_y_raw;
+		_flow_sample_counter ++;
+		_flow_quality_sum += qual;
+	}
 
 	// returns if the collect time has not been reached
 	if (_flow_dt_sum_usec < _collect_time) {
@@ -336,19 +338,12 @@ PMW3901::Run()
 	rotate_3f(_yaw_rotation, report.pixel_flow_x_integral, report.pixel_flow_y_integral, zeroval);
 	rotate_3f(_yaw_rotation, report.gyro_x_rate_integral, report.gyro_y_rate_integral, report.gyro_z_rate_integral);
 
-	report.frame_count_since_last_readout = 4;		// microseconds
+	report.frame_count_since_last_readout = _flow_sample_counter;	// number of frames
 	report.integration_timespan = _flow_dt_sum_usec; 	// microseconds
 
 	report.sensor_id = 0;
+	report.quality = _flow_sample_counter > 0 ? _flow_quality_sum / _flow_sample_counter : 0;
 
-	// This sensor doesn't provide any quality metric. However if the sensor is unable to calculate the optical flow it will
-	// output 0 for the delta. Hence, we set the measurement to "invalid" (quality = 0) if the values are smaller than FLT_EPSILON
-	if (fabsf(report.pixel_flow_x_integral) < FLT_EPSILON && fabsf(report.pixel_flow_y_integral) < FLT_EPSILON) {
-		report.quality = 0;
-
-	} else {
-		report.quality = qual;
-	}
 
 	/* No gyro on this board */
 	report.gyro_x_rate_integral = NAN;
@@ -363,6 +358,8 @@ PMW3901::Run()
 	_flow_dt_sum_usec = 0;
 	_flow_sum_x = 0;
 	_flow_sum_y = 0;
+	_flow_sample_counter = 0;
+	_flow_quality_sum = 0;
 
 	_optical_flow_pub.publish(report);
 
@@ -379,6 +376,7 @@ PMW3901::readMotionCount(int16_t &deltaX, int16_t &deltaY, uint8_t &qual)
 	int ret = transfer(&data[0], &data[0], 12);
 
 	if (OK != ret) {
+		qual = 0;
 		perf_count(_comms_errors);
 		DEVICE_LOG("spi::transfer returned %d", ret);
 		return ret;
@@ -386,7 +384,14 @@ PMW3901::readMotionCount(int16_t &deltaX, int16_t &deltaY, uint8_t &qual)
 
 	deltaX = ((int16_t)data[5] << 8) | data[3];
 	deltaY = ((int16_t)data[9] << 8) | data[7];
-	qual = data[11];
+
+	// If the reported flow is impossibly large, we just got garbage from the SPI
+	if (deltaX > 240 || deltaY > 240 || deltaX < -240 || deltaY < -240) {
+		qual = 0;
+
+	} else {
+		qual = data[11];
+	}
 
 	ret = OK;
 
@@ -407,8 +412,9 @@ PMW3901::stop()
 }
 
 void
-PMW3901::print_info()
+PMW3901::print_status()
 {
+	I2CSPIDriverBase::print_status();
 	perf_print_counter(_sample_perf);
 	perf_print_counter(_comms_errors);
 }

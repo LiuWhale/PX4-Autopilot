@@ -48,25 +48,22 @@
 #include <linux/types.h>
 #include <linux/spi/spidev.h>
 
-#include <px4_config.h>
+#include <px4_platform_common/px4_config.h>
 
 namespace device
 {
 
-SPI::SPI(const char *name, const char *devname, int bus, uint32_t device, enum spi_mode_e mode, uint32_t frequency) :
-	CDev(name, devname),
+SPI::SPI(uint8_t device_type, const char *name, int bus, uint32_t device, enum spi_mode_e mode, uint32_t frequency) :
+	CDev(name, nullptr),
 	_device(device),
 	_mode(mode),
 	_frequency(frequency)
 {
-	DEVICE_DEBUG("SPI::SPI name = %s devname = %s", name, devname);
-
+	_device_id.devid_s.devtype = device_type;
 	// fill in _device_id fields for a SPI device
 	_device_id.devid_s.bus_type = DeviceBusType_SPI;
 	_device_id.devid_s.bus = bus;
 	_device_id.devid_s.address = (uint8_t)device;
-	// devtype needs to be filled in by the driver
-	_device_id.devid_s.devtype = 0;
 }
 
 SPI::~SPI()
@@ -107,8 +104,8 @@ SPI::init()
 		return ret;
 	}
 
-	/* tell the workd where we are */
-	DEVICE_LOG("on SPI bus %d at %d (%u KHz)", get_device_bus(), PX4_SPI_DEV_ID(_device), _frequency / 1000);
+	/* tell the world where we are */
+	DEVICE_DEBUG("on SPI bus %d at %d (%u KHz)", get_device_bus(), PX4_SPI_DEV_ID(_device), _frequency / 1000);
 
 	return PX4_OK;
 }
@@ -128,24 +125,22 @@ SPI::transfer(uint8_t *send, uint8_t *recv, unsigned len)
 		return PX4_ERROR;
 	}
 
-	spi_ioc_transfer spi_transfer[1] {}; // datastructures for linux spi interface
+	spi_ioc_transfer spi_transfer{};
 
-	spi_transfer[0].tx_buf = (uint64_t)send;
-	spi_transfer[0].rx_buf = (uint64_t)recv;
-	spi_transfer[0].len = len;
-	spi_transfer[0].speed_hz = _frequency;
-	spi_transfer[0].bits_per_word = 8;
-	//spi_transfer[0].delay_usecs = 10;
-	spi_transfer[0].cs_change = true;
+	spi_transfer.tx_buf = (uint64_t)send;
+	spi_transfer.rx_buf = (uint64_t)recv;
+	spi_transfer.len = len;
+	spi_transfer.speed_hz = _frequency;
+	spi_transfer.bits_per_word = 8;
 
 	result = ::ioctl(_fd, SPI_IOC_MESSAGE(1), &spi_transfer);
 
 	if (result != (int)len) {
 		PX4_ERR("write failed. Reported %d bytes written (%s)", result, strerror(errno));
-		return -1;
+		return PX4_ERROR;
 	}
 
-	return 0;
+	return PX4_OK;
 }
 
 int
@@ -171,7 +166,7 @@ SPI::transferhword(uint16_t *send, uint16_t *recv, unsigned len)
 		return PX4_ERROR;
 	}
 
-	spi_ioc_transfer spi_transfer[1] {}; // datastructures for linux spi interface
+	spi_ioc_transfer spi_transfer[1] {};
 
 	spi_transfer[0].tx_buf = (uint64_t)send;
 	spi_transfer[0].rx_buf = (uint64_t)recv;
@@ -185,10 +180,10 @@ SPI::transferhword(uint16_t *send, uint16_t *recv, unsigned len)
 
 	if (result != (int)(len * 2)) {
 		PX4_ERR("write failed. Reported %d bytes written (%s)", result, strerror(errno));
-		return -1;
+		return PX4_ERROR;
 	}
 
-	return 0;
+	return PX4_OK;
 }
 
 } // namespace device

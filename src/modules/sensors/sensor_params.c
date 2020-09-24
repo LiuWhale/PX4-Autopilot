@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2012-2017 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2012-2019 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,14 +32,6 @@
  ****************************************************************************/
 
 /**
- * Primary baro ID
- *
- * @category system
- * @group Sensor Calibration
- */
-PARAM_DEFINE_INT32(CAL_BARO_PRIME, 0);
-
-/**
  * Airspeed sensor compensation model for the SDP3x
  *
  * Model with Pitot
@@ -67,7 +59,7 @@ PARAM_DEFINE_INT32(CAL_AIR_CMODEL, 0);
  *
  * @min 0.01
  * @max 2.00
- * @unit meter
+ * @unit m
  *
  * @group Sensors
  */
@@ -78,7 +70,7 @@ PARAM_DEFINE_FLOAT(CAL_AIR_TUBELEN, 0.2f);
  *
  * @min 0.1
  * @max 100
- * @unit millimeter
+ * @unit mm
  *
  * @group Sensors
  */
@@ -107,19 +99,6 @@ PARAM_DEFINE_FLOAT(SENS_DPRES_OFF, 0.0f);
  * @group Sensor Calibration
  */
 PARAM_DEFINE_FLOAT(SENS_DPRES_ANSC, 0);
-
-/**
- * QNH for barometer
- *
- * @min 500
- * @max 1500
- * @group Sensors
- * @unit hPa
- *
- * @reboot_required true
- *
- */
-PARAM_DEFINE_FLOAT(SENS_BARO_QNH, 1013.25f);
 
 /**
  * Board rotation
@@ -152,19 +131,26 @@ PARAM_DEFINE_FLOAT(SENS_BARO_QNH, 1013.25f);
  * @value 23 Roll 270°, Yaw 135°
  * @value 24 Pitch 90°
  * @value 25 Pitch 270°
- * @value 26 Roll 270°, Yaw 270°
- * @value 27 Roll 180°, Pitch 270°
- * @value 28 Pitch 90°, Yaw 180
- * @value 29 Pitch 90°, Roll 90°
- * @value 30 Yaw 293°, Pitch 68°, Roll 90° (Solo)
- * @value 31 Pitch 90°, Roll 270°
- * @value 32 Pitch 9°, Yaw 180°
- * @value 33 Pitch 45°
- * @value 34 Pitch 315°
- * @value 35 Roll 90°, Yaw 270°
+ * @value 26 Pitch 180°, Yaw 90°
+ * @value 27 Pitch 180°, Yaw 270°
+ * @value 28 Roll 90°, Pitch 90°
+ * @value 29 Roll 180°, Pitch 90°
+ * @value 30 Roll 270°, Pitch 90°
+ * @value 31 Roll 90°, Pitch 180°
+ * @value 32 Roll 270°, Pitch 180°
+ * @value 33 Roll 90°, Pitch 270°
+ * @value 34 Roll 180°, Pitch 270°
+ * @value 35 Roll 270°, Pitch 270°
+ * @value 36 Roll 90°, Pitch 180°, Yaw 90°
+ * @value 37 Roll 90°, Yaw 270°
+ * @value 38 Roll 90°, Pitch 68°, Yaw 293°
+ * @value 39 Pitch 315°
+ * @value 40 Roll 90°, Pitch 315°
+ * @value 41 Roll 270°, Yaw 180°
  *
+ * @min -1
+ * @max 41
  * @reboot_required true
- *
  * @group Sensors
  */
 PARAM_DEFINE_INT32(SENS_BOARD_ROT, 0);
@@ -207,54 +193,31 @@ PARAM_DEFINE_FLOAT(SENS_BOARD_Z_OFF, 0.0f);
  *
  * @value -1 Thermal control unavailable
  * @value 0 Thermal control off
+ * @value 1 Thermal control enabled
+ * @category system
  * @group Sensors
  */
 PARAM_DEFINE_INT32(SENS_EN_THERMAL, -1);
 
 /**
-* Driver level cutoff frequency for gyro
-*
-* The cutoff frequency for the 2nd order butterworth filter on the gyro driver.
-* This only affects the signal sent to the controllers, not the estimators. 0 disables the filter.
-*
-* @min 0
-* @max 1000
-* @unit Hz
-* @reboot_required true
-* @group Sensors
-*/
-PARAM_DEFINE_FLOAT(IMU_GYRO_CUTOFF, 30.0f);
+ * External I2C probe.
+ *
+ * Probe for optional external I2C devices.
+ *
+ * @boolean
+ * @category system
+ * @group Sensors
+ */
+PARAM_DEFINE_INT32(SENS_EXT_I2C_PRB, 1);
 
 /**
-* Gyro control data maximum publication rate
-*
-* This is the maximum rate the gyro control data (sensor_gyro_control) will be allowed to publish at.
-* Set to 0 to disable and publish at the native sensor sample rate.
-*
-* @min 0
-* @max 2000
-* @value 0 0 (no limit)
-* @value 50 50 Hz
-* @value 250 250 Hz
-* @value 400 400 Hz
-* @value 1000 1000 Hz
-* @value 2000 2000 Hz
-* @unit Hz
-* @reboot_required true
-* @group Sensors
-*/
-PARAM_DEFINE_INT32(IMU_GYRO_RATEMAX, 0);
-
-/**
-* Driver level cutoff frequency for accel
-*
-* The cutoff frequency for the 2nd order butterworth filter on the accel driver.
-* This only affects the signal sent to the controllers, not the estimators. 0 disables the filter.
-*
-* @min 0
-* @max 1000
-* @unit Hz
-* @reboot_required true
-* @group Sensors
-*/
-PARAM_DEFINE_FLOAT(IMU_ACCEL_CUTOFF, 30.0f);
+ * Sensors hub IMU mode
+ *
+ * @value 0 Disabled
+ * @value 1 Publish primary IMU selection
+ *
+ * @category system
+ * @reboot_required true
+ * @group Sensors
+ */
+PARAM_DEFINE_INT32(SENS_IMU_MODE, 1);

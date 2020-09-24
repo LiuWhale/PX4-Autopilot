@@ -42,9 +42,9 @@
  */
 
 #include <fcntl.h>
-#include <px4_config.h>
-#include <px4_defines.h>
-#include <px4_tasks.h>
+#include <px4_platform_common/px4_config.h>
+#include <px4_platform_common/defines.h>
+#include <px4_platform_common/tasks.h>
 #include <poll.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -89,7 +89,7 @@ send_poll(int uart, uint8_t *buffer, size_t size)
 
 	/* A hack the reads out what was written so the next read from the receiver doesn't get it. */
 	/* TODO: Fix this!! */
-	uint8_t dummy[size];
+	uint8_t dummy[MAX_MESSAGE_BUFFER_SIZE];
 	read(uart, &dummy, size);
 
 	return OK;

@@ -39,7 +39,10 @@
 #pragma once
 
 #include <uORB/uORB.h>
-#include <px4_defines.h>
+#include <uORB/topics/uORBTopics.hpp>
+
+#include <px4_platform_common/defines.h>
+#include <lib/mathlib/mathlib.h>
 
 #include "uORBDeviceNode.hpp"
 #include "uORBManager.hpp"
@@ -58,12 +61,51 @@ public:
 	/**
 	 * Constructor
 	 *
+	 * @param id The uORB ORB_ID enum for the topic.
+	 * @param instance The instance for multi sub.
+	 */
+	Subscription(ORB_ID id, uint8_t instance = 0) :
+		_orb_id(id),
+		_instance(instance)
+	{
+		subscribe();
+	}
+
+	/**
+	 * Constructor
+	 *
 	 * @param meta The uORB metadata (usually from the ORB_ID() macro) for the topic.
 	 * @param instance The instance for multi sub.
 	 */
-	Subscription(const orb_metadata *meta, uint8_t instance = 0) : _meta(meta), _instance(instance)
+	Subscription(const orb_metadata *meta, uint8_t instance = 0) :
+		_orb_id((meta == nullptr) ? ORB_ID::INVALID : static_cast<ORB_ID>(meta->o_id)),
+		_instance(instance)
 	{
 		subscribe();
+	}
+
+	// Copy constructor
+	Subscription(const Subscription &other) : _orb_id(other._orb_id), _instance(other._instance) {}
+
+	// Move constructor
+	Subscription(const Subscription &&other) noexcept : _orb_id(other._orb_id), _instance(other._instance) {}
+
+	// copy assignment
+	Subscription &operator=(const Subscription &other)
+	{
+		unsubscribe();
+		_orb_id = other._orb_id;
+		_instance = other._instance;
+		return *this;
+	}
+
+	// move assignment
+	Subscription &operator=(Subscription &&other) noexcept
+	{
+		unsubscribe();
+		_orb_id = other._orb_id;
+		_instance = other._instance;
+		return *this;
 	}
 
 	~Subscription()
@@ -75,17 +117,17 @@ public:
 	void unsubscribe();
 
 	bool valid() const { return _node != nullptr; }
-	bool published()
+	bool advertised()
 	{
 		if (valid()) {
-			return _node->is_published();
+			return _node->is_advertised();
 		}
 
 		// try to initialize
-		if (init()) {
+		if (subscribe()) {
 			// check again if valid
 			if (valid()) {
-				return _node->is_published();
+				return _node->is_advertised();
 			}
 		}
 
@@ -94,53 +136,44 @@ public:
 
 	/**
 	 * Check if there is a new update.
-	 * */
-	bool updated() { return published() ? (_node->published_message_count() != _last_generation) : false; }
+	 */
+	bool updated() { return advertised() && (_node->published_message_count() != _last_generation); }
 
 	/**
 	 * Update the struct
-	 * @param data The uORB message struct we are updating.
+	 * @param dst The uORB message struct we are updating.
 	 */
-	bool update(void *dst) { return updated() ? copy(dst) : false; }
-
-	/**
-	 * Check if subscription updated based on timestamp.
-	 *
-	 * @return true only if topic was updated based on a timestamp and
-	 * copied to buffer successfully.
-	 * If topic was not updated since last check it will return false but
-	 * still copy the data.
-	 * If no data available data buffer will be filled with zeros.
-	 */
-	bool update(uint64_t *time, void *dst);
+	bool update(void *dst) { return updated() && _node->copy(dst, _last_generation); }
 
 	/**
 	 * Copy the struct
-	 * @param data The uORB message struct we are updating.
+	 * @param dst The uORB message struct we are updating.
 	 */
-	bool copy(void *dst) { return published() ? _node->copy(dst, _last_generation) : false; }
+	bool copy(void *dst) { return advertised() && _node->copy(dst, _last_generation); }
 
-	uint8_t		get_instance() const { return _instance; }
-	orb_id_t	get_topic() const { return _meta; }
+	/**
+	 * Change subscription instance
+	 * @param instance The new multi-Subscription instance
+	 */
+	bool ChangeInstance(uint8_t instance);
+
+	uint8_t  get_instance() const { return _instance; }
+	unsigned get_last_generation() const { return _last_generation; }
+	orb_id_t get_topic() const { return get_orb_meta(_orb_id); }
 
 protected:
 
 	friend class SubscriptionCallback;
+	friend class SubscriptionCallbackWorkItem;
 
-	DeviceNode		*get_node() { return _node; }
+	DeviceNode *get_node() { return _node; }
 
-	bool			init();
+	DeviceNode *_node{nullptr};
 
-	DeviceNode		*_node{nullptr};
-	const orb_metadata	*_meta{nullptr};
+	unsigned _last_generation{0}; /**< last generation the subscriber has seen */
 
-	/**
-	 * Subscription's latest data generation.
-	 * Also used to track (and rate limit) subscription
-	 * attempts if the topic has not yet been published.
-	 */
-	unsigned		_last_generation{0};
-	uint8_t			_instance{0};
+	ORB_ID _orb_id{ORB_ID::INVALID};
+	uint8_t _instance{0};
 };
 
 // Subscription wrapper class with data
@@ -148,6 +181,18 @@ template<class T>
 class SubscriptionData : public Subscription
 {
 public:
+	/**
+	 * Constructor
+	 *
+	 * @param id The uORB metadata ORB_ID enum for the topic.
+	 * @param instance The instance for multi sub.
+	 */
+	SubscriptionData(ORB_ID id, uint8_t instance = 0) :
+		Subscription(id, instance)
+	{
+		copy(&_data);
+	}
+
 	/**
 	 * Constructor
 	 *

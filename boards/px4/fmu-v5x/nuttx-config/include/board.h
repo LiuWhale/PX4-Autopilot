@@ -38,6 +38,7 @@
 /************************************************************************************
  * Included Files
  ************************************************************************************/
+#include "board_dma_map.h"
 
 #include <nuttx/config.h>
 
@@ -242,20 +243,6 @@
 #  define STM32_SDMMC_SDXFR_CLKDIV      (2 << STM32_SDMMC_CLKCR_CLKDIV_SHIFT)
 #endif
 
-/* DMA Channel/Stream Selections *****************************************************/
-/* Stream selections are arbitrary for now but might become important in the future
- * if we set aside more DMA channels/streams.
- *
- * SDMMC RX and TX DMA is on DMA2
- *
- * SDMMC2 DMA
- *   DMAMAP_SDMMC2_1 = Channel 11, Stream 0
- *   DMAMAP_SDMMC2_2 = Channel 11, Stream 5 <- Free for other devices
- */
-
-#define DMAMAP_SDMMC2  DMAMAP_SDMMC2_1
-
-
 /* FLASH wait states
  *
  *  --------- ---------- -----------
@@ -355,17 +342,6 @@
  *      GPIO_UART8_TX                          PE1
  */
 
-/* U[x]ART DMA configurations */
-
-// #define DMAMAP_UART5_RX - DMA1, STREAM 0, Chan 4 - not remapable
-// #define DMAMAP_UART5_TX - DMA1, STREAM 7, Chan 4 - not remapable
-
-#define DMAMAP_USART6_RX DMAMAP_USART6_RX_1 /* DMA2, STREAM 1, Chan 5 */
-#define DMAMAP_USART6_TX DMAMAP_USART6_TX_2 /* DMA2, STREAM 7, Chan 5 */
-
-// #define DMAMAP_UART7_RX - DMA1, STREAM 3, Chan 5 - not remapable
-
-// #define DMAMAP_UART8_RX - DMA1, STREAM 6, Chan 5 - not remapable
 
 /* CAN
  *
@@ -381,7 +357,7 @@
  * SPI1 is sensors1
  * SPI2 is sensors2
  * SPI3 is sensors3
- * SPI4 is MAG
+ * SPI4 is Not Used
  * SPI5 is FRAM
  * SPI6 is EXTERNAL1
  *
@@ -398,10 +374,6 @@
 #define GPIO_SPI3_MISO   GPIO_SPI3_MISO_2   /* PC11 */
 #define GPIO_SPI3_MOSI   GPIO_SPI3_MOSI_1   /* PB2  */
 #define GPIO_SPI3_SCK    GPIO_SPI3_SCK_2    /* PC10 */
-
-#define GPIO_SPI4_MISO   GPIO_SPI4_MISO_2   /* PE13 */
-#define GPIO_SPI4_MOSI   GPIO_SPI4_MOSI_1   /* PE6  */
-#define GPIO_SPI4_SCK    GPIO_SPI4_SCK_2    /* PE12 */
 
 #define GPIO_SPI5_MISO   GPIO_SPI5_MISO_1   /* PF8  */
 #define GPIO_SPI5_MOSI   GPIO_SPI5_MOSI_2   /* PF11 */
@@ -528,40 +500,4 @@
 # define PROBE_MARK(n)
 #endif
 
-/************************************************************************************
- * Public Data
- ************************************************************************************/
-#ifndef __ASSEMBLY__
-
-#undef EXTERN
-#if defined(__cplusplus)
-#define EXTERN extern "C"
-extern "C"
-{
-#else
-#define EXTERN extern
-#endif
-
-/************************************************************************************
- * Public Function Prototypes
- ************************************************************************************/
-
-/************************************************************************************
- * Name: stm32_boardinitialize
- *
- * Description:
- *   All STM32 architectures must provide the following entry point.  This entry point
- *   is called early in the initialization -- after all memory has been configured
- *   and mapped but before any devices have been initialized.
- *
- ************************************************************************************/
-
-void stm32_boardinitialize(void);
-
-#undef EXTERN
-#if defined(__cplusplus)
-}
-#endif
-
-#endif /* __ASSEMBLY__ */
 #endif  /*__NUTTX_CONFIG_PX4_FMU_V5X_INCLUDE_BOARD_H  */

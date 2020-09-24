@@ -36,16 +36,27 @@
 #include <px4_platform_common/px4_work_queue/WorkQueue.hpp>
 #include <px4_platform_common/px4_work_queue/WorkQueueManager.hpp>
 
-#include <px4_log.h>
+#include <px4_platform_common/log.h>
 #include <drivers/drv_hrt.h>
 
 namespace px4
 {
 
-WorkItem::WorkItem(const wq_config_t &config)
+WorkItem::WorkItem(const char *name, const wq_config_t &config) :
+	_item_name(name)
 {
 	if (!Init(config)) {
 		PX4_ERR("init failed");
+	}
+}
+
+WorkItem::WorkItem(const char *name, const WorkItem &work_item) :
+	_item_name(name)
+{
+	px4::WorkQueue *wq = work_item._wq;
+
+	if ((wq != nullptr) && wq->Attach(this)) {
+		_wq = wq;
 	}
 }
 
@@ -61,14 +72,13 @@ bool WorkItem::Init(const wq_config_t &config)
 
 	px4::WorkQueue *wq = WorkQueueFindOrCreate(config);
 
-	if (wq == nullptr) {
-		PX4_ERR("%s not available", config.name);
-
-	} else {
+	if ((wq != nullptr) && wq->Attach(this)) {
 		_wq = wq;
+		_time_first_run = 0;
 		return true;
 	}
 
+	PX4_ERR("%s not available", config.name);
 	return false;
 }
 
@@ -80,8 +90,54 @@ void WorkItem::Deinit()
 		px4::WorkQueue *wq_temp = _wq;
 		_wq = nullptr;
 
+		// remove any queued work
 		wq_temp->Remove(this);
+
+		wq_temp->Detach(this);
 	}
+}
+
+void WorkItem::ScheduleClear()
+{
+	if (_wq != nullptr) {
+		_wq->Remove(this);
+	}
+}
+
+float WorkItem::elapsed_time() const
+{
+	return hrt_elapsed_time(&_time_first_run) / 1e6f;
+}
+
+float WorkItem::average_rate() const
+{
+	const float rate = _run_count / elapsed_time();
+
+	if ((_run_count > 1) && PX4_ISFINITE(rate)) {
+		return rate;
+	}
+
+	return 0.f;
+}
+
+float WorkItem::average_interval() const
+{
+	const float rate = average_rate();
+	const float interval = 1e6f / rate;
+
+	if ((rate > FLT_EPSILON) && PX4_ISFINITE(interval)) {
+		return roundf(interval);
+	}
+
+	return 0.f;
+}
+
+void WorkItem::print_run_status()
+{
+	PX4_INFO_RAW("%-26s %8.1f Hz %12.0f us\n", _item_name, (double)average_rate(), (double)average_interval());
+
+	// reset statistics
+	_run_count = 0;
 }
 
 } // namespace px4
