@@ -38,9 +38,9 @@
  * Driver for the pmw3901 optical flow sensor connected via SPI.
  */
 
-#include <px4_config.h>
-#include <px4_defines.h>
-#include <px4_getopt.h>
+#include <px4_platform_common/px4_config.h>
+#include <px4_platform_common/defines.h>
+#include <px4_platform_common/getopt.h>
 #include <px4_platform_common/px4_work_queue/ScheduledWorkItem.hpp>
 #include <drivers/device/spi.h>
 #include <conversion/rotation.h>
@@ -49,61 +49,43 @@
 #include <drivers/drv_hrt.h>
 #include <uORB/PublicationMulti.hpp>
 #include <uORB/topics/optical_flow.h>
+#include <px4_platform_common/i2c_spi_buses.h>
 
 /* Configuration Constants */
-
-#if defined PX4_SPI_BUS_EXPANSION   // crazyflie
-# define PMW3901_BUS PX4_SPI_BUS_EXPANSION
-#elif defined PX4_SPI_BUS_EXTERNAL1   // fmu-v5
-# define PMW3901_BUS PX4_SPI_BUS_EXTERNAL1
-#elif defined PX4_SPI_BUS_EXTERNAL    // fmu-v4 extspi
-# define PMW3901_BUS PX4_SPI_BUS_EXTERNAL
-#else
-# error "add the required spi bus from board_config.h here"
-#endif
-
-#if defined PX4_SPIDEV_EXPANSION_2    // crazyflie flow deck
-# define PMW3901_SPIDEV PX4_SPIDEV_EXPANSION_2
-#elif defined PX4_SPIDEV_EXTERNAL1_1    // fmu-v5 ext CS1
-# define PMW3901_SPIDEV PX4_SPIDEV_EXTERNAL1_1
-#elif defined PX4_SPIDEV_EXTERNAL   // fmu-v4 extspi
-# define PMW3901_SPIDEV PX4_SPIDEV_EXTERNAL
-#else
-# error "add the required spi dev from board_config.h here"
-#endif
 
 #define PMW3901_SPI_BUS_SPEED (2000000L) // 2MHz
 
 #define DIR_WRITE(a) ((a) | (1 << 7))
 #define DIR_READ(a) ((a) & 0x7f)
 
-#define PMW3901_DEVICE_PATH "/dev/pmw3901"
-
 /* PMW3901 Registers addresses */
 #define PMW3901_US 1000 /*   1 ms */
 #define PMW3901_SAMPLE_INTERVAL 10000 /*  10 ms */
 
-
-class PMW3901 : public device::SPI, public px4::ScheduledWorkItem
+class PMW3901 : public device::SPI, public I2CSPIDriver<PMW3901>
 {
 public:
-	PMW3901(int bus = PMW3901_BUS, enum Rotation yaw_rotation = (enum Rotation)0);
+	PMW3901(I2CSPIBusOption bus_option, int bus, int devid, enum Rotation yaw_rotation, int bus_frequency,
+		spi_mode_e spi_mode);
 
 	virtual ~PMW3901();
 
+	static I2CSPIDriverBase *instantiate(const BusCLIArguments &cli, const BusInstanceIterator &iterator,
+					     int runtime_instance);
+	static void print_usage();
+
 	virtual int init();
 
-	/**
-	* Diagnostics - print some basic information about the driver.
-	*/
-	void print_info();
+	void print_status();
+
+	void RunImpl();
 
 protected:
 	virtual int probe();
 
 private:
 
-	const uint64_t _collect_time{15000}; // usecs, optical flow data publish rate
+	const uint64_t _collect_time{15000}; // usecs, ensures flow data is published every second iteration of Run() (100Hz -> 50Hz)
 
 	uORB::PublicationMulti<optical_flow_s> _optical_flow_pub{ORB_ID(optical_flow)};
 
@@ -117,6 +99,8 @@ private:
 	int _flow_sum_x{0};
 	int _flow_sum_y{0};
 	uint64_t _flow_dt_sum_usec{0};
+	uint16_t _flow_quality_sum{0};
+	uint8_t _flow_sample_counter{0};
 
 	/**
 	* Initialise the automatic measurement state machine and start it.
@@ -131,11 +115,6 @@ private:
 	*/
 	void stop();
 
-	/**
-	* Perform a poll cycle; collect from the previous measurement
-	* and start a new one.
-	*/
-	void Run() override;
 
 	int readRegister(unsigned reg, uint8_t *data, unsigned count);
 	int writeRegister(unsigned reg, uint8_t data);

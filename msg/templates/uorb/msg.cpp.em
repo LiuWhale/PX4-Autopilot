@@ -15,6 +15,7 @@
 @#  - md5sum (String) MD5Sum of the .msg specification
 @#  - search_path (dict) search paths for genmsg
 @#  - topics (List of String) multi-topic names
+@#  - constrained_flash set to true if flash is constrained
 @#  - ids (List) list of all RTPS msg ids
 @###############################################
 /****************************************************************************
@@ -54,7 +55,7 @@
 
 @{
 import genmsg.msgs
-import gencpp
+
 from px_generate_uorb_topic_helper import * # this is in Tools/
 
 uorb_struct = '%s_s'%spec.short_name
@@ -66,9 +67,10 @@ topic_fields = ["%s %s" % (convert_type(field.type), field.name) for field in so
 }@
 
 #include <inttypes.h>
-#include <px4_log.h>
-#include <px4_defines.h>
+#include <px4_platform_common/log.h>
+#include <px4_platform_common/defines.h>
 #include <uORB/topics/@(topic_name).h>
+#include <uORB/topics/uORBTopics.hpp>
 #include <drivers/drv_hrt.h>
 #include <lib/drivers/device/Device.hpp>
 
@@ -77,14 +79,22 @@ topic_fields = ["%s %s" % (convert_type(field.type), field.name) for field in so
 constexpr char __orb_@(topic_name)_fields[] = "@( ";".join(topic_fields) );";
 
 @[for multi_topic in topics]@
-ORB_DEFINE(@multi_topic, struct @uorb_struct, @(struct_size-padding_end_size), __orb_@(topic_name)_fields);
+ORB_DEFINE(@multi_topic, struct @uorb_struct, @(struct_size-padding_end_size), __orb_@(topic_name)_fields, static_cast<uint8_t>(ORB_ID::@multi_topic));
 @[end for]
 
-void print_message(const @uorb_struct& message)
+void print_message(const @uorb_struct &message)
 {
+@[if constrained_flash]
+	(void)message;
+	PX4_INFO_RAW("Not implemented on flash constrained hardware\n");
+@[else]
 	PX4_INFO_RAW(" @(uorb_struct)\n");
+
+	const hrt_abstime now = hrt_absolute_time();
+
 @[for field in sorted_fields]@
 	@( print_field(field) )@
 @[end for]@
+@[end if]@
 
 }

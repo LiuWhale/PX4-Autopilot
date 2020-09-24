@@ -105,8 +105,14 @@ __BEGIN_DECLS
 #define px4_arch_gpioread(pinset)               kinetis_gpioread(pinset)
 #define px4_arch_gpiowrite(pinset, value)       kinetis_gpiowrite(pinset, value)
 
-/* kinetis_gpiosetevent is not implemented and will need to be added */
+/* kinetis_gpiosetevent is added at PX4 level */
+
+int kinetis_gpiosetevent(uint32_t pinset, bool risingedge, bool fallingedge, bool event, xcpt_t func, void *arg);
 
 #define px4_arch_gpiosetevent(pinset,r,f,e,fp,a)  kinetis_gpiosetevent(pinset,r,f,e,fp,a)
+
+#define _PX4_MAKE_GPIO(pin_ftmx, io)    ((((uint32_t)(pin_ftmx)) & ~(_PIN_MODE_MASK | _PIN_OPTIONS_MASK)) |(io))
+#define PX4_MAKE_GPIO_INPUT(gpio) _PX4_MAKE_GPIO(gpio, GPIO_PULLUP)
+#define PX4_MAKE_GPIO_OUTPUT(gpio) _PX4_MAKE_GPIO(gpio, GPIO_HIGHDRIVE)
 
 __END_DECLS

@@ -46,6 +46,7 @@ from geometry_msgs.msg import Quaternion, Vector3
 from mavros_msgs.msg import AttitudeTarget
 from mavros_test_common import MavrosTestCommon
 from pymavlink import mavutil
+from six.moves import xrange
 from std_msgs.msg import Header
 from threading import Thread
 from tf.transformations import quaternion_from_euler
@@ -83,7 +84,7 @@ class MavrosOffboardAttctlTest(MavrosTestCommon):
         self.att.body_rate = Vector3()
         self.att.header = Header()
         self.att.header.frame_id = "base_footprint"
-        self.att.orientation = Quaternion(*quaternion_from_euler(-0.25, 0.5,
+        self.att.orientation = Quaternion(*quaternion_from_euler(-0.25, 0.15,
                                                                  0))
         self.att.thrust = 0.7
         self.att.type_mask = 7  # ignore body rate

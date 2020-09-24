@@ -35,9 +35,9 @@
  * @file led_control.cpp
  */
 
-#include <px4_getopt.h>
-#include <px4_module.h>
-#include <px4_log.h>
+#include <px4_platform_common/getopt.h>
+#include <px4_platform_common/module.h>
+#include <px4_platform_common/log.h>
 
 #include <stdlib.h>
 #include <unistd.h>
@@ -45,7 +45,7 @@
 #include <drivers/drv_hrt.h>
 #include <drivers/drv_led.h>
 
-#include <uORB/PublicationQueued.hpp>
+#include <uORB/Publication.hpp>
 #include <uORB/topics/led_control.h>
 
 static void	usage();

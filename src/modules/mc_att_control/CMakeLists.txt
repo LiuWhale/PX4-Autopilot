@@ -1,6 +1,6 @@
 ############################################################################
 #
-#   Copyright (c) 2015 PX4 Development Team. All rights reserved.
+#   Copyright (c) 2015-2019 PX4 Development Team. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -36,14 +36,13 @@ add_subdirectory(AttitudeControl)
 px4_add_module(
 	MODULE modules__mc_att_control
 	MAIN mc_att_control
-	STACK_MAX 3500
 	COMPILE_FLAGS
+		${MAX_CUSTOM_OPT_LEVEL}
 	SRCS
 		mc_att_control_main.cpp
+		mc_att_control.hpp
 	DEPENDS
-		circuit_breaker
-		conversion
-		mathlib
 		AttitudeControl
+		mathlib
 		px4_work_queue
 	)

@@ -31,136 +31,77 @@
  *
  ****************************************************************************/
 
-/**
- * @file ADIS16448.cpp
- */
-
 #include "ADIS16448.h"
 
-/**
- * Local functions in support of the shell command.
- */
-namespace adis16448
-{
-
-ADIS16448 *g_dev;
-
-int info();
-int start(enum Rotation rotation);
-int stop();
-void usage();
-
-/**
- * Start the driver.
- */
-int
-start(enum Rotation rotation)
-{
-	if (g_dev != nullptr) {
-		// If already started, the still command succeeded.
-		PX4_INFO("already started");
-	}
-
-	// Create the driver.
-#if defined(PX4_SPI_BUS_EXT)
-	g_dev = new ADIS16448(PX4_SPI_BUS_EXT, PX4_SPIDEV_EXT_MPU, rotation);
-#else
-	PX4_ERR("External SPI not available");
-#endif
-
-	if (g_dev != nullptr) {
-		if (g_dev->init() == OK) {
-			return PX4_OK;
-		}
-
-		delete g_dev;
-		g_dev = nullptr;
-	}
-
-	PX4_ERR("driver start failed");
-
-	return PX4_ERROR;
-}
-
-int stop()
-{
-	if (g_dev == nullptr) {
-		PX4_INFO("driver not running");
-
-		return PX4_ERROR;
-	}
-
-	delete g_dev;
-	g_dev = nullptr;
-
-	return PX4_OK;
-}
-
-/**
- * Print a little info about the driver.
- */
-int
-info()
-{
-	if (g_dev == nullptr) {
-		PX4_INFO("driver not running");
-	}
-
-	g_dev->print_info();
-
-	return PX4_OK;
-}
+#include <px4_platform_common/getopt.h>
+#include <px4_platform_common/module.h>
 
 void
-usage()
+ADIS16448::print_usage()
 {
-	PX4_INFO("missing command: try 'start', 'info', 'stop'");
-	PX4_INFO("options:");
-	PX4_INFO("    -R rotation");
+	PRINT_MODULE_USAGE_NAME("adis16448", "driver");
+	PRINT_MODULE_USAGE_SUBCATEGORY("imu");
+	PRINT_MODULE_USAGE_COMMAND("start");
+	PRINT_MODULE_USAGE_PARAMS_I2C_SPI_DRIVER(false, true);
+	PRINT_MODULE_USAGE_PARAM_INT('R', 0, 0, 35, "Rotation", true);
+	PRINT_MODULE_USAGE_DEFAULT_COMMANDS();
 }
 
-} // namespace
+I2CSPIDriverBase *ADIS16448::instantiate(const BusCLIArguments &cli, const BusInstanceIterator &iterator,
+		int runtime_instance)
+{
+	ADIS16448 *instance = new ADIS16448(iterator.configuredBusOption(), iterator.bus(), iterator.devid(), cli.rotation,
+					    cli.bus_frequency, cli.spi_mode);
 
+	if (!instance) {
+		PX4_ERR("alloc failed");
+		return nullptr;
+	}
 
-/**
- * Driver 'main' command.
- */
+	if (OK != instance->init()) {
+		delete instance;
+		return nullptr;
+	}
+
+	return instance;
+}
+
 extern "C" int adis16448_main(int argc, char *argv[])
 {
-	enum Rotation rotation = ROTATION_NONE;
 	int ch;
+	using ThisDriver = ADIS16448;
+	BusCLIArguments cli{false, true};
+	cli.default_spi_frequency = 1000000;
 
-	/* start options */
-	while ((ch = getopt(argc, argv, "R:")) != EOF) {
+	while ((ch = cli.getopt(argc, argv, "R:")) != EOF) {
 		switch (ch) {
 		case 'R':
-			rotation = (enum Rotation)atoi(optarg);
+			cli.rotation = (enum Rotation)atoi(cli.optarg());
 			break;
-
-		default:
-			adis16448::usage();
-			exit(0);
 		}
 	}
 
-	const char *verb = argv[optind];
+	const char *verb = cli.optarg();
 
-	// Start/load the driver.
+	if (!verb) {
+		ThisDriver::print_usage();
+		return -1;
+	}
+
+	BusInstanceIterator iterator(MODULE_NAME, cli, DRV_IMU_DEVTYPE_ADIS16448);
+
 	if (!strcmp(verb, "start")) {
-		return adis16448::start(rotation);
+		return ThisDriver::module_start(cli, iterator);
 	}
 
-	// Print driver information.
-	if (!strcmp(verb, "info")) {
-		return adis16448::info();
-	}
-
-	// Stop
 	if (!strcmp(verb, "stop")) {
-		return adis16448::stop();
+		return ThisDriver::module_stop(iterator);
 	}
 
-	adis16448::usage();
+	if (!strcmp(verb, "status")) {
+		return ThisDriver::module_status(iterator);
+	}
 
-	return PX4_OK;
+	ThisDriver::print_usage();
+	return -1;
 }

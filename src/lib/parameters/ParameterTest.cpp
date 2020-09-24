@@ -31,7 +31,7 @@
  *
  ****************************************************************************/
 
-#include <px4_module_params.h>
+#include <px4_platform_common/module_params.h>
 #include <uORB/Subscription.hpp>
 #include <uORB/topics/obstacle_distance.h>
 #include <uORB/uORBManager.hpp>
@@ -43,6 +43,7 @@ class ParameterTest : public ::testing::Test
 public:
 	void SetUp() override
 	{
+		param_control_autosave(false);
 		param_reset_all();
 	}
 };
@@ -51,7 +52,7 @@ public:
 TEST_F(ParameterTest, testParamReadWrite)
 {
 	// GIVEN a parameter handle
-	param_t param = param_handle(px4::params::MPC_COL_PREV_D);
+	param_t param = param_handle(px4::params::CP_DIST);
 
 	// WHEN: we get the parameter
 	float value = -999.f;
@@ -59,7 +60,7 @@ TEST_F(ParameterTest, testParamReadWrite)
 
 	// THEN it should be successful and have the default value
 	EXPECT_EQ(0, status);
-	EXPECT_EQ(-1, value);
+	EXPECT_FLOAT_EQ(-1.f, value);
 
 	// WHEN: we set the parameter
 	value = 42.f;
@@ -74,7 +75,7 @@ TEST_F(ParameterTest, testParamReadWrite)
 
 	// THEN: it should be exactly the value we set
 	EXPECT_EQ(0, status);
-	EXPECT_EQ(42.f, value2);
+	EXPECT_FLOAT_EQ(42.f, value2);
 }
 
 
@@ -99,8 +100,8 @@ TEST_F(ParameterTest, testUorbSendReceive)
 
 	// AND: the values we got should be the same
 	EXPECT_EQ(message.timestamp, obstacle_distance.timestamp);
-	EXPECT_EQ(message.min_distance, obstacle_distance.min_distance);
-	EXPECT_EQ(message.max_distance, obstacle_distance.max_distance);
+	EXPECT_FLOAT_EQ(message.min_distance, obstacle_distance.min_distance);
+	EXPECT_FLOAT_EQ(message.max_distance, obstacle_distance.max_distance);
 
 	// AND: all the bytes should be equal
 	EXPECT_EQ(0, memcmp(&message, &obstacle_distance, sizeof(message)));

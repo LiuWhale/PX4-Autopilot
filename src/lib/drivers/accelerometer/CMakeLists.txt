@@ -31,5 +31,9 @@
 #
 ############################################################################
 
-px4_add_library(drivers_accelerometer PX4Accelerometer.cpp)
-target_link_libraries(drivers_accelerometer PRIVATE drivers__device)
+px4_add_library(drivers_accelerometer
+	PX4Accelerometer.cpp
+	PX4Accelerometer.hpp
+)
+target_compile_options(drivers_accelerometer PRIVATE ${MAX_CUSTOM_OPT_LEVEL})
+target_link_libraries(drivers_accelerometer PRIVATE conversion drivers__device)

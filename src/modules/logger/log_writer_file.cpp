@@ -39,7 +39,7 @@
 #include <errno.h>
 
 #include <mathlib/mathlib.h>
-#include <px4_posix.h>
+#include <px4_platform_common/posix.h>
 #ifdef __PX4_NUTTX
 #include <systemlib/hardfault_log.h>
 #endif /* __PX4_NUTTX */
@@ -190,7 +190,7 @@ void *LogWriterFile::run_helper(void *context)
 {
 	px4_prctl(PR_SET_NAME, "log_writer_file", px4_getpid());
 
-	reinterpret_cast<LogWriterFile *>(context)->run();
+	static_cast<LogWriterFile *>(context)->run();
 	return nullptr;
 }
 
@@ -295,8 +295,12 @@ void LogWriterFile::run()
 			/* Wait for a call to notify(), which indicates new data is available.
 			 * Note that at this point there could already be new data available (because of a longer write),
 			 * and calling pthread_cond_wait() will still wait for the next notify(). But this is generally
-			 * not an issue because notify() is called regularly. */
-			pthread_cond_wait(&_cv, &_mtx);
+			 * not an issue because notify() is called regularly.
+			 * If the logger was switched off in the meantime, do not wait for data, instead run this loop
+			 * once more to write remaining data and close the file. */
+			if (_buffers[0]._should_run) {
+				pthread_cond_wait(&_cv, &_mtx);
+			}
 		}
 
 		// go back to idle
@@ -407,7 +411,7 @@ void LogWriterFile::LogFileBuffer::write_no_check(void *ptr, size_t size)
 {
 	size_t n = _buffer_size - _head;	// bytes to end of the buffer
 
-	uint8_t *buffer_c = reinterpret_cast<uint8_t *>(ptr);
+	uint8_t *buffer_c = static_cast<uint8_t *>(ptr);
 
 	if (size > n) {
 		// Message goes over the end of the buffer

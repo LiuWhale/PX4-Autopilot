@@ -31,8 +31,6 @@
 #
 ############################################################################
 
-include(px4_base)
-
 #=============================================================================
 #
 #	px4_add_board
@@ -48,6 +46,7 @@ include(px4_base)
 #			[ TOOLCHAIN <string> ]
 #			[ ARCHITECTURE <string> ]
 #			[ ROMFSROOT <string> ]
+#			[ BUILD_BOOTLOADER ]
 #			[ IO <string> ]
 #			[ BOOTLOADER <string> ]
 #			[ UAVCAN_INTERFACES <string> ]
@@ -56,9 +55,9 @@ include(px4_base)
 #			[ SYSTEMCMDS <list> ]
 #			[ EXAMPLES <list> ]
 #			[ SERIAL_PORTS <list> ]
-#			[ DF_DRIVERS <list> ]
 #			[ CONSTRAINED_FLASH ]
 #			[ TESTING ]
+#			[ LINKER_PREFIX <string> ]
 #			)
 #
 #	Input:
@@ -69,6 +68,7 @@ include(px4_base)
 #		TOOLCHAIN		: cmake toolchain
 #		ARCHITECTURE		: name of the CPU CMake is building for (used by the toolchain)
 #		ROMFSROOT		: relative path to the ROMFS root directory (currently NuttX only)
+#		BUILD_BOOTLOADER	: flag to enable building and including the bootloader config
 #		IO			: name of IO board to be built and included in the ROMFS (requires a valid ROMFSROOT)
 #		BOOTLOADER		: bootloader file to include for flashing via bl_update (currently NuttX only)
 #		UAVCAN_INTERFACES	: number of interfaces for UAVCAN
@@ -77,9 +77,9 @@ include(px4_base)
 #		SYSTEMCMDS		: list of system commands to build for this board (relative to src/systemcmds)
 #		EXAMPLES		: list of example modules to build for this board (relative to src/examples)
 #		SERIAL_PORTS		: mapping of user configurable serial ports and param facing name
-#		DF_DRIVERS		: list of DriverFramework device drivers (includes DriverFramework driver and wrapper)
 #		CONSTRAINED_FLASH	: flag to enable constrained flash options (eg limit init script status text)
 #		TESTING			: flag to enable automatic inclusion of PX4 testing modules
+#		LINKER_PREFIX	: optional to prefix on the Linker script.
 #
 #
 #	Example:
@@ -102,7 +102,7 @@ include(px4_base)
 #				imu/bmi055
 #				imu/mpu6000
 #				magnetometer/ist8310
-#				px4fmu
+#				pwm_out
 #				px4io
 #				rgbled
 #			MODULES
@@ -142,14 +142,16 @@ function(px4_add_board)
 			IO
 			BOOTLOADER
 			UAVCAN_INTERFACES
+			UAVCAN_TIMER_OVERRIDE
+			LINKER_PREFIX
 		MULTI_VALUE
 			DRIVERS
 			MODULES
 			SYSTEMCMDS
 			EXAMPLES
 			SERIAL_PORTS
-			DF_DRIVERS
 		OPTIONS
+			BUILD_BOOTLOADER
 			CONSTRAINED_FLASH
 			TESTING
 		REQUIRED
@@ -206,6 +208,10 @@ function(px4_add_board)
 	if(ROMFSROOT)
 		set(config_romfs_root ${ROMFSROOT} CACHE INTERNAL "ROMFS root" FORCE)
 
+		if(BUILD_BOOTLOADER)
+			set(config_build_bootloader "1" CACHE INTERNAL "build bootloader" FORCE)
+		endif()
+
 		# IO board (placed in ROMFS)
 		if(IO)
 			set(config_io_board ${IO} CACHE INTERNAL "IO" FORCE)
@@ -216,14 +222,25 @@ function(px4_add_board)
 		set(config_uavcan_num_ifaces ${UAVCAN_INTERFACES} CACHE INTERNAL "UAVCAN interfaces" FORCE)
 	endif()
 
+	if(UAVCAN_TIMER_OVERRIDE)
+		set(config_uavcan_timer_override ${UAVCAN_TIMER_OVERRIDE} CACHE INTERNAL "UAVCAN TIMER OVERRIDE" FORCE)
+	endif()
+
 	# OPTIONS
 
 	if(CONSTRAINED_FLASH)
 		set(px4_constrained_flash_build "1" CACHE INTERNAL "constrained flash build" FORCE)
+		add_definitions(-DCONSTRAINED_FLASH)
 	endif()
 
 	if(TESTING)
 		set(PX4_TESTING "1" CACHE INTERNAL "testing enabled" FORCE)
+	endif()
+
+	if(LINKER_PREFIX)
+		set(PX4_BOARD_LINKER_PREFIX ${LINKER_PREFIX} CACHE STRING "PX4 board linker prefix" FORCE)
+	else()
+		set(PX4_BOARD_LINKER_PREFIX "" CACHE STRING "PX4 board linker prefix" FORCE)
 	endif()
 
 	include(px4_impl_os)
@@ -256,19 +273,6 @@ function(px4_add_board)
 		foreach(example ${EXAMPLES})
 			list(APPEND config_module_list examples/${example})
 		endforeach()
-	endif()
-
-	# DriverFramework drivers
-	if(DF_DRIVERS)
-		set(config_df_driver_list)
-		foreach(driver ${DF_DRIVERS})
-			list(APPEND config_df_driver_list ${driver})
-
-			if(EXISTS "${PX4_SOURCE_DIR}/src/drivers/driver_framework_wrapper/df_${driver}_wrapper")
-				list(APPEND config_module_list drivers/driver_framework_wrapper/df_${driver}_wrapper)
-			endif()
-		endforeach()
-		set(config_df_driver_list ${config_df_driver_list} PARENT_SCOPE)
 	endif()
 
 	# add board config directory src to build modules

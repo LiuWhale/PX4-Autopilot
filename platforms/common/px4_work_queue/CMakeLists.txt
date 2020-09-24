@@ -34,6 +34,7 @@
 px4_add_library(px4_work_queue
 	ScheduledWorkItem.cpp
 	WorkItem.cpp
+	WorkItemSingleShot.cpp
 	WorkQueue.cpp
 	WorkQueueManager.cpp
 )
@@ -42,4 +43,5 @@ if(PX4_TESTING)
 	add_subdirectory(test)
 endif()
 
+target_compile_options(px4_work_queue PRIVATE ${MAX_CUSTOM_OPT_LEVEL})
 target_link_libraries(px4_work_queue PRIVATE px4_platform)

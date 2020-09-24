@@ -41,9 +41,7 @@
 
 #pragma once
 
-#include <uORB/Subscription.hpp>
-#include <uORB/topics/airspeed.h>
-#include <uORB/topics/vehicle_status.h>
+#include <uORB/topics/airspeed_validated.h>
 
 #include "MulticopterLandDetector.h"
 
@@ -53,20 +51,17 @@ namespace land_detector
 class VtolLandDetector : public MulticopterLandDetector
 {
 public:
-	VtolLandDetector();
+	VtolLandDetector() = default;
+	~VtolLandDetector() override = default;
 
 protected:
 	void _update_topics() override;
 	bool _get_landed_state() override;
 	bool _get_maybe_landed_state() override;
+	bool _get_freefall_state() override;
 
 private:
-
-	uORB::Subscription _airspeed_sub{ORB_ID(airspeed)};
-	uORB::Subscription _vehicle_status_sub{ORB_ID(vehicle_status)};
-
-	airspeed_s _airspeed{};
-	vehicle_status_s _vehicle_status{};
+	uORB::Subscription _airspeed_validated_sub{ORB_ID(airspeed_validated)};
 
 	bool _was_in_air{false}; /**< indicates whether the vehicle was in the air in the previous iteration */
 	float _airspeed_filtered{0.0f}; /**< low pass filtered airspeed */

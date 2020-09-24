@@ -259,10 +259,7 @@ MS5525::collect()
 		.device_id = _device_id.devid
 	};
 
-	if (_airspeed_pub != nullptr && !(_pub_blocked)) {
-		/* publish it */
-		orb_publish(ORB_ID(differential_pressure), _airspeed_pub, &diff_pressure);
-	}
+	_airspeed_pub.publish(diff_pressure);
 
 	ret = OK;
 
@@ -272,7 +269,7 @@ MS5525::collect()
 }
 
 void
-MS5525::Run()
+MS5525::RunImpl()
 {
 	int ret = PX4_ERROR;
 
@@ -283,8 +280,9 @@ MS5525::Run()
 
 		if (OK != ret) {
 			/* restart the measurement state machine */
-			start();
+			_collect_phase = false;
 			_sensor_ok = false;
+			ScheduleNow();
 			return;
 		}
 

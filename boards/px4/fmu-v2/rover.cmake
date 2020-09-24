@@ -8,6 +8,7 @@ px4_add_board(
 	ARCHITECTURE cortex-m4
 	ROMFSROOT px4fmu_common
 	IO px4_io-v2_default
+	CONSTRAINED_FLASH
 
 	SERIAL_PORTS
 		GPS1:/dev/ttyS3
@@ -25,12 +26,12 @@ px4_add_board(
 		gps
 		imu/l3gd20
 		imu/lsm303d
-		imu/mpu6000
-		#imu/mpu9250
+		imu/invensense/mpu6000
+		#imu/invensense/mpu9250
 		lights/rgbled
 		magnetometer/hmc5883
 		optical_flow/px4flow
-		px4fmu
+		pwm_out
 		px4io
 		tone_alarm
 
@@ -46,12 +47,14 @@ px4_add_board(
 		logger
 		mavlink
 		navigator
+		battery_status
+		rc_update
 		sensors
+		temperature_compensation
 		vmount
 
 	SYSTEMCMDS
 		bl_update
-		#config
 		#dumpfile
 		#esc_calib
 		hardfault_log
@@ -72,4 +75,6 @@ px4_add_board(
 		tune_control
 		usb_connected
 		ver
+		work_queue
+
 	)

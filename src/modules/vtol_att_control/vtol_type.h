@@ -70,6 +70,15 @@ struct Params {
 	int32_t fw_motors_off;			/**< bitmask of all motors that should be off in fixed wing mode */
 	int32_t diff_thrust;
 	float diff_thrust_scale;
+	float down_pitch_max;
+	float forward_thrust_scale;
+	float dec_to_pitch_ff;
+	float dec_to_pitch_i;
+	float back_trans_dec_sp;
+	bool vt_mc_on_fmu;
+	int vt_forward_thrust_enable_mode;
+	float mpc_land_alt1;
+	float mpc_land_alt2;
 };
 
 // Has to match 1:1 msg/vtol_vehicle_status.msg
@@ -84,6 +93,14 @@ enum class vtol_type {
 	TAILSITTER = 0,
 	TILTROTOR,
 	STANDARD
+};
+
+enum VtolForwardActuationMode {
+	DISABLE = 0,
+	ENABLE_WITHOUT_LAND,
+	ENABLE_ABOVE_MPC_LAND_ALT1,
+	ENABLE_ABOVE_MPC_LAND_ALT2,
+	ENABLE_ALL_MODES
 };
 
 // these are states that can be applied to a selection of multirotor motors.
@@ -163,6 +180,10 @@ public:
 	 */
 	bool can_transition_on_ground();
 
+	/**
+	 * Pusher assist in hover (pusher/pull for standard VTOL, motor tilt for tiltrotor)
+	 */
+	float pusher_assist();
 
 
 	mode get_mode() {return _vtol_mode;}
@@ -183,11 +204,11 @@ protected:
 	struct vtol_vehicle_status_s 		*_vtol_vehicle_status;
 	struct actuator_controls_s			*_actuators_out_0;			//actuator controls going to the mc mixer
 	struct actuator_controls_s			*_actuators_out_1;			//actuator controls going to the fw mixer (used for elevons)
-	struct actuator_controls_s			*_actuators_mc_in;			//actuator controls from mc_att_control
+	struct actuator_controls_s			*_actuators_mc_in;			//actuator controls from mc_rate_control
 	struct actuator_controls_s			*_actuators_fw_in;			//actuator controls from fw_att_control
 	struct vehicle_local_position_s			*_local_pos;
 	struct vehicle_local_position_setpoint_s	*_local_pos_sp;
-	struct airspeed_s 				*_airspeed;					// airspeed
+	struct airspeed_validated_s 				*_airspeed_validated;					// airspeed
 	struct tecs_status_s				*_tecs_status;
 	struct vehicle_land_detected_s			*_land_detected;
 
@@ -215,6 +236,11 @@ protected:
 	hrt_abstime _tecs_running_ts = 0;
 
 	motor_state _motor_state = motor_state::DISABLED;
+
+	hrt_abstime _last_loop_ts = 0;
+	float _transition_dt = 0;
+
+	float _accel_to_pitch_integ = 0;
 
 
 
@@ -246,6 +272,8 @@ protected:
 	 * @return     next_state if succesfull, otherwise current_state
 	 */
 	motor_state set_motor_state(const motor_state current_state, const motor_state next_state, const int value = 0);
+
+	float update_and_get_backtransition_pitch_sp();
 
 private:
 

@@ -5,10 +5,10 @@ px4_add_board(
 	MODEL sitl
 	LABEL default
 	TESTING
-
 	DRIVERS
 		#barometer # all available barometer drivers
 		#batt_smbus
+		camera_capture
 		camera_trigger
 		#differential_pressure # all available differential pressure drivers
 		#distance_sensor # all available distance sensor drivers
@@ -16,11 +16,13 @@ px4_add_board(
 		#imu # all available imu drivers
 		#magnetometer # all available magnetometer drivers
 		pwm_out_sim
+		rpm/rpm_simulator
 		#telemetry # all available telemetry drivers
 		tone_alarm
 		#uavcan
-
 	MODULES
+		airship_att_control
+		airspeed_selector
 		attitude_estimator_q
 		camera_feedback
 		commander
@@ -29,57 +31,61 @@ px4_add_board(
 		events
 		fw_att_control
 		fw_pos_control_l1
-		rover_pos_control
 		land_detector
 		landing_target_estimator
-		load_mon
+		#load_mon
 		local_position_estimator
 		logger
 		mavlink
 		mc_att_control
+		mc_hover_thrust_estimator
 		mc_pos_control
+		mc_rate_control
 		navigator
+		rc_update
 		replay
+		rover_pos_control
 		sensors
+		#sih
 		simulator
+		temperature_compensation
 		vmount
 		vtol_att_control
-		airspeed_selector
+		uuv_att_control
 
 	SYSTEMCMDS
-		#bl_update
-		#config
 		#dumpfile
 		dyn
 		esc_calib
-		#hardfault_log
 		led_control
 		mixer
 		motor_ramp
+		motor_test
 		#mtd
 		#nshterm
 		param
 		perf
 		pwm
-		reboot
 		sd_bench
 		shutdown
 		tests # tests and test runner
-		top
+		#top
 		topic_listener
 		tune_control
 		ver
-
+		work_queue
 	EXAMPLES
-		bottle_drop # OBC challenge
 		dyn_hello # dynamically loading modules example
+		fake_magnetometer
 		fixedwing_control # Tutorial code from https://px4.io/dev/example_fixedwing_control
 		hello
 		#hwtest # Hardware test
+		#matlab_csv_serial
 		px4_mavlink_debug # Tutorial code from http://dev.px4.io/en/debug/debug_values.html
 		px4_simple_app # Tutorial code from http://dev.px4.io/en/apps/hello_sky.html
 		rover_steering_control # Rover example app
-		segway
+		uuv_example_app
+		work_item
 	)
 
 set(config_sitl_viewer jmavsim CACHE STRING "viewer for sitl")
@@ -92,11 +98,7 @@ set_property(CACHE config_sitl_debugger PROPERTY STRINGS "disable;gdb;lldb")
 # support. In this case, we enable the orb publisher rules.
 set(REPLAY_FILE "$ENV{replay}")
 if(REPLAY_FILE)
-	message("Building with uorb publisher rules support")
+	message(STATUS "Building with uorb publisher rules support")
 	add_definitions(-DORB_USE_PUBLISHER_RULES)
-
-	message("Building without lockstep for replay")
-	set(ENABLE_LOCKSTEP_SCHEDULER no)
-else()
-	set(ENABLE_LOCKSTEP_SCHEDULER yes)
 endif()
+set(ENABLE_LOCKSTEP_SCHEDULER yes)

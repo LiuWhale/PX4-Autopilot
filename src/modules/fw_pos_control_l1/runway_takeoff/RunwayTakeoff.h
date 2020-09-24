@@ -46,7 +46,7 @@
 #include <math.h>
 
 #include <drivers/drv_hrt.h>
-#include <px4_module_params.h>
+#include <px4_platform_common/module_params.h>
 #include <systemlib/mavlink_log.h>
 #include <mathlib/mathlib.h>
 #include <matrix/math.hpp>
@@ -68,8 +68,9 @@ public:
 	RunwayTakeoff(ModuleParams *parent);
 	~RunwayTakeoff() = default;
 
-	void init(float yaw, double current_lat, double current_lon);
-	void update(float airspeed, float alt_agl, double current_lat, double current_lon, orb_advert_t *mavlink_log_pub);
+	void init(const hrt_abstime &now, float yaw, double current_lat, double current_lon);
+	void update(const hrt_abstime &now, float airspeed, float alt_agl, double current_lat, double current_lon,
+		    orb_advert_t *mavlink_log_pub);
 
 	RunwayTakeoffState getState() { return _state; }
 	bool isInitialized() { return _initialized; }
@@ -83,7 +84,7 @@ public:
 	float getPitch(float tecsPitch);
 	float getRoll(float navigatorRoll);
 	float getYaw(float navigatorYaw);
-	float getThrottle(float tecsThrottle);
+	float getThrottle(const hrt_abstime &now, float tecsThrottle);
 	bool resetIntegrators();
 	float getMinPitch(float sp_min, float climbout_min, float min);
 	float getMaxPitch(float max);
@@ -93,12 +94,11 @@ public:
 
 private:
 	/** state variables **/
-	RunwayTakeoffState _state;
-	bool _initialized;
-	hrt_abstime _initialized_time;
-	float _init_yaw;
-	bool _climbout;
-	unsigned _throttle_ramp_time;
+	RunwayTakeoffState _state{THROTTLE_RAMP};
+	bool _initialized{false};
+	hrt_abstime _initialized_time{0};
+	float _init_yaw{0.f};
+	bool _climbout{false};
 	matrix::Vector2f _start_wp;
 
 	DEFINE_PARAMETERS(
@@ -110,6 +110,7 @@ private:
 		(ParamFloat<px4::params::RWTO_MAX_PITCH>) _param_rwto_max_pitch,
 		(ParamFloat<px4::params::RWTO_MAX_ROLL>) _param_rwto_max_roll,
 		(ParamFloat<px4::params::RWTO_AIRSPD_SCL>) _param_rwto_airspd_scl,
+		(ParamFloat<px4::params::RWTO_RAMP_TIME>) _param_rwto_ramp_time,
 		(ParamFloat<px4::params::FW_AIRSPD_MIN>) _param_fw_airspd_min,
 		(ParamFloat<px4::params::FW_CLMBOUT_DIFF>) _param_fw_clmbout_diff
 	)

@@ -145,7 +145,7 @@ private:
 		DM_KEY_FENCE_POINTS_MAX - 1,
 		DM_KEY_SAFE_POINTS_MAX - 1
 	};	/**< Maximum number of mission items for each type
-					(fence & save points use the first item for the stats) */
+					(fence & safe points use the first item for the stats) */
 
 	/** get the maximum number of item count for the current _mission_type */
 	uint16_t current_max_item_count();
@@ -187,7 +187,7 @@ private:
 	 *
 	 *  @param seq The waypoint sequence number the MAV should fly to.
 	 */
-	void send_mission_current(uint16_t seq);
+	void send_mission_current(int32_t seq);
 
 	void send_mission_count(uint8_t sysid, uint8_t compid, uint16_t count, MAV_MISSION_TYPE mission_type);
 

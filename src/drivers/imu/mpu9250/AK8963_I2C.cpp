@@ -37,7 +37,7 @@
  * I2C interface for AK8963
  */
 
-#include <px4_config.h>
+#include <px4_platform_common/px4_config.h>
 #include <drivers/device/i2c.h>
 #include <drivers/drv_device.h>
 
@@ -46,12 +46,12 @@
 
 #ifdef USE_I2C
 
-device::Device *AK8963_I2C_interface(int bus, bool external_bus);
+device::Device *AK8963_I2C_interface(int bus, int bus_frequency);
 
 class AK8963_I2C : public device::I2C
 {
 public:
-	AK8963_I2C(int bus);
+	AK8963_I2C(int bus, int bus_frequency);
 	~AK8963_I2C() override = default;
 
 	int	read(unsigned address, void *data, unsigned count) override;
@@ -63,20 +63,20 @@ protected:
 };
 
 device::Device *
-AK8963_I2C_interface(int bus, bool external_bus)
+AK8963_I2C_interface(int bus, int bus_frequency)
 {
-	return new AK8963_I2C(bus);
+	return new AK8963_I2C(bus, bus_frequency);
 }
 
-AK8963_I2C::AK8963_I2C(int bus) : I2C("AK8963_I2C", nullptr, bus, AK8963_I2C_ADDR, 400000)
+AK8963_I2C::AK8963_I2C(int bus, int bus_frequency) :
+	I2C(DRV_MAG_DEVTYPE_AK8963, "AK8963_I2C", bus, AK8963_I2C_ADDR, bus_frequency)
 {
-	_device_id.devid_s.devtype = DRV_MAG_DEVTYPE_MPU9250;
 }
 
 int
 AK8963_I2C::write(unsigned reg_speed, void *data, unsigned count)
 {
-	uint8_t cmd[MPU_MAX_WRITE_BUFFER_SIZE];
+	uint8_t cmd[2] {};
 
 	if (sizeof(cmd) < (count + 1)) {
 		return -EIO;

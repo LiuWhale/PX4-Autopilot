@@ -34,17 +34,17 @@
 /**
  * @file paw3902.cpp
  *
- * Driver for the Pixart PAW3902 optical flow sensor connected via SPI.
+ * Driver for the Pixart PAW3902 & PAW3903 optical flow sensors connected via SPI.
  */
 
 #pragma once
 
 #include "PixArt_PAW3902JF_Registers.hpp"
 
-#include <px4_config.h>
-#include <px4_defines.h>
-#include <px4_getopt.h>
-#include <px4_platform_common/px4_work_queue/ScheduledWorkItem.hpp>
+#include <px4_platform_common/px4_config.h>
+#include <px4_platform_common/defines.h>
+#include <px4_platform_common/getopt.h>
+#include <px4_platform_common/i2c_spi_buses.h>
 #include <drivers/device/spi.h>
 #include <conversion/rotation.h>
 #include <lib/perf/perf_counter.h>
@@ -56,26 +56,6 @@
 
 /* Configuration Constants */
 
-#if defined PX4_SPI_BUS_EXPANSION   // crazyflie
-# define PAW3902_BUS PX4_SPI_BUS_EXPANSION
-#elif defined PX4_SPI_BUS_EXTERNAL1   // fmu-v5
-# define PAW3902_BUS PX4_SPI_BUS_EXTERNAL1
-#elif defined PX4_SPI_BUS_EXTERNAL    // fmu-v4 extspi
-# define PAW3902_BUS PX4_SPI_BUS_EXTERNAL
-#else
-# error "add the required spi bus from board_config.h here"
-#endif
-
-#if defined PX4_SPIDEV_EXPANSION_2    // crazyflie flow deck
-# define PAW3902_SPIDEV PX4_SPIDEV_EXPANSION_2
-#elif defined PX4_SPIDEV_EXTERNAL1_1    // fmu-v5 ext CS1
-# define PAW3902_SPIDEV PX4_SPIDEV_EXTERNAL1_1
-#elif defined PX4_SPIDEV_EXTERNAL   // fmu-v4 extspi
-# define PAW3902_SPIDEV PX4_SPIDEV_EXTERNAL
-#else
-# error "add the required spi dev from board_config.h here"
-#endif
-
 #define PAW3902_SPI_BUS_SPEED (2000000L) // 2MHz
 
 #define DIR_WRITE(a) ((a) | (1 << 7))
@@ -86,25 +66,29 @@ using namespace PixArt_PAW3902JF;
 
 // PAW3902JF-TXQT is PixArt Imaging
 
-class PAW3902 : public device::SPI, public px4::ScheduledWorkItem
+class PAW3902 : public device::SPI, public I2CSPIDriver<PAW3902>
 {
 public:
-	PAW3902(int bus = PAW3902_BUS, enum Rotation yaw_rotation = ROTATION_NONE);
+	PAW3902(I2CSPIBusOption bus_option, int bus, int devid, enum Rotation yaw_rotation, int bus_frequency,
+		spi_mode_e spi_mode);
 	virtual ~PAW3902();
 
-	virtual int init();
+	static I2CSPIDriverBase *instantiate(const BusCLIArguments &cli, const BusInstanceIterator &iterator,
+					     int runtime_instance);
+	static void print_usage();
 
-	void print_info();
+	int init() override;
+
+	void print_status() override;
+
+	void RunImpl();
 
 	void start();
-	void stop();
 
 protected:
-	virtual int probe();
+	int probe() override;
 
 private:
-
-	void Run() override;
 
 	uint8_t	registerRead(uint8_t reg);
 	void	registerWrite(uint8_t reg, uint8_t data);
@@ -120,7 +104,6 @@ private:
 	uORB::PublicationMulti<optical_flow_s> _optical_flow_pub{ORB_ID(optical_flow)};
 
 	perf_counter_t	_sample_perf;
-	perf_counter_t	_interval_perf;
 	perf_counter_t	_comms_errors;
 	perf_counter_t	_dupe_count_perf;
 
@@ -136,5 +119,9 @@ private:
 	int		_flow_sum_y{0};
 
 	Mode		_mode{Mode::LowLight};
+	uint8_t 	_bright_to_low_counter{0};
+	uint8_t 	_low_to_superlow_counter{0};
+	uint8_t 	_low_to_bright_counter{0};
+	uint8_t 	_superlow_to_low_counter{0};
 
 };

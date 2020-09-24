@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2012-2016 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2012-2019 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,332 +31,106 @@
  *
  ****************************************************************************/
 
-/**
- * @file main.cpp
- *
- * Driver for the Invensense mpu9250 connected via I2C or SPI.
- *
- * @authors Andrew Tridgell
- *          Robert Dickenson
- *
- * based on the mpu6000 driver
- */
+#include <px4_platform_common/i2c_spi_buses.h>
+#include <px4_platform_common/module.h>
 
 #include "mpu9250.h"
 
-#define MPU_DEVICE_PATH			"/dev/mpu9250"
-#define MPU_DEVICE_PATH_1		"/dev/mpu9250_1"
-#define MPU_DEVICE_PATH_EXT		"/dev/mpu9250_ext"
-#define MPU_DEVICE_PATH_EXT_1		"/dev/mpu9250_ext_1"
-#define MPU_DEVICE_PATH_EXT_2		"/dev/mpu9250_ext_2"
-
-/** driver 'main' command */
-extern "C" { __EXPORT int mpu9250_main(int argc, char *argv[]); }
-
-enum MPU9250_BUS {
-	MPU9250_BUS_ALL = 0,
-	MPU9250_BUS_I2C_INTERNAL,
-	MPU9250_BUS_I2C_EXTERNAL,
-	MPU9250_BUS_SPI_INTERNAL,
-	MPU9250_BUS_SPI_INTERNAL2,
-	MPU9250_BUS_SPI_EXTERNAL
-};
-
-/**
- * Local functions in support of the shell command.
- */
-namespace mpu9250
+void
+MPU9250::print_usage()
 {
-
-/*
-  list of supported bus configurations
- */
-
-struct mpu9250_bus_option {
-	enum MPU9250_BUS busid;
-	const char *path;
-	MPU9250_constructor interface_constructor;
-	bool magpassthrough;
-	uint8_t busnum;
-	uint32_t address;
-	MPU9250	*dev;
-} bus_options[] = {
-#if defined (USE_I2C)
-#  if defined(PX4_I2C_BUS_ONBOARD) && defined(PX4_I2C_OBDEV_MPU9250)
-	{ MPU9250_BUS_I2C_INTERNAL, MPU_DEVICE_PATH,  &MPU9250_I2C_interface, false, PX4_I2C_BUS_ONBOARD, PX4_I2C_OBDEV_MPU9250, nullptr },
-#  endif
-#  if defined(PX4_I2C_BUS_EXPANSION)
-#  if defined(PX4_I2C_OBDEV_MPU9250)
-	{ MPU9250_BUS_I2C_EXTERNAL, MPU_DEVICE_PATH_EXT, &MPU9250_I2C_interface, false, PX4_I2C_BUS_EXPANSION, PX4_I2C_OBDEV_MPU9250, nullptr },
-#  endif
-#endif
-#  if defined(PX4_I2C_BUS_EXPANSION1) && defined(PX4_I2C_OBDEV_MPU9250)
-	{ MPU9250_BUS_I2C_EXTERNAL, MPU_DEVICE_PATH_EXT_1, &MPU9250_I2C_interface, false, PX4_I2C_BUS_EXPANSION1, PX4_I2C_OBDEV_MPU9250, nullptr },
-#  endif
-#  if defined(PX4_I2C_BUS_EXPANSION2) && defined(PX4_I2C_OBDEV_MPU9250)
-	{ MPU9250_BUS_I2C_EXTERNAL, MPU_DEVICE_PATH_EXT_2, &MPU9250_I2C_interface, false, PX4_I2C_BUS_EXPANSION2, PX4_I2C_OBDEV_MPU9250, nullptr },
-#  endif
-#endif
-#ifdef PX4_SPIDEV_MPU
-	{ MPU9250_BUS_SPI_INTERNAL, MPU_DEVICE_PATH, &MPU9250_SPI_interface, true, PX4_SPI_BUS_SENSORS, PX4_SPIDEV_MPU, nullptr },
-#endif
-#ifdef PX4_SPIDEV_MPU2
-	{ MPU9250_BUS_SPI_INTERNAL2, MPU_DEVICE_PATH_1, &MPU9250_SPI_interface, true, PX4_SPI_BUS_SENSORS, PX4_SPIDEV_MPU2, nullptr },
-#endif
-#if defined(PX4_SPI_BUS_EXT) && defined(PX4_SPIDEV_EXT_MPU)
-	{ MPU9250_BUS_SPI_EXTERNAL, MPU_DEVICE_PATH_EXT, &MPU9250_SPI_interface, true, PX4_SPI_BUS_EXT, PX4_SPIDEV_EXT_MPU, nullptr },
-#endif
-};
-
-#define NUM_BUS_OPTIONS (sizeof(bus_options)/sizeof(bus_options[0]))
-
-
-void	start(enum MPU9250_BUS busid, enum Rotation rotation, bool external_bus, bool magnetometer_only);
-bool	start_bus(struct mpu9250_bus_option &bus, enum Rotation rotation, bool external_bus, bool magnetometer_only);
-struct mpu9250_bus_option &find_bus(enum MPU9250_BUS busid);
-void	stop(enum MPU9250_BUS busid);
-void	info(enum MPU9250_BUS busid);
-void	usage();
-
-/**
- * find a bus structure for a busid
- */
-struct mpu9250_bus_option &find_bus(enum MPU9250_BUS busid)
-{
-	for (uint8_t i = 0; i < NUM_BUS_OPTIONS; i++) {
-		if ((busid == MPU9250_BUS_ALL ||
-		     busid == bus_options[i].busid) && bus_options[i].dev != nullptr) {
-			return bus_options[i];
-		}
-	}
-
-	errx(1, "bus %u not started", (unsigned)busid);
+	PRINT_MODULE_USAGE_NAME("mpu9250", "driver");
+	PRINT_MODULE_USAGE_SUBCATEGORY("imu");
+	PRINT_MODULE_USAGE_COMMAND("start");
+	PRINT_MODULE_USAGE_PARAMS_I2C_SPI_DRIVER(true, true);
+	PRINT_MODULE_USAGE_PARAM_INT('R', 0, 0, 35, "Rotation", true);
+	PRINT_MODULE_USAGE_DEFAULT_COMMANDS();
 }
 
-/**
- * start driver for a specific bus option
- */
-bool
-start_bus(struct mpu9250_bus_option &bus, enum Rotation rotation, bool external, bool magnetometer_only)
+I2CSPIDriverBase *MPU9250::instantiate(const BusCLIArguments &cli, const BusInstanceIterator &iterator,
+				       int runtime_instance)
 {
-	PX4_INFO("Bus probed: %d", bus.busid);
+	device::Device *interface = nullptr;
+	device::Device *mag_interface = nullptr;
 
-	if (bus.dev != nullptr) {
-		warnx("%s SPI not available", external ? "External" : "Internal");
-		return false;
+	if (iterator.busType() == BOARD_I2C_BUS) {
+#ifdef USE_I2C
+		interface = MPU9250_I2C_interface(iterator.bus(), PX4_I2C_OBDEV_MPU9250, cli.bus_frequency);
+		// For i2c interfaces, connect to the magnetomer directly
+		mag_interface = AK8963_I2C_interface(iterator.bus(), cli.bus_frequency);
+#endif // USE_I2C
+
+	} else if (iterator.busType() == BOARD_SPI_BUS) {
+		interface = MPU9250_SPI_interface(iterator.bus(), iterator.devid(), cli.bus_frequency, cli.spi_mode);
 	}
 
-	device::Device *interface = bus.interface_constructor(bus.busnum, bus.address, external);
-
 	if (interface == nullptr) {
-		warnx("no device on bus %u", (unsigned)bus.busid);
-		return false;
+		PX4_ERR("alloc failed");
+		delete mag_interface;
+		return nullptr;
 	}
 
 	if (interface->init() != OK) {
 		delete interface;
-		warnx("no device on bus %u", (unsigned)bus.busid);
-		return false;
+		delete mag_interface;
+		PX4_DEBUG("no device on bus %i (devid 0x%x)", iterator.bus(), iterator.devid());
+		return nullptr;
 	}
 
-	device::Device *mag_interface = nullptr;
+	MPU9250 *dev = new MPU9250(interface, mag_interface, cli.rotation, iterator.configuredBusOption(), iterator.bus());
 
-#ifdef USE_I2C
-	/* For i2c interfaces, connect to the magnetomer directly */
-	bool is_i2c = bus.busid == MPU9250_BUS_I2C_INTERNAL || bus.busid == MPU9250_BUS_I2C_EXTERNAL;
-
-	if (is_i2c) {
-		mag_interface = AK8963_I2C_interface(bus.busnum, external);
-	}
-
-#endif
-
-	bus.dev = new MPU9250(interface, mag_interface, bus.path, rotation, magnetometer_only);
-
-	if (bus.dev == nullptr) {
+	if (dev == nullptr) {
 		delete interface;
-
-		if (mag_interface != nullptr) {
-			delete mag_interface;
-		}
-
-		return false;
+		delete mag_interface;
+		return nullptr;
 	}
 
-	if (OK != bus.dev->init()) {
-		goto fail;
+	if (OK != dev->init()) {
+		delete dev;
+		return nullptr;
 	}
 
-	return true;
-
-fail:
-
-	if (bus.dev != nullptr) {
-		delete (bus.dev);
-		bus.dev = nullptr;
-	}
-
-	errx(1, "driver start failed");
+	return dev;
 }
 
-/**
- * Start the driver.
- *
- * This function only returns if the driver is up and running
- * or failed to detect the sensor.
- */
-void
-start(enum MPU9250_BUS busid, enum Rotation rotation, bool external, bool magnetometer_only)
-{
-
-	bool started = false;
-
-	for (unsigned i = 0; i < NUM_BUS_OPTIONS; i++) {
-		if (bus_options[i].dev != nullptr) {
-			// this device is already started
-			continue;
-		}
-
-		if (busid != MPU9250_BUS_ALL && bus_options[i].busid != busid) {
-			// not the one that is asked for
-			continue;
-		}
-
-		started |= start_bus(bus_options[i], rotation, external, magnetometer_only);
-
-		if (started) { break; }
-	}
-
-	exit(started ? 0 : 1);
-
-}
-
-void
-stop(enum MPU9250_BUS busid)
-{
-	struct mpu9250_bus_option &bus = find_bus(busid);
-
-
-	if (bus.dev != nullptr) {
-		delete bus.dev;
-		bus.dev = nullptr;
-
-	} else {
-		/* warn, but not an error */
-		warnx("already stopped.");
-	}
-
-	exit(0);
-}
-
-/**
- * Print a little info about the driver.
- */
-void
-info(enum MPU9250_BUS busid)
-{
-	struct mpu9250_bus_option &bus = find_bus(busid);
-
-
-	if (bus.dev == nullptr) {
-		errx(1, "driver not running");
-	}
-
-	printf("state @ %p\n", bus.dev);
-	bus.dev->print_info();
-
-	exit(0);
-}
-
-void
-usage()
-{
-	PX4_INFO("missing command: try 'start', 'info', 'test', 'stop',\n 'regdump', 'testerror'");
-	PX4_INFO("options:");
-	PX4_INFO("    -X    (i2c external bus)");
-	PX4_INFO("    -I    (i2c internal bus)");
-	PX4_INFO("    -s    (spi internal bus)");
-	PX4_INFO("    -S    (spi external bus)");
-	PX4_INFO("    -t    (spi internal bus, 2nd instance)");
-	PX4_INFO("    -R rotation");
-	PX4_INFO("    -M only enable magnetometer, accel/gyro disabled - not av. on MPU6500");
-}
-
-} // namespace
-
-int
+extern "C" int
 mpu9250_main(int argc, char *argv[])
 {
-	int myoptind = 1;
 	int ch;
-	const char *myoptarg = nullptr;
+	using ThisDriver = MPU9250;
+	BusCLIArguments cli{true, true};
+	cli.default_spi_frequency = 20 * 1000 * 1000;
+	cli.default_i2c_frequency = 400000;
 
-	enum MPU9250_BUS busid = MPU9250_BUS_ALL;
-	enum Rotation rotation = ROTATION_NONE;
-	bool magnetometer_only = false;
-
-	while ((ch = px4_getopt(argc, argv, "XISstMR:", &myoptind, &myoptarg)) != EOF) {
+	while ((ch = cli.getopt(argc, argv, "R:")) != EOF) {
 		switch (ch) {
-		case 'X':
-			busid = MPU9250_BUS_I2C_EXTERNAL;
-			break;
-
-		case 'I':
-			busid = MPU9250_BUS_I2C_INTERNAL;
-			break;
-
-		case 'S':
-			busid = MPU9250_BUS_SPI_EXTERNAL;
-			break;
-
-		case 's':
-			busid = MPU9250_BUS_SPI_INTERNAL;
-			break;
-
-		case 't':
-			busid = MPU9250_BUS_SPI_INTERNAL2;
-			break;
-
 		case 'R':
-			rotation = (enum Rotation)atoi(myoptarg);
+			cli.rotation = (enum Rotation)atoi(cli.optarg());
 			break;
-
-		case 'M':
-			magnetometer_only = true;
-			break;
-
-		default:
-			mpu9250::usage();
-			return 0;
 		}
 	}
 
-	if (myoptind >= argc) {
-		mpu9250::usage();
+	const char *verb = cli.optarg();
+
+	if (!verb) {
+		ThisDriver::print_usage();
 		return -1;
 	}
 
-	bool external = busid == MPU9250_BUS_I2C_EXTERNAL || busid == MPU9250_BUS_SPI_EXTERNAL;
-	const char *verb = argv[myoptind];
+	BusInstanceIterator iterator(MODULE_NAME, cli, DRV_IMU_DEVTYPE_MPU9250);
 
-	/*
-	 * Start/load the driver.
-	 */
 	if (!strcmp(verb, "start")) {
-		mpu9250::start(busid, rotation, external, magnetometer_only);
+		return ThisDriver::module_start(cli, iterator);
 	}
 
 	if (!strcmp(verb, "stop")) {
-		mpu9250::stop(busid);
+		return ThisDriver::module_stop(iterator);
 	}
 
-	/*
-	 * Print driver information.
-	 */
-	if (!strcmp(verb, "info")) {
-		mpu9250::info(busid);
+	if (!strcmp(verb, "status")) {
+		return ThisDriver::module_status(iterator);
 	}
 
-	mpu9250::usage();
-	return 0;
+	ThisDriver::print_usage();
+	return -1;
 }
