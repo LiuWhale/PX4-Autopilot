@@ -41,10 +41,8 @@
 
 #include "bmp388.h"
 
-BMP388::BMP388(I2CSPIBusOption bus_option, int bus, IBMP388 *interface) :
-	I2CSPIDriver(MODULE_NAME, px4::device_bus_to_wq(interface->get_device_id()), bus_option, bus,
-		     interface->get_device_address()),
-	_px4_baro(interface->get_device_id()),
+BMP388::BMP388(const I2CSPIDriverConfig &config, IBMP388 *interface) :
+	I2CSPIDriver(config),
 	_interface(interface),
 	_sample_perf(perf_alloc(PC_ELAPSED, MODULE_NAME": read")),
 	_measure_perf(perf_alloc(PC_ELAPSED, MODULE_NAME": measure")),
@@ -66,7 +64,7 @@ int
 BMP388::init()
 {
 	if (!soft_reset()) {
-		PX4_WARN("failed to reset baro during init");
+		PX4_DEBUG("failed to reset baro during init");
 		return -EIO;
 	}
 
@@ -112,7 +110,8 @@ BMP388::start()
 {
 	_collect_phase = false;
 
-	ScheduleOnInterval(_measure_interval, _measure_interval);
+	// wait a bit longer for the first measurement, as otherwise the first readout might fail
+	ScheduleOnInterval(_measure_interval, _measure_interval * 3);
 }
 
 void
@@ -165,14 +164,18 @@ BMP388::collect()
 		return -EIO;
 	}
 
-	_px4_baro.set_error_count(perf_event_count(_comms_errors));
-
 	float temperature = (float)(data.temperature / 100.0f);
 	float pressure = (float)(data.pressure / 100.0f); // to Pascal
-	pressure = pressure / 100.0f; // to mbar
 
-	_px4_baro.set_temperature(temperature);
-	_px4_baro.update(timestamp_sample, pressure);
+	// publish
+	sensor_baro_s sensor_baro{};
+	sensor_baro.timestamp_sample = timestamp_sample;
+	sensor_baro.device_id = _interface->get_device_id();
+	sensor_baro.pressure = pressure;
+	sensor_baro.temperature = temperature;
+	sensor_baro.error_count = perf_event_count(_comms_errors);
+	sensor_baro.timestamp = hrt_absolute_time();
+	_sensor_baro_pub.publish(sensor_baro);
 
 	perf_end(_sample_perf);
 

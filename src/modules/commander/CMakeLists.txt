@@ -41,27 +41,35 @@ px4_add_module(
 	SRCS
 		accelerometer_calibration.cpp
 		airspeed_calibration.cpp
+		baro_calibration.cpp
 		calibration_routines.cpp
 		Commander.cpp
 		commander_helper.cpp
 		esc_calibration.cpp
+		factory_calibration_storage.cpp
 		gyro_calibration.cpp
 		level_calibration.cpp
+		lm_fit.cpp
 		mag_calibration.cpp
 		rc_calibration.cpp
+		Safety.cpp
 		state_machine_helper.cpp
+		worker_thread.cpp
 	DEPENDS
 		circuit_breaker
 		failure_detector
-		git_ecl
-		ecl_geo
+		geo
 		hysteresis
 		PreFlightCheck
 		ArmAuthorization
+		ArmStateMachine
 		HealthFlags
 		sensor_calibration
+		world_magnetic_model
 	)
 
 if(PX4_TESTING)
 	add_subdirectory(commander_tests)
 endif()
+
+px4_add_unit_gtest(SRC mag_calibration_test.cpp LINKLIBS modules__commander)

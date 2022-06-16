@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2014 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2014-2022 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -52,17 +52,6 @@
 PARAM_DEFINE_INT32(VT_IDLE_PWM_MC, 900);
 
 /**
- * Permanent stabilization in fw mode
- *
- * If set to one this parameter will cause permanent attitude stabilization in fw mode.
- * This parameter has been introduced for pure convenience sake.
- *
- * @boolean
- * @group VTOL Attitude Control
- */
-PARAM_DEFINE_INT32(VT_FW_PERM_STAB, 0);
-
-/**
  * VTOL Type (Tailsitter=0, Tiltrotor=1, Standard=2)
  *
  * @value 0 Tailsitter
@@ -77,9 +66,9 @@ PARAM_DEFINE_INT32(VT_FW_PERM_STAB, 0);
 PARAM_DEFINE_INT32(VT_TYPE, 0);
 
 /**
- * Lock elevons in multicopter mode
+ * Lock control surfaces in hover
  *
- * If set to 1 the elevons are locked in multicopter mode
+ * If set to 1 the control surfaces are locked at the disarmed value in multicopter mode.
  *
  * @boolean
  * @group VTOL Attitude Control
@@ -92,7 +81,7 @@ PARAM_DEFINE_INT32(VT_ELEV_MC_LOCK, 1);
  * Time in seconds used for a transition
  *
  * @unit s
- * @min 0.00
+ * @min 0.1
  * @max 20.00
  * @increment 1
  * @decimal 2
@@ -106,7 +95,7 @@ PARAM_DEFINE_FLOAT(VT_F_TRANS_DUR, 5.0f);
  * Time in seconds used for a back transition
  *
  * @unit s
- * @min 0.00
+ * @min 0.1
  * @max 20.00
  * @increment 1
  * @decimal 2
@@ -116,7 +105,9 @@ PARAM_DEFINE_FLOAT(VT_B_TRANS_DUR, 4.0f);
 
 /**
  * Target throttle value for the transition to fixed wing flight.
+ *
  * standard vtol: pusher
+ *
  * tailsitter, tiltrotor: main throttle
  *
  * @min 0.0
@@ -129,7 +120,9 @@ PARAM_DEFINE_FLOAT(VT_F_TRANS_THR, 1.0f);
 
 /**
  * Target throttle value for the transition to hover flight.
+ *
  * standard vtol: pusher
+ *
  * tailsitter, tiltrotor: main throttle
  *
  * Note for standard vtol:
@@ -194,7 +187,7 @@ PARAM_DEFINE_FLOAT(VT_ARSP_TRANS, 10.0f);
  * Time in seconds after which transition will be cancelled. Disabled if set to 0.
  *
  * @unit s
- * @min 0.00
+ * @min 0.1
  * @max 30.00
  * @increment 1
  * @decimal 2
@@ -325,10 +318,10 @@ PARAM_DEFINE_FLOAT(VT_FW_DIFTHR_SC, 0.1f);
  * @min 0
  * @max 0.2
  * @decimal 1
- * @increment 0.05
+ * @increment 0.01
  * @group VTOL Attitude Control
  */
-PARAM_DEFINE_FLOAT(VT_B_DEC_FF, 0.12f);
+PARAM_DEFINE_FLOAT(VT_B_DEC_FF, 0.f);
 
 /**
  * Backtransition deceleration setpoint to pitch I gain.
@@ -354,3 +347,41 @@ PARAM_DEFINE_FLOAT(VT_B_DEC_I, 0.1f);
  * @group VTOL Attitude Control
  */
 PARAM_DEFINE_INT32(VT_MC_ON_FMU, 0);
+
+/**
+ * Minimum pitch angle during hover.
+ *
+ * Minimum pitch angle during hover flight. If the desired pitch angle is is lower than this value
+ * then the fixed-wing forward actuation can be used to compensate for the missing thrust in forward direction
+ * (see VT_FW_TRHUST_EN)
+ *
+ * @min -10.0
+ * @max 45.0
+ * @group VTOL Attitude Control
+ */
+PARAM_DEFINE_FLOAT(VT_PITCH_MIN, -5.0f);
+
+/**
+ * Minimum pitch angle during hover landing.
+ *
+ * Overrides  VT_PITCH_MIN when the vehicle is in LAND mode (hovering).
+ * During landing it can be beneficial to allow lower minimum pitch angles as it can avoid the wings
+ * generating too much lift and preventing the vehicle from sinking at the desired rate.
+ *
+ * @min -10.0
+ * @max 45.0
+ * @group VTOL Attitude Control
+ */
+PARAM_DEFINE_FLOAT(VT_LND_PITCH_MIN, -5.0f);
+
+/**
+ * Spoiler setting while landing (hover)
+ *
+ * @unit norm
+ * @min -1
+ * @max 1
+ * @decimal 1
+ * @increment 0.05
+ * @group VTOL Attitude Control
+ */
+PARAM_DEFINE_FLOAT(VT_SPOILER_MC_LD, 0.f);

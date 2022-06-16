@@ -37,15 +37,17 @@ void BlockLocalPositionEstimator::mocapInit()
 		_sensorFault &= ~SENSOR_MOCAP;
 
 		// get reference for global position
-		globallocalconverter_getref(&_ref_lat, &_ref_lon, &_ref_alt);
-		_global_ref_timestamp = _timeStamp;
-		_is_global_cov_init = globallocalconverter_initialized();
+		_ref_lat = _global_local_proj_ref.getProjectionReferenceLat();
+		_ref_lon = _global_local_proj_ref.getProjectionReferenceLon();
+		_ref_alt = _global_local_alt0;
 
-		if (!_map_ref.init_done && _is_global_cov_init && !_visionUpdated) {
+		_is_global_cov_init = _global_local_proj_ref.isInitialized();
+
+		if (!_map_ref.isInitialized() && _is_global_cov_init && !_visionUpdated) {
 			// initialize global origin using the mocap estimator reference (only if the vision estimation is not being fused as well)
 			mavlink_log_info(&mavlink_log_pub, "[lpe] global origin init (mocap) : lat %6.2f lon %6.2f alt %5.1f m",
 					 double(_ref_lat), double(_ref_lon), double(_ref_alt));
-			map_projection_init(&_map_ref, _ref_lat, _ref_lon);
+			_map_ref.initReference(_ref_lat, _ref_lon);
 			// set timestamp when origin was set to current time
 			_time_origin = _timeStamp;
 		}
@@ -53,7 +55,7 @@ void BlockLocalPositionEstimator::mocapInit()
 		if (!_altOriginInitialized) {
 			_altOriginInitialized = true;
 			_altOriginGlobal = true;
-			_altOrigin = globallocalconverter_initialized() ? _ref_alt : 0.0f;
+			_altOrigin = _global_local_proj_ref.isInitialized() ? _ref_alt : 0.0f;
 		}
 	}
 }

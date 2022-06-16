@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2016, 2020 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2016-2022 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -47,11 +47,14 @@
 #include <nuttx/compiler.h>
 #include <stdint.h>
 
+
 #include <stm32_gpio.h>
 
 /****************************************************************************************************
  * Definitions
  ****************************************************************************************************/
+
+#undef TRACE_PINS
 
 /* PX4IO connection configuration */
 
@@ -83,10 +86,9 @@
  * TRACED0  PE3  - nLED_RED        - Trace Connector Pin 3
  * TRACED1  PE4  - nLED_GREEN      - Trace Connector Pin 5
  * TRACED2  PE5  - nLED_BLUE       - Trace Connector Pin 7
- * TRACED3  PC12 - UART5_TX_TELEM2 - Trace Connector Pin 8
+ * TRACED3  PE6  - nARMED          - Trace Connector Pin 8
 
  */
-#undef TRACE_PINS
 
 /* LEDs are driven with push open drain to support Anode to 5V or 3.3V or used as TRACE0-2 */
 
@@ -100,9 +102,23 @@
 #  define BOARD_ARMED_STATE_LED  LED_BLUE
 
 #else
-#  if defined(CONFIG_STM32H7_UART5) && (GPIO_UART5_TX == GPIO_UART5_TX_3)
-#    error Need to disable CONFIG_STM32H7_UART5 for Trace 3 (Retarget to CAN2 if need be)
-#  endif
+
+#  define GPIO_TRACECLK1 (GPIO_TRACECLK |GPIO_PULLUP|GPIO_SPEED_100MHz|GPIO_PUSHPULL)  //(GPIO_ALT|GPIO_AF0|GPIO_PORTE|GPIO_PIN2)
+#  define GPIO_TRACED0   (GPIO_TRACED0_2|GPIO_PULLUP|GPIO_SPEED_100MHz|GPIO_PUSHPULL)  //(GPIO_ALT|GPIO_AF0|GPIO_PORTE|GPIO_PIN3)
+#  define GPIO_TRACED1   (GPIO_TRACED1_2|GPIO_PULLUP|GPIO_SPEED_100MHz|GPIO_PUSHPULL)  //(GPIO_ALT|GPIO_AF0|GPIO_PORTE|GPIO_PIN4)
+#  define GPIO_TRACED2   (GPIO_TRACED2_2|GPIO_PULLUP|GPIO_SPEED_100MHz|GPIO_PUSHPULL)  //(GPIO_ALT|GPIO_AF0|GPIO_PORTE|GPIO_PIN5)
+#  define GPIO_TRACED3   (GPIO_TRACED3_2|GPIO_PULLUP|GPIO_SPEED_100MHz|GPIO_PUSHPULL)  //(GPIO_ALT|GPIO_AF0|GPIO_PORTE|GPIO_PIN6)
+//#define GPIO_TRACESWO                        //(GPIO_ALT|GPIO_AF0|GPIO_PORTB|GPIO_PIN3)
+
+#  undef  BOARD_HAS_CONTROL_STATUS_LEDS
+#  undef  BOARD_OVERLOAD_LED
+#  undef  BOARD_ARMED_STATE_LED
+
+#  define GPIO_nLED_RED    GPIO_TRACED0
+#  define GPIO_nLED_GREEN  GPIO_TRACED1
+#  define GPIO_nLED_BLUE   GPIO_TRACED2
+#  define GPIO_nARMED      GPIO_TRACED3
+#  define GPIO_nARMED_INIT GPIO_TRACED3
 #endif
 
 
@@ -119,7 +135,7 @@
  */
 #define PX4_I2C_OBDEV_SE050         0x48
 
-#define GPIO_I2C4_DRDY1_BMP388      /* PG5  */  (GPIO_INPUT|GPIO_FLOAT|GPIO_EXTI|GPIO_PORTG|GPIO_PIN5)
+#define GPIO_I2C2_DRDY1_BMP388      /* PG5  */  (GPIO_INPUT|GPIO_FLOAT|GPIO_EXTI|GPIO_PORTG|GPIO_PIN5)
 
 /*
  * ADC channels
@@ -186,18 +202,10 @@
 
 #define SYSTEM_ADC_BASE STM32_ADC1_BASE
 
-/* Define Battery 1 Voltage Divider and A per V
- */
-
-#define BOARD_BATTERY1_V_DIV         (18.1f)     /* measured with the provided PM board */
-#define BOARD_BATTERY1_A_PER_V       (36.367515152f)
-
 /* HW has to large of R termination on ADC todo:change when HW value is chosen */
-
 #define BOARD_ADC_OPEN_CIRCUIT_V     (5.6f)
 
 /* HW Version and Revision drive signals Default to 1 to detect */
-
 #define BOARD_HAS_HW_VERSIONING
 
 #define GPIO_HW_VER_REV_DRIVE  /* PG0 */ (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_SET|GPIO_PORTG|GPIO_PIN0)
@@ -207,40 +215,44 @@
 #define HW_INFO_INIT_VER       3 /* Offset in above string of the VER */
 #define HW_INFO_INIT_REV       4 /* Offset in above string of the REV */
 
+#define BOARD_NUM_SPI_CFG_HW_VERSIONS 6 // Rev 0 and Rev 3,4 Sensor sets
+//                 Base/FMUM
+#define V6X00   HW_VER_REV(0x0,0x0) // FMUV6X,                 Rev 0
+#define V6X01   HW_VER_REV(0x0,0x1) // FMUV6X,     BMI388 I2C2 Rev 1
+#define V6X03   HW_VER_REV(0x0,0x3) // FMUV6X,     Sensor Set  Rev 3
+#define V6X04   HW_VER_REV(0x0,0x4) // FMUV6X,     Sensor Set  Rev 4
+#define V6X10   HW_VER_REV(0x1,0x0) // NO PX4IO,               Rev 0
+#define V6X13   HW_VER_REV(0x1,0x3) // NO PX4IO,   Sensor Set  Rev 3
+#define V6X14   HW_VER_REV(0x1,0x4) // NO PX4IO,   Sensor Set  Rev 4
+#define V6X50   HW_VER_REV(0x5,0x0) // FMUV6X,                    HB Mini Rev 0
+#define V6X51   HW_VER_REV(0x5,0x1) // FMUV6X,     BMI388 I2C2    HB Mini Rev 1
+#define V6X53   HW_VER_REV(0x5,0x3) // FMUV6X,     Sensor Set     HB Mini Rev 3
+#define V6X54   HW_VER_REV(0x5,0x4) // FMUV6X,     Sensor Set     HB Mini Rev 4
+
+#define UAVCAN_NUM_IFACES_RUNTIME  1
+
 /* HEATER
  * PWM in future
  */
 #define GPIO_HEATER_OUTPUT   /* PB10  T2CH3 */ (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_CLEAR|GPIO_PORTB|GPIO_PIN10)
-
-/* PWM Capture
- *
- * 1  PWM Capture inputs are configured.
- *
- * Pins:
- *
- * FMU_CAP1 : PE11  : TIM1_CH2
- */
-
-#define GPIO_TIM1_CH2IN      /* PE11  T1C2   FMU_CAP1 */ GPIO_TIM1_CH2IN_2
-#define GPIO_TIM1_CH2OUT     /* PE11  T1C2   FMU_CAP1 */ GPIO_TIM1_CH2OUT_2
-
-#define DIRECT_PWM_CAPTURE_CHANNELS  1
+#define HEATER_OUTPUT_EN(on_true)	       px4_arch_gpiowrite(GPIO_HEATER_OUTPUT, (on_true))
 
 /* PE6 is nARMED
  *  The GPIO will be set as input while not armed HW will have external HW Pull UP.
  *  While armed it shall be configured at a GPIO OUT set LOW
  */
+#if !defined(TRACE_PINS)
 #define GPIO_nARMED_INIT     /* PE6 */  (GPIO_INPUT|GPIO_PULLUP|GPIO_PORTE|GPIO_PIN6)
 #define GPIO_nARMED          /* PE6 */  (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_CLEAR|GPIO_PORTE|GPIO_PIN6)
+#define BOARD_INDICATE_EXTERNAL_LOCKOUT_STATE(enabled)  px4_arch_configgpio((enabled) ? GPIO_nARMED : GPIO_nARMED_INIT)
+#define BOARD_GET_EXTERNAL_LOCKOUT_STATE() px4_arch_gpioread(GPIO_nARMED)
+#endif
 
-#define BOARD_INDICATE_ARMED_STATE(on_armed)  px4_arch_configgpio((on_armed) ? GPIO_nARMED : GPIO_nARMED_INIT)
 
 /* PWM
  */
-#define DIRECT_PWM_OUTPUT_CHANNELS   8
-#define DIRECT_INPUT_TIMER_CHANNELS  8
+#define DIRECT_PWM_OUTPUT_CHANNELS   9
 
-#define BOARD_DSHOT_MOTOR_ASSIGNMENT {3, 2, 1, 0, 4, 5, 6, 7};
 
 /* Power supply control and monitoring GPIOs */
 
@@ -408,7 +420,6 @@
 #define BOARD_ADC_PERIPH_5V_OC  (!px4_arch_gpioread(GPIO_VDD_5V_PERIPH_nOC))
 #define BOARD_ADC_HIPOWER_5V_OC (!px4_arch_gpioread(GPIO_VDD_5V_HIPOWER_nOC))
 
-#define BOARD_HAS_PWM  DIRECT_PWM_OUTPUT_CHANNELS
 
 /* This board provides a DMA pool and APIs */
 #define BOARD_DMA_ALLOC_POOL_SIZE 5120
@@ -417,7 +428,19 @@
 
 #define BOARD_HAS_ON_RESET 1
 
+#if defined(TRACE_PINS)
+#define GPIO_TRACE                          \
+	GPIO_TRACECLK1,                           \
+	GPIO_TRACED0,                             \
+	GPIO_TRACED1,                             \
+	GPIO_TRACED2,                             \
+	GPIO_TRACED3
+#else
+#define GPIO_TRACE (GPIO_OUTPUT|GPIO_OUTPUT_SET|GPIO_PORTE|GPIO_PIN2)
+#endif
+
 #define PX4_GPIO_INIT_LIST { \
+		GPIO_TRACE,                       \
 		PX4_ADC_GPIO,                     \
 		GPIO_HW_VER_REV_DRIVE,            \
 		GPIO_CAN1_TX,                     \
@@ -448,6 +471,9 @@
 	}
 
 #define BOARD_ENABLE_CONSOLE_BUFFER
+
+#define PX4_I2C_BUS_MTD      4,5
+
 
 #define BOARD_NUM_IO_TIMERS 5
 

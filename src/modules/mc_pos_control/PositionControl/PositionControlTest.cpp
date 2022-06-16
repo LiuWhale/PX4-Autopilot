@@ -52,7 +52,6 @@ TEST(PositionControlTest, EmptySetpoint)
 	EXPECT_FLOAT_EQ(output_setpoint.vy, 0.f);
 	EXPECT_FLOAT_EQ(output_setpoint.vz, 0.f);
 	EXPECT_EQ(Vector3f(output_setpoint.acceleration), Vector3f(0.f, 0.f, 0.f));
-	EXPECT_EQ(Vector3f(output_setpoint.jerk), Vector3f(0.f, 0.f, 0.f));
 	EXPECT_EQ(Vector3f(output_setpoint.thrust), Vector3f(0, 0, 0));
 
 	vehicle_attitude_setpoint_s attitude{};
@@ -78,14 +77,10 @@ public:
 		_position_control.setPositionGains(Vector3f(1.f, 1.f, 1.f));
 		_position_control.setVelocityGains(Vector3f(20.f, 20.f, 20.f), Vector3f(20.f, 20.f, 20.f), Vector3f(20.f, 20.f, 20.f));
 		_position_control.setVelocityLimits(1.f, 1.f, 1.f);
-		_position_control.setThrustLimits(0.1f, 0.9f);
+		_position_control.setThrustLimits(0.1f, MAXIMUM_THRUST);
+		_position_control.setHorizontalThrustMargin(HORIZONTAL_THRUST_MARGIN);
 		_position_control.setTiltLimit(1.f);
 		_position_control.setHoverThrust(.5f);
-
-		_contraints.tilt = 1.f;
-		_contraints.speed_xy = NAN;
-		_contraints.speed_up = NAN;
-		_contraints.speed_down = NAN;
 
 		resetInputSetpoint();
 	}
@@ -106,7 +101,6 @@ public:
 
 	bool runController()
 	{
-		_position_control.setConstraints(_contraints);
 		_position_control.setInputSetpoint(_input_setpoint);
 		const bool ret = _position_control.update(.1f);
 		_position_control.getLocalPositionSetpoint(_output_setpoint);
@@ -115,10 +109,12 @@ public:
 	}
 
 	PositionControl _position_control;
-	vehicle_constraints_s _contraints{};
 	vehicle_local_position_setpoint_s _input_setpoint{};
 	vehicle_local_position_setpoint_s _output_setpoint{};
 	vehicle_attitude_setpoint_s _attitude{};
+
+	static constexpr float MAXIMUM_THRUST = 0.9f;
+	static constexpr float HORIZONTAL_THRUST_MARGIN = 0.3f;
 };
 
 class PositionControlBasicDirectionTest : public PositionControlBasicTest
@@ -168,12 +164,14 @@ TEST_F(PositionControlBasicTest, TiltLimit)
 	EXPECT_GT(angle, 0.f);
 	EXPECT_LE(angle, 1.f);
 
-	_contraints.tilt = .5f;
+	_position_control.setTiltLimit(0.5f);
 	EXPECT_TRUE(runController());
 	body_z = Quatf(_attitude.q_d).dcm_z();
 	angle = acosf(body_z.dot(Vector3f(0.f, 0.f, 1.f)));
 	EXPECT_GT(angle, 0.f);
 	EXPECT_LE(angle, .50001f);
+
+	_position_control.setTiltLimit(1.f);  // restore original
 }
 
 TEST_F(PositionControlBasicTest, VelocityLimit)
@@ -190,22 +188,34 @@ TEST_F(PositionControlBasicTest, VelocityLimit)
 
 TEST_F(PositionControlBasicTest, PositionControlMaxThrustLimit)
 {
+	// Given a setpoint that drives the controller into vertical and horizontal saturation
 	_input_setpoint.x = 10.f;
 	_input_setpoint.y = 10.f;
 	_input_setpoint.z = -10.f;
 
+	// When you run it for one iteration
 	runController();
 	Vector3f thrust(_output_setpoint.thrust);
-	EXPECT_FLOAT_EQ(thrust(0), 0.f);
-	EXPECT_FLOAT_EQ(thrust(1), 0.f);
-	EXPECT_FLOAT_EQ(thrust(2), -0.9f);
 
+	// Then the thrust vector length is limited by the maximum
+	EXPECT_FLOAT_EQ(thrust.norm(), MAXIMUM_THRUST);
+
+	// Then the horizontal thrust is limited by its margin
+	EXPECT_FLOAT_EQ(thrust(0), HORIZONTAL_THRUST_MARGIN / sqrt(2.f));
+	EXPECT_FLOAT_EQ(thrust(1), HORIZONTAL_THRUST_MARGIN / sqrt(2.f));
+	EXPECT_FLOAT_EQ(thrust(2),
+			-sqrt(MAXIMUM_THRUST * MAXIMUM_THRUST - HORIZONTAL_THRUST_MARGIN * HORIZONTAL_THRUST_MARGIN));
+	thrust.print();
+
+	// Then the collective thrust is limited by the maximum
 	EXPECT_EQ(_attitude.thrust_body[0], 0.f);
 	EXPECT_EQ(_attitude.thrust_body[1], 0.f);
-	EXPECT_FLOAT_EQ(_attitude.thrust_body[2], -0.9f);
+	EXPECT_FLOAT_EQ(_attitude.thrust_body[2], -MAXIMUM_THRUST);
 
-	EXPECT_FLOAT_EQ(_attitude.roll_body, 0.f);
-	EXPECT_FLOAT_EQ(_attitude.pitch_body, 0.f);
+	// Then the horizontal margin results in a tilt with the ratio of: horizontal margin / maximum thrust
+	EXPECT_FLOAT_EQ(_attitude.roll_body, asin((HORIZONTAL_THRUST_MARGIN / sqrt(2.f)) / MAXIMUM_THRUST));
+	// TODO: add this line back once attitude setpoint generation strategy does not align body yaw with heading all the time anymore
+	// EXPECT_FLOAT_EQ(_attitude.pitch_body, -asin((HORIZONTAL_THRUST_MARGIN / sqrt(2.f)) / MAXIMUM_THRUST));
 }
 
 TEST_F(PositionControlBasicTest, PositionControlMinThrustLimit)
@@ -387,4 +397,24 @@ TEST_F(PositionControlBasicTest, UpdateHoverThrust)
 	// THEN: the integral is updated to avoid discontinuities and
 	// the output is still the same
 	EXPECT_EQ(_output_setpoint.thrust[2], -hover_thrust);
+}
+
+TEST_F(PositionControlBasicTest, IntegratorWindupWithInvalidSetpoint)
+{
+	// GIVEN: the controller was ran with an invalid setpoint containing some valid values
+	_input_setpoint.x = .1f;
+	_input_setpoint.y = .2f;
+	// all z-axis setpoints stay NAN
+	EXPECT_FALSE(runController());
+
+	// WHEN: we run the controller with a valid setpoint
+	resetInputSetpoint();
+	_input_setpoint.vx = 0.f;
+	_input_setpoint.vy = 0.f;
+	_input_setpoint.vz = 0.f;
+	EXPECT_TRUE(runController());
+
+	// THEN: the integral did not wind up and produce unexpected deviation
+	EXPECT_FLOAT_EQ(_attitude.roll_body, 0.f);
+	EXPECT_FLOAT_EQ(_attitude.pitch_body, 0.f);
 }

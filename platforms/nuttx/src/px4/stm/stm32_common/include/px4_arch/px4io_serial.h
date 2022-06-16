@@ -114,7 +114,7 @@ public:
 	ArchPX4IOSerial();
 	ArchPX4IOSerial(ArchPX4IOSerial &) = delete;
 	ArchPX4IOSerial &operator = (const ArchPX4IOSerial &) = delete;
-	~ArchPX4IOSerial();
+	virtual ~ArchPX4IOSerial();
 
 	virtual int	init();
 	virtual int	ioctl(unsigned operation, unsigned &arg);
@@ -159,12 +159,11 @@ private:
 	/**
 	 * Performance counters.
 	 */
-	perf_counter_t		_pc_dmasetup;
 	perf_counter_t		_pc_dmaerrs;
 
 	/**
 	 * IO Buffer storage
 	 */
-	static uint8_t _io_buffer_storage[] __attribute__((aligned(PX4_ARCH_DCACHE_LINESIZE)));
+	static uint8_t _io_buffer_storage[] px4_cache_aligned_data();
 };
 

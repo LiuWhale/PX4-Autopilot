@@ -68,7 +68,7 @@ PARAM_DEFINE_FLOAT(CAL_AIR_TUBELEN, 0.2f);
 /**
  * Airspeed sensor tube diameter. Only used for the Tube Pressure Drop Compensation.
  *
- * @min 0.1
+ * @min 1.5
  * @max 100
  * @unit mm
  *
@@ -83,6 +83,7 @@ PARAM_DEFINE_FLOAT(CAL_AIR_TUBED_MM, 1.5f);
  *
  * @category system
  * @group Sensor Calibration
+ * @volatile
  */
 PARAM_DEFINE_FLOAT(SENS_DPRES_OFF, 0.0f);
 
@@ -146,10 +147,9 @@ PARAM_DEFINE_FLOAT(SENS_DPRES_ANSC, 0);
  * @value 38 Roll 90°, Pitch 68°, Yaw 293°
  * @value 39 Pitch 315°
  * @value 40 Roll 90°, Pitch 315°
- * @value 41 Roll 270°, Yaw 180°
  *
  * @min -1
- * @max 41
+ * @max 40
  * @reboot_required true
  * @group Sensors
  */
@@ -221,3 +221,15 @@ PARAM_DEFINE_INT32(SENS_EXT_I2C_PRB, 1);
  * @group Sensors
  */
 PARAM_DEFINE_INT32(SENS_IMU_MODE, 1);
+
+/**
+ * Enable internal barometers
+ *
+ * For systems with an external barometer, this should be set to false to make sure that the external is used.
+ *
+ * @boolean
+ * @reboot_required true
+ * @category system
+ * @group Sensors
+ */
+PARAM_DEFINE_INT32(SENS_INT_BARO_EN, 1);

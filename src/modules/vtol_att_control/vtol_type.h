@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2015 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2015-2022 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -43,43 +43,16 @@
 #ifndef VTOL_TYPE_H
 #define VTOL_TYPE_H
 
-#include <lib/mathlib/mathlib.h>
 #include <drivers/drv_hrt.h>
 #include <drivers/drv_pwm_output.h>
+#include <lib/mathlib/mathlib.h>
+#include <lib/slew_rate/SlewRate.hpp>
+#include <px4_platform_common/module_params.h>
 
-struct Params {
-	int32_t idle_pwm_mc;			// pwm value for idle in mc mode
-	int32_t vtol_motor_id;
-	int32_t vtol_type;
-	bool elevons_mc_lock;		// lock elevons in multicopter mode
-	float fw_min_alt;			// minimum relative altitude for FW mode (QuadChute)
-	float fw_alt_err;			// maximum negative altitude error for FW mode (Adaptive QuadChute)
-	float fw_qc_max_pitch;		// maximum pitch angle FW mode (QuadChute)
-	float fw_qc_max_roll;		// maximum roll angle FW mode (QuadChute)
-	float front_trans_time_openloop;
-	float front_trans_time_min;
-	float front_trans_duration;
-	float back_trans_duration;
-	float transition_airspeed;
-	float front_trans_throttle;
-	float back_trans_throttle;
-	float airspeed_blend;
-	bool airspeed_disabled;
-	float front_trans_timeout;
-	float mpc_xy_cruise;
-	int32_t fw_motors_off;			/**< bitmask of all motors that should be off in fixed wing mode */
-	int32_t diff_thrust;
-	float diff_thrust_scale;
-	float down_pitch_max;
-	float forward_thrust_scale;
-	float dec_to_pitch_ff;
-	float dec_to_pitch_i;
-	float back_trans_dec_sp;
-	bool vt_mc_on_fmu;
-	int vt_forward_thrust_enable_mode;
-	float mpc_land_alt1;
-	float mpc_land_alt2;
-};
+
+static constexpr float kFlapSlewRateVtol = 1.f; // minimum time from none to full flap deflection [s]
+static constexpr float kSpoilerSlewRateVtol = 1.f; // minimum time from none to full spoiler deflection [s]
+
 
 // Has to match 1:1 msg/vtol_vehicle_status.msg
 enum class mode {
@@ -100,7 +73,9 @@ enum VtolForwardActuationMode {
 	ENABLE_WITHOUT_LAND,
 	ENABLE_ABOVE_MPC_LAND_ALT1,
 	ENABLE_ABOVE_MPC_LAND_ALT2,
-	ENABLE_ALL_MODES
+	ENABLE_ALL_MODES,
+	ENABLE_ABOVE_MPC_LAND_ALT1_WITHOUT_LAND,
+	ENABLE_ABOVE_MPC_LAND_ALT2_WITHOUT_LAND
 };
 
 // these are states that can be applied to a selection of multirotor motors.
@@ -124,7 +99,7 @@ enum class pwm_limit_type {
 
 class VtolAttitudeControl;
 
-class VtolType
+class VtolType:  public ModuleParams
 {
 public:
 
@@ -185,10 +160,30 @@ public:
 	 */
 	float pusher_assist();
 
+	virtual void blendThrottleAfterFrontTransition(float scale) {};
 
 	mode get_mode() {return _vtol_mode;}
 
+	bool was_in_trans_mode() {return _flag_was_in_trans_mode;}
+
+	/**
+	 * @return Minimum front transition time scaled for air density (if available) [s]
+	*/
+	float getMinimumFrontTransitionTime() const;
+
+	/**
+	* @return Minimum open-loop front transition time scaled for air density (if available) [s]
+	*/
+	float getOpenLoopFrontTransitionTime() const;
+
 	virtual void parameters_update() = 0;
+
+	/**
+	 * @brief Set current time delta
+	 *
+	 * @param dt Current time delta [s]
+	 */
+	void setDt(float dt) {_dt = dt; }
 
 protected:
 	VtolAttitudeControl *_attc;
@@ -212,11 +207,13 @@ protected:
 	struct tecs_status_s				*_tecs_status;
 	struct vehicle_land_detected_s			*_land_detected;
 
-	struct Params 					*_params;
+	struct vehicle_torque_setpoint_s 		*_torque_setpoint_0;
+	struct vehicle_torque_setpoint_s 		*_torque_setpoint_1;
+	struct vehicle_thrust_setpoint_s 		*_thrust_setpoint_0;
+	struct vehicle_thrust_setpoint_s 		*_thrust_setpoint_1;
 
-	bool flag_idle_mc = false;		//false = "idle is set for fixed wing mode"; true = "idle is set for multicopter mode"
+	bool _flag_idle_mc = false;		//false = "idle is set for fixed wing mode"; true = "idle is set for multicopter mode"
 
-	bool _pusher_active = false;
 	float _mc_roll_weight = 1.0f;	// weight for multicopter attitude controller roll output
 	float _mc_pitch_weight = 1.0f;	// weight for multicopter attitude controller pitch output
 	float _mc_yaw_weight = 1.0f;	// weight for multicopter attitude controller yaw output
@@ -224,6 +221,7 @@ protected:
 
 	// motors spinning up or cutting too fast when doing transitions.
 	float _thrust_transition = 0.0f;	// thrust value applied during a front transition (tailsitter & tiltrotor only)
+	float _last_thr_in_fw_mode = 0.0f;
 
 	float _ra_hrate = 0.0f;			// rolling average on height rate for quadchute condition
 	float _ra_hrate_sp = 0.0f;		// rolling average on height rate setpoint for quadchute condition
@@ -235,13 +233,15 @@ protected:
 	bool _tecs_running = false;
 	hrt_abstime _tecs_running_ts = 0;
 
-	motor_state _motor_state = motor_state::DISABLED;
+	motor_state _main_motor_state = motor_state::DISABLED;
+	motor_state _alternate_motor_state = motor_state::DISABLED;
 
 	hrt_abstime _last_loop_ts = 0;
 	float _transition_dt = 0;
 
 	float _accel_to_pitch_integ = 0;
 
+	bool _quadchute_command_treated{false};
 
 
 	/**
@@ -260,23 +260,63 @@ protected:
 	 */
 	bool set_idle_fw();
 
+	void set_all_motor_state(motor_state target_state, int value = 0);
 
-	/**
-	 * @brief      Sets state of a selection of motors, see struct motor_state
-	 *
-	 * @param[in]  current_state  The current motor state
-	 * @param[in]  next_state     The next state
-	 * @param[in]  value          Desired pwm value if next_state =
-	 *                            motor_state::VALUE
-	 *
-	 * @return     next_state if succesfull, otherwise current_state
-	 */
-	motor_state set_motor_state(const motor_state current_state, const motor_state next_state, const int value = 0);
+	void set_main_motor_state(motor_state target_state, int value = 0);
+
+	void set_alternate_motor_state(motor_state target_state, int value = 0);
 
 	float update_and_get_backtransition_pitch_sp();
 
+	SlewRate<float> _spoiler_setpoint_with_slewrate;
+	SlewRate<float> _flaps_setpoint_with_slewrate;
+
+	float _dt{0.0025f}; // time step [s]
+
+	DEFINE_PARAMETERS_CUSTOM_PARENT(ModuleParams,
+					(ParamBool<px4::params::VT_ELEV_MC_LOCK>) _param_vt_elev_mc_lock,
+					(ParamFloat<px4::params::VT_FW_MIN_ALT>) _param_vt_fw_min_alt,
+					(ParamFloat<px4::params::VT_FW_ALT_ERR>) _param_vt_fw_alt_err,
+					(ParamInt<px4::params::VT_FW_QC_P>) _param_vt_fw_qc_p,
+					(ParamInt<px4::params::VT_FW_QC_R>) _param_vt_fw_qc_r,
+					(ParamFloat<px4::params::VT_F_TR_OL_TM>) _param_vt_f_tr_ol_tm,
+					(ParamFloat<px4::params::VT_TRANS_MIN_TM>) _param_vt_trans_min_tm,
+
+					(ParamFloat<px4::params::VT_F_TRANS_DUR>) _param_vt_f_trans_dur,
+					(ParamFloat<px4::params::VT_B_TRANS_DUR>) _param_vt_b_trans_dur,
+					(ParamFloat<px4::params::VT_ARSP_TRANS>) _param_vt_arsp_trans,
+					(ParamFloat<px4::params::VT_F_TRANS_THR>) _param_vt_f_trans_thr,
+					(ParamFloat<px4::params::VT_B_TRANS_THR>) _param_vt_b_trans_thr,
+					(ParamFloat<px4::params::VT_ARSP_BLEND>) _param_vt_arsp_blend,
+					(ParamBool<px4::params::FW_ARSP_MODE>) _param_fw_arsp_mode,
+					(ParamFloat<px4::params::VT_TRANS_TIMEOUT>) _param_vt_trans_timeout,
+					(ParamFloat<px4::params::MPC_XY_CRUISE>) _param_mpc_xy_cruise,
+					(ParamBool<px4::params::VT_FW_DIFTHR_EN>) _param_vt_fw_difthr_en,
+					(ParamFloat<px4::params::VT_FW_DIFTHR_SC>) _param_vt_fw_difthr_sc,
+					(ParamFloat<px4::params::VT_B_DEC_FF>) _param_vt_b_dec_ff,
+					(ParamFloat<px4::params::VT_B_DEC_I>) _param_vt_b_dec_i,
+					(ParamFloat<px4::params::VT_B_DEC_MSS>) _param_vt_b_dec_mss,
+
+					(ParamFloat<px4::params::VT_PITCH_MIN>) _param_vt_pitch_min,
+					(ParamFloat<px4::params::VT_FWD_THRUST_SC>) _param_vt_fwd_thrust_sc,
+					(ParamInt<px4::params::VT_FWD_THRUST_EN>) _param_vt_fwd_thrust_en,
+					(ParamFloat<px4::params::MPC_LAND_ALT1>) _param_mpc_land_alt1,
+					(ParamFloat<px4::params::MPC_LAND_ALT2>) _param_mpc_land_alt2,
+					(ParamFloat<px4::params::VT_LND_PITCH_MIN>) _param_vt_lnd_pitch_min,
+
+					(ParamBool<px4::params::SYS_CTRL_ALLOC>) _param_sys_ctrl_alloc,
+					(ParamInt<px4::params::VT_IDLE_PWM_MC>) _param_vt_idle_pwm_mc,
+					(ParamInt<px4::params::VT_MOT_ID>) _param_vt_mot_id,
+					(ParamBool<px4::params::VT_MC_ON_FMU>) _param_vt_mc_on_fmu,
+					(ParamInt<px4::params::VT_FW_MOT_OFFID>) _param_vt_fw_mot_offid,
+					(ParamFloat<px4::params::VT_SPOILER_MC_LD>) _param_vt_spoiler_mc_ld
+
+				       )
+
 private:
 
+
+	hrt_abstime _throttle_blend_start_ts{0};	// time at which we start blending between transition throttle and fixed wing throttle
 
 	/**
 	 * @brief      Stores the max pwm values given by the system.
@@ -284,6 +324,11 @@ private:
 	struct pwm_output_values _min_mc_pwm_values {};
 	struct pwm_output_values _max_mc_pwm_values {};
 	struct pwm_output_values _disarmed_pwm_values {};
+
+	struct pwm_output_values _current_max_pwm_values {};
+
+	int32_t _main_motor_channel_bitmap = 0;
+	int32_t _alternate_motor_channel_bitmap = 0;
 
 	/**
 	 * @brief      Adjust minimum/maximum pwm values for the output channels.
@@ -296,14 +341,29 @@ private:
 	bool apply_pwm_limits(struct pwm_output_values &pwm_values, pwm_limit_type type);
 
 	/**
-	 * @brief      Determines if channel is set in target.
+	 * @brief      Determines if channel is set in a bitmap.
 	 *
 	 * @param[in]  channel  The channel
-	 * @param[in]  target  	The target to check on.
+	 * @param[in]  bitmap  	The bitmap to check on.
 	 *
-	 * @return     True if motor off channel, False otherwise.
+	 * @return     True if set, false otherwise.
 	 */
-	bool is_channel_set(const int channel, const int target);
+	bool is_channel_set(const int channel, const int bitmap);
+
+	// generates a bitmap from a number format, e.g. 1235 -> first, second, third and fifth bits should be set.
+	int generate_bitmap_from_channel_numbers(const int channels);
+
+	bool set_motor_state(const motor_state target_state, const int32_t channel_bitmap,  const int value);
+
+	void resetAccelToPitchPitchIntegrator() { _accel_to_pitch_integ = 0.f; }
+	bool shouldBlendThrottleAfterFrontTransition() { return _throttle_blend_start_ts != 0; };
+
+	void stopBlendingThrottleAfterFrontTransition() { _throttle_blend_start_ts = 0; }
+
+	/**
+	 * @return Transition time scale factor for density.
+	*/
+	float getFrontTransitionTimeFactor() const;
 
 };
 

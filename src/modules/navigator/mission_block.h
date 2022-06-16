@@ -108,15 +108,17 @@ protected:
 	 */
 	bool mission_item_to_position_setpoint(const mission_item_s &item, position_setpoint_s *sp);
 
-	/**
-	 * Set a loiter mission item, if possible reuse the position setpoint, otherwise take the current position
-	 */
-	void set_loiter_item(struct mission_item_s *item, float min_clearance = -1.0f);
+	void setLoiterItemFromCurrentPositionSetpoint(struct mission_item_s *item);
+
+	void setLoiterItemFromCurrentPosition(struct mission_item_s *item);
+	void setLoiterItemFromCurrentPositionWithBreaking(struct mission_item_s *item);
+
+	void setLoiterItemCommonFields(struct mission_item_s *item);
 
 	/**
 	 * Set a takeoff mission item
 	 */
-	void set_takeoff_item(struct mission_item_s *item, float abs_altitude, float min_pitch = 0.0f);
+	void set_takeoff_item(struct mission_item_s *item, float abs_altitude);
 
 	/**
 	 * Set a land mission item
@@ -148,10 +150,7 @@ protected:
 
 	bool _waypoint_position_reached{false};
 	bool _waypoint_yaw_reached{false};
-	bool _waypoint_position_reached_previously{false};
 
-	hrt_abstime _time_first_inside_orbit{0};
-	hrt_abstime _action_start{0};
 	hrt_abstime _time_wp_reached{0};
 
 	uORB::Publication<actuator_controls_s>	_actuator_pub{ORB_ID(actuator_controls_2)};

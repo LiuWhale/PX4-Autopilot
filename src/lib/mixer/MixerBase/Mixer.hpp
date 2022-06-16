@@ -179,7 +179,7 @@ public:
 	/**
 	 * Get the saturation status.
 	 *
-	 * @return			Integer bitmask containing saturation_status from multirotor_motor_limits.msg.
+	 * @return			Integer bitmask containing saturation_status from control_allocator_status.msg.
 	 */
 	virtual uint16_t		get_saturation_status() { return 0; }
 
@@ -228,6 +228,8 @@ public:
 	virtual void			set_airmode(Airmode airmode) {};
 
 	virtual unsigned		get_multirotor_count()  { return 0; }
+
+	virtual void 			set_dt_once(float dt) {}
 
 protected:
 

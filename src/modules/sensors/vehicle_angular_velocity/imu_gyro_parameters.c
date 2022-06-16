@@ -38,7 +38,7 @@
 * This filter can be enabled to avoid feedback amplification of structural resonances at a specific frequency.
 * This only affects the signal sent to the controllers, not the estimators.
 * Applies to both angular velocity and angular acceleration sent to the controllers.
-* See "IMU_GYRO_NF_BW" to set the bandwidth of the filter.
+* See "IMU_GYRO_NF0_BW" to set the bandwidth of the filter.
 *
 * A value of 0 disables the filter.
 *
@@ -48,13 +48,13 @@
 * @reboot_required true
 * @group Sensors
 */
-PARAM_DEFINE_FLOAT(IMU_GYRO_NF_FREQ, 0.0f);
+PARAM_DEFINE_FLOAT(IMU_GYRO_NF0_FRQ, 0.0f);
 
 /**
 * Notch filter bandwidth for gyro
 *
 * The frequency width of the stop band for the 2nd order notch filter on the primary gyro.
-* See "IMU_GYRO_NF_FREQ" to activate the filter and to set the notch frequency.
+* See "IMU_GYRO_NF0_FRQ" to activate the filter and to set the notch frequency.
 * Applies to both angular velocity and angular acceleration sent to the controllers.
 *
 * @min 0
@@ -63,7 +63,42 @@ PARAM_DEFINE_FLOAT(IMU_GYRO_NF_FREQ, 0.0f);
 * @reboot_required true
 * @group Sensors
 */
-PARAM_DEFINE_FLOAT(IMU_GYRO_NF_BW, 20.0f);
+PARAM_DEFINE_FLOAT(IMU_GYRO_NF0_BW, 20.0f);
+
+/**
+* Notch filter 2 frequency for gyro
+*
+* The center frequency for the 2nd order notch filter on the primary gyro.
+* This filter can be enabled to avoid feedback amplification of structural resonances at a specific frequency.
+* This only affects the signal sent to the controllers, not the estimators.
+* Applies to both angular velocity and angular acceleration sent to the controllers.
+* See "IMU_GYRO_NF1_BW" to set the bandwidth of the filter.
+*
+* A value of 0 disables the filter.
+*
+* @min 0
+* @max 1000
+* @unit Hz
+* @reboot_required true
+* @group Sensors
+*/
+PARAM_DEFINE_FLOAT(IMU_GYRO_NF1_FRQ, 0.0f);
+
+/**
+* Notch filter 1 bandwidth for gyro
+*
+* The frequency width of the stop band for the 2nd order notch filter on the primary gyro.
+* See "IMU_GYRO_NF1_FRQ" to activate the filter and to set the notch frequency.
+* Applies to both angular velocity and angular acceleration sent to the controllers.
+*
+* @min 0
+* @max 100
+* @unit Hz
+* @reboot_required true
+* @group Sensors
+*/
+PARAM_DEFINE_FLOAT(IMU_GYRO_NF1_BW, 20.0f);
+
 
 /**
 * Low pass filter cutoff frequency for gyro
@@ -80,27 +115,29 @@ PARAM_DEFINE_FLOAT(IMU_GYRO_NF_BW, 20.0f);
 * @reboot_required true
 * @group Sensors
 */
-PARAM_DEFINE_FLOAT(IMU_GYRO_CUTOFF, 30.0f);
+PARAM_DEFINE_FLOAT(IMU_GYRO_CUTOFF, 40.0f);
 
 /**
-* Gyro control data maximum publication rate
+* Gyro control data maximum publication rate (inner loop rate)
 *
-* This is the maximum rate the gyro control data (sensor_gyro) will be allowed to publish at.
-* Set to 0 to disable and publish at the native sensor sample rate.
+* The maximum rate the gyro control data (vehicle_angular_velocity) will be
+* allowed to publish at. This is the loop rate for the rate controller and outputs.
 *
-* @min 0
+* Note: sensor data is always read and filtered at the full raw rate (eg commonly 8 kHz) regardless of this setting.
+*
+* @min 100
 * @max 2000
-* @value 0 0 (no limit)
-* @value 50 50 Hz
+* @value 100 100 Hz
 * @value 250 250 Hz
 * @value 400 400 Hz
+* @value 800 800 Hz
 * @value 1000 1000 Hz
 * @value 2000 2000 Hz
 * @unit Hz
 * @reboot_required true
 * @group Sensors
 */
-PARAM_DEFINE_INT32(IMU_GYRO_RATEMAX, 0);
+PARAM_DEFINE_INT32(IMU_GYRO_RATEMAX, 400);
 
 /**
 * Cutoff frequency for angular acceleration (D-Term filter)
@@ -120,4 +157,39 @@ PARAM_DEFINE_INT32(IMU_GYRO_RATEMAX, 0);
 * @reboot_required true
 * @group Sensors
 */
-PARAM_DEFINE_FLOAT(IMU_DGYRO_CUTOFF, 0.0f);
+PARAM_DEFINE_FLOAT(IMU_DGYRO_CUTOFF, 30.0f);
+
+/**
+* IMU gyro dynamic notch filtering
+*
+* Enable bank of dynamically updating notch filters.
+* Requires ESC RPM feedback or onboard FFT (IMU_GYRO_FFT_EN).
+* @group Sensors
+* @min 0
+* @max 3
+* @bit 0 ESC RPM
+* @bit 1 FFT
+*/
+PARAM_DEFINE_INT32(IMU_GYRO_DNF_EN, 0);
+
+/**
+* IMU gyro ESC notch filter bandwidth
+*
+* Bandwidth per notch filter when using dynamic notch filtering with ESC RPM.
+*
+* @group Sensors
+* @min 5
+* @max 30
+*/
+PARAM_DEFINE_FLOAT(IMU_GYRO_DNF_BW, 15.f);
+
+/**
+* IMU gyro dynamic notch filter harmonics
+*
+* ESC RPM number of harmonics (multiples of RPM) for ESC RPM dynamic notch filtering.
+*
+* @group Sensors
+* @min 1
+* @max 7
+*/
+PARAM_DEFINE_INT32(IMU_GYRO_DNF_HMC, 3);

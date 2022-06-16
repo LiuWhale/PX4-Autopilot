@@ -37,18 +37,33 @@ endif()
 
 include(cygwin_cygpath)
 
-set(NUTTX_DIR ${PX4_BINARY_DIR}/NuttX/nuttx)
-set(NUTTX_APPS_DIR ${PX4_BINARY_DIR}/NuttX/apps)
-
 add_executable(px4 ${PX4_SOURCE_DIR}/platforms/common/empty.c)
 set(FW_NAME ${PX4_BOARD_VENDOR}_${PX4_BOARD_MODEL}_${PX4_BOARD_LABEL}.elf)
 set_target_properties(px4 PROPERTIES OUTPUT_NAME ${FW_NAME})
-add_dependencies(px4 git_nuttx nuttx_build)
+add_dependencies(px4 git_nuttx)
 
 get_property(module_libraries GLOBAL PROPERTY PX4_MODULE_LIBRARIES)
 
+if (NOT CONFIG_BUILD_FLAT)
+	add_executable(px4_kernel ${PX4_SOURCE_DIR}/platforms/common/empty.c)
+	set(KERNEL_NAME ${PX4_BOARD_VENDOR}_${PX4_BOARD_MODEL}_${PX4_BOARD_LABEL}_kernel.elf)
+	set_target_properties(px4_kernel PROPERTIES OUTPUT_NAME ${KERNEL_NAME})
+	add_dependencies(px4_kernel git_nuttx)
+	get_property(kernel_module_libraries GLOBAL PROPERTY PX4_KERNEL_MODULE_LIBRARIES)
+endif()
+
 # build NuttX
 add_subdirectory(NuttX ${PX4_BINARY_DIR}/NuttX)
+
+# check that CONFIG_ARCH_BOARD_CUSTOM_DIR is in PX4_BOARD_DIR
+if(CONFIG_ARCH_BOARD_CUSTOM_DIR_RELPATH)
+	get_filename_component(nuttx_defconfig_root "${NUTTX_DEFCONFIG}/../.." ABSOLUTE)
+	get_filename_component(nuttx_config_from_defconfig "${NUTTX_DIR}/${CONFIG_ARCH_BOARD_CUSTOM_DIR}" ABSOLUTE)
+
+	if(NOT ${nuttx_defconfig_root} MATCHES ${nuttx_config_from_defconfig})
+		message(FATAL_ERROR "NuttX custom board directory (${CONFIG_ARCH_BOARD_CUSTOM_DIR}) isn't in board directory (${PX4_BOARD_DIR})")
+	endif()
+endif()
 
 set(nuttx_libs)
 set(SCRIPT_PREFIX)
@@ -69,7 +84,13 @@ elseif("${PX4_BOARD_LABEL}" STREQUAL "canbootloader")
 	)
 
 	target_link_libraries(px4 PRIVATE
-		-Wl,-wrap,sched_process_timer -Wl,-wrap,nx_sem_post -Wl,-wrap,nx_sem_wait
+		-Wl,-wrap,nxsched_process_timer
+		-Wl,-wrap,nxsem_post
+		-Wl,-wrap,nxsem_wait
+		-Wl,-wrap,nxsem_wait_uninterruptible
+		-Wl,-wrap,arm_svcall
+		-Wl,-wrap,nx_start
+		-Wl,-wrap,exit
 	)
 else()
 	if(NOT "${PX4_BOARD_LINKER_PREFIX}" STREQUAL "")
@@ -78,19 +99,33 @@ else()
 endif()
 
 list(APPEND nuttx_libs
-	nuttx_apps
-	nuttx_arch
-	nuttx_binfmt
-	nuttx_c
 	nuttx_boards
-	nuttx_xx
 	nuttx_drivers
 	nuttx_fs
-	nuttx_mm
 	nuttx_sched
+	nuttx_crypto
+	nuttx_binfmt
+	nuttx_xx
 	)
 
-if (CONFIG_NET)
+if (NOT CONFIG_BUILD_FLAT)
+	list(APPEND nuttx_libs
+		px4_board_ctrl
+		nuttx_karch
+		nuttx_kmm
+		nuttx_stubs
+		nuttx_kc
+		)
+else()
+	list(APPEND nuttx_libs
+		nuttx_apps
+		nuttx_arch
+		nuttx_mm
+		nuttx_c
+		)
+endif()
+
+if(CONFIG_NET)
 	list(APPEND nuttx_libs nuttx_net)
 	target_link_libraries(nuttx_fs INTERFACE nuttx_net)
 endif()
@@ -99,55 +134,168 @@ file(RELATIVE_PATH PX4_BINARY_DIR_REL ${CMAKE_CURRENT_BINARY_DIR} ${PX4_BINARY_D
 
 # only in the cygwin environment: convert absolute linker script path to mixed windows (C:/...)
 # because even relative linker script paths are different for linux, mac and windows
-CYGPATH(PX4_BINARY_DIR PX4_BINARY_DIR_CYG)
+CYGPATH(NUTTX_CONFIG_DIR NUTTX_CONFIG_DIR_CYG)
 
-target_link_libraries(nuttx_arch
-	INTERFACE
-		drivers_board
-		arch_hrt
-)
+if((DEFINED ENV{SIGNING_TOOL}) AND (NOT NUTTX_DIR MATCHES "external"))
+	set(PX4_BINARY_OUTPUT ${PX4_BINARY_DIR}/${PX4_CONFIG}_unsigned.bin)
 
-target_link_libraries(nuttx_c INTERFACE nuttx_drivers)
-target_link_libraries(nuttx_xx INTERFACE nuttx_c)
-
-target_link_libraries(px4 PRIVATE
-
-	-nostartfiles
-	-nodefaultlibs
-	-nostdlib
-	-nostdinc++
-
-	-fno-exceptions
-	-fno-rtti
-
-	-Wl,--script=${PX4_BINARY_DIR_CYG}/NuttX/nuttx-config/scripts/${SCRIPT_PREFIX}script.ld
-	-Wl,-Map=${PX4_CONFIG}.map
-	-Wl,--warn-common
-	-Wl,--gc-sections
-
-	-Wl,--start-group
-		${nuttx_libs}
-	-Wl,--end-group
-
-	m
-	gcc
+	add_custom_command(OUTPUT ${PX4_BINARY_DIR_REL}/${PX4_CONFIG}.bin
+		COMMAND $ENV{SIGNING_TOOL} $ENV{SIGNING_ARGS} ${PX4_BINARY_OUTPUT} ${PX4_BINARY_DIR}/${PX4_CONFIG}.bin
+		DEPENDS ${PX4_BINARY_OUTPUT}
+		WORKING_DIRECTORY ${PX4_SOURCE_DIR}
 	)
+else()
+	set(PX4_BINARY_OUTPUT ${PX4_BINARY_DIR_REL}/${PX4_CONFIG}.bin)
+endif()
 
-if(NOT USE_LD_GOLD)
+if (NOT CONFIG_BUILD_FLAT)
+
+	target_link_libraries(nuttx_karch
+		INTERFACE
+			drivers_board
+			arch_hrt
+			)
+
+	target_link_libraries(px4_kernel PRIVATE
+
+		-nostartfiles
+		-nodefaultlibs
+		-nostdlib
+		-nostdinc++
+
+		-fno-exceptions
+		-fno-rtti
+
+		-Wl,--script=${NUTTX_CONFIG_DIR}/scripts/${SCRIPT_PREFIX}memory.ld,--script=${NUTTX_CONFIG_DIR}/scripts/${SCRIPT_PREFIX}kernel-space.ld
+
+		-Wl,-Map=${PX4_CONFIG}_kernel.map
+		-Wl,--warn-common
+		-Wl,--gc-sections
+
+		-Wl,--start-group
+			${nuttx_libs}
+			${kernel_module_libraries}
+			px4_work_queue # TODO, this shouldn't be needed here?
+		-Wl,--end-group
+
+		m
+		gcc
+		)
+
+	if (config_romfs_root)
+		add_subdirectory(${PX4_SOURCE_DIR}/ROMFS ${PX4_BINARY_DIR}/ROMFS)
+		target_link_libraries(px4_kernel PRIVATE romfs)
+	endif()
+
+	target_link_libraries(px4_kernel PRIVATE -Wl,--print-memory-usage)
+
+	set(nuttx_userspace)
+
+	list(APPEND nuttx_userspace
+		drivers_userspace
+		nuttx_arch
+		nuttx_apps
+		nuttx_mm
+		nuttx_proxies
+		nuttx_c
+		nuttx_xx
+		)
+
+	target_link_libraries(nuttx_c INTERFACE nuttx_proxies)
+
+	target_link_libraries(px4 PRIVATE
+
+		-nostartfiles
+		-nodefaultlibs
+		-nostdlib
+		-nostdinc++
+
+		-fno-exceptions
+		-fno-rtti
+
+		-Wl,--script=${NUTTX_CONFIG_DIR}/scripts/${SCRIPT_PREFIX}memory.ld,--script=${NUTTX_CONFIG_DIR}/scripts/${SCRIPT_PREFIX}user-space.ld
+
+		-Wl,-Map=${PX4_CONFIG}.map
+		-Wl,--warn-common
+		-Wl,--gc-sections
+
+		-Wl,--start-group
+		${nuttx_userspace}
+		-Wl,--end-group
+
+		m
+		gcc
+		)
+
 	target_link_libraries(px4 PRIVATE -Wl,--print-memory-usage)
-endif()
 
-target_link_libraries(px4 PRIVATE ${module_libraries})
-
-if (config_romfs_root)
-	add_subdirectory(${PX4_SOURCE_DIR}/ROMFS ${PX4_BINARY_DIR}/ROMFS)
-	target_link_libraries(px4 PRIVATE romfs)
-endif()
-
-add_custom_command(OUTPUT ${PX4_BINARY_DIR_REL}/${PX4_BOARD}.bin
-	COMMAND ${CMAKE_OBJCOPY} -O binary ${PX4_BINARY_DIR_REL}/${FW_NAME} ${PX4_BINARY_DIR_REL}/${PX4_BOARD}.bin
-	DEPENDS px4
+	target_link_libraries(px4 PRIVATE
+		${module_libraries}
 	)
+
+	add_custom_command(OUTPUT ${PX4_BINARY_OUTPUT}
+		COMMAND ${CMAKE_OBJCOPY} -O binary ${PX4_BINARY_DIR_REL}/${FW_NAME} ${PX4_BINARY_DIR_REL}/${PX4_BOARD}_user.bin
+		COMMAND ${CMAKE_OBJCOPY} --gap-fill 0xFF --pad-to ${CONFIG_NUTTX_USERSPACE} -O binary ${PX4_BINARY_DIR_REL}/${KERNEL_NAME} ${PX4_BINARY_OUTPUT}
+		COMMAND cat ${PX4_BINARY_DIR_REL}/${PX4_BOARD}_user.bin >> ${PX4_BINARY_OUTPUT}
+
+		DEPENDS px4 px4_kernel
+	)
+
+else()
+
+	target_link_libraries(nuttx_c INTERFACE nuttx_sched) # nxsched_get_streams
+
+	target_link_libraries(nuttx_arch
+		INTERFACE
+			drivers_board
+			arch_hrt
+			arch_board_reset
+	)
+
+	target_link_libraries(nuttx_c INTERFACE nuttx_drivers)
+	target_link_libraries(nuttx_drivers INTERFACE nuttx_c)
+	target_link_libraries(nuttx_xx INTERFACE nuttx_c)
+	target_link_libraries(nuttx_fs INTERFACE nuttx_c)
+
+	target_link_libraries(px4 PRIVATE
+
+		-nostartfiles
+		-nodefaultlibs
+		-nostdlib
+		-nostdinc++
+
+		-fno-exceptions
+		-fno-rtti
+		-Wl,--script=${NUTTX_CONFIG_DIR_CYG}/scripts/${SCRIPT_PREFIX}script.ld
+		-Wl,-Map=${PX4_CONFIG}.map
+		-Wl,--warn-common
+		-Wl,--gc-sections
+
+		-Wl,--start-group
+			${nuttx_libs}
+		-Wl,--end-group
+
+		m
+		gcc
+		)
+
+	if(NOT USE_LD_GOLD)
+		target_link_libraries(px4 PRIVATE -Wl,--print-memory-usage)
+	endif()
+
+	target_link_libraries(px4 PRIVATE ${module_libraries})
+
+	if(config_romfs_root)
+		add_subdirectory(${PX4_SOURCE_DIR}/ROMFS ${PX4_BINARY_DIR}/ROMFS)
+		target_link_libraries(px4 PRIVATE romfs)
+	endif()
+
+	add_custom_command(OUTPUT ${PX4_BINARY_OUTPUT}
+		COMMAND ${CMAKE_OBJCOPY} -O binary ${PX4_BINARY_DIR_REL}/${FW_NAME} ${PX4_BINARY_OUTPUT}
+		DEPENDS px4
+	)
+
+endif()
 
 # create .px4 with parameter and airframe metadata
 if (TARGET parameters_xml AND TARGET airframes_xml)
@@ -162,9 +310,9 @@ if (TARGET parameters_xml AND TARGET airframes_xml)
 				--git_identity ${PX4_SOURCE_DIR}
 				--parameter_xml ${PX4_BINARY_DIR}/parameters.xml
 				--airframe_xml ${PX4_BINARY_DIR}/airframes.xml
-				--image ${PX4_BINARY_DIR}/${PX4_BOARD}.bin > ${fw_package}
+				--image ${PX4_BINARY_DIR}/${PX4_CONFIG}.bin > ${fw_package}
 		DEPENDS
-			${PX4_BINARY_DIR}/${PX4_BOARD}.bin
+			${PX4_BINARY_DIR}/${PX4_CONFIG}.bin
 			airframes_xml
 			parameters_xml
 		COMMENT "Creating ${fw_package}"
@@ -181,13 +329,35 @@ if (TARGET parameters_xml AND TARGET airframes_xml)
 
 endif()
 
+if("${PX4_BOARD_LABEL}" STREQUAL "bootloader")
+	add_custom_command(OUTPUT ${PX4_BOARD_DIR}/extras/${PX4_BOARD}_bootloader.bin
+		COMMAND ${CMAKE_OBJCOPY} -O binary ${PX4_BINARY_DIR_REL}/${FW_NAME} ${PX4_BOARD_DIR}/extras/${PX4_BOARD}_bootloader.bin
+		DEPENDS px4
+	)
+	add_custom_target(px4_bootloader_keep ALL DEPENDS ${PX4_BOARD_DIR}/extras/${PX4_BOARD}_bootloader.bin)
+endif()
+
 # print weak symbols
 add_custom_target(weak_symbols
 	COMMAND ${CMAKE_NM} $<TARGET_FILE:px4> | ${GREP} " w " | cat
 	DEPENDS px4
 	VERBATIM
 	USES_TERMINAL
+)
+
+# generate bootloader.elf and copy to top level build directory
+if(NOT ("${PX4_BOARD_LABEL}" STREQUAL "bootloader") AND (EXISTS "${PX4_BOARD_DIR}/extras/${PX4_BOARD_VENDOR}_${PX4_BOARD_MODEL}_bootloader.bin"))
+	add_custom_command(
+		OUTPUT ${PX4_BINARY_DIR}/${PX4_BOARD_VENDOR}_${PX4_BOARD_MODEL}_bootloader.elf
+		COMMAND
+			${CMAKE_OBJCOPY} -I binary -O elf32-little --change-section-address .data=0x08000000
+				${PX4_BOARD_DIR}/extras/${PX4_BOARD_VENDOR}_${PX4_BOARD_MODEL}_bootloader.bin
+				${PX4_BINARY_DIR}/${PX4_BOARD_VENDOR}_${PX4_BOARD_MODEL}_bootloader.elf
+		DEPENDS ${PX4_BOARD_DIR}/extras/${PX4_BOARD_VENDOR}_${PX4_BOARD_MODEL}_bootloader.bin
+		WORKING_DIRECTORY ${PX4_BINARY_DIR}
 	)
+	add_custom_target(bootloader_elf DEPENDS ${PX4_BINARY_DIR}/${PX4_BOARD_VENDOR}_${PX4_BOARD_MODEL}_bootloader.elf)
+endif()
 
 
 # debugger helpers
@@ -217,6 +387,9 @@ if(NOT NUTTX_DIR MATCHES "external")
 	elseif(CONFIG_ARCH_CHIP_STM32F405RG)
 		set(DEBUG_DEVICE "STM32F405RG")
 		set(DEBUG_SVD_FILE "STM32F405.svd")
+	elseif(CONFIG_ARCH_CHIP_STM32F412CE)
+		set(DEBUG_DEVICE "STM32F412CE")
+		set(DEBUG_SVD_FILE "STM32F412.svd")
 	elseif(CONFIG_ARCH_CHIP_STM32F427V)
 		set(DEBUG_DEVICE "STM32F427VI")
 		set(DEBUG_SVD_FILE "STM32F427.svd")
@@ -229,6 +402,9 @@ if(NOT NUTTX_DIR MATCHES "external")
 	elseif(CONFIG_ARCH_CHIP_STM32F469I)
 		set(DEBUG_DEVICE "STM32F469II")
 		set(DEBUG_SVD_FILE "STM32F469.svd")
+	elseif(CONFIG_ARCH_CHIP_STM32F722RE)
+		set(DEBUG_DEVICE "STM32F722RE")
+		set(DEBUG_SVD_FILE "STM32F7x2.svd")
 	elseif(CONFIG_ARCH_CHIP_STM32F745VG)
 		set(DEBUG_DEVICE "STM32F745VG")
 		set(DEBUG_SVD_FILE "STM32F7x5.svd")
@@ -238,8 +414,17 @@ if(NOT NUTTX_DIR MATCHES "external")
 	elseif(CONFIG_ARCH_CHIP_STM32F777NI)
 		set(DEBUG_DEVICE "STM32F777NI")
 		set(DEBUG_SVD_FILE "STM32F7x7.svd")
+	elseif(CONFIG_ARCH_CHIP_STM32H743II)
+		set(DEBUG_DEVICE "STM32H743II")
+		set(DEBUG_SVD_FILE "STM32H7x3.svd")
+	elseif(CONFIG_ARCH_CHIP_STM32H743XI)
+		set(DEBUG_DEVICE "STM32H743XI")
+		set(DEBUG_SVD_FILE "STM32H7x3.svd")
 	elseif(CONFIG_ARCH_CHIP_STM32H743ZI)
 		set(DEBUG_DEVICE "STM32H743ZI")
+		set(DEBUG_SVD_FILE "STM32H7x3.svd")
+	elseif(CONFIG_ARCH_CHIP_STM32H753II)
+		set(DEBUG_DEVICE "STM32H753II")
 		set(DEBUG_SVD_FILE "STM32H7x3.svd")
 	else()
 		set(DEBUG_DEVICE "")
@@ -250,8 +435,11 @@ if(NOT NUTTX_DIR MATCHES "external")
 		LIST_DIRECTORIES false
 		${CMAKE_SOURCE_DIR}/../cmsis-svd/data/*/${DEBUG_SVD_FILE}
 	)
-	if(NOT DEBUG_SVD_FILE MATCHES "unknown")
+	if(DEBUG_SVD_FILE_PATH)
 		message(STATUS "Found SVD: ${DEBUG_SVD_FILE_PATH}")
+	endif()
+
+	if(DEBUG_DEVICE)
 		configure_file(${CMAKE_CURRENT_SOURCE_DIR}/Debug/launch.json.in ${PX4_SOURCE_DIR}/.vscode/launch.json @ONLY)
 	endif()
 endif()
@@ -261,9 +449,13 @@ add_custom_target(debug
 	DEPENDS px4 ${PX4_BINARY_DIR}/.gdbinit
 	WORKING_DIRECTORY ${PX4_BINARY_DIR}
 	USES_TERMINAL
-	)
+)
 
 include(blackmagic)
 include(jlink)
 include(profile)
 include(stack_check)
+
+if(EXISTS "${PX4_BOARD_DIR}/cmake/upload.cmake")
+	include(${PX4_BOARD_DIR}/cmake/upload.cmake)
+endif()

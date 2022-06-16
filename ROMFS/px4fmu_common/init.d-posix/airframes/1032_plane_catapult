@@ -3,10 +3,7 @@
 # @name Plane SITL with catapult
 #
 
-sh /etc/init.d-posix/airframes/1030_plane
+. ${R}etc/init.d-posix/airframes/1030_plane
 
-if [ $AUTOCNF = yes ]
-then
-	param set RWTO_TKOFF 0
+param set-default RWTO_TKOFF 0
 
-fi

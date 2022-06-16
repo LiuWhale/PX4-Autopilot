@@ -39,11 +39,8 @@
 
 #include <px4_platform_common/px4_config.h>
 #include <drivers/device/i2c.h>
-#include <drivers/drv_device.h>
 
 #include "hmc5883.h"
-
-#define HMC5883L_ADDRESS		0x1E
 
 device::Device *HMC5883_I2C_interface(int bus, int bus_frequency);
 
@@ -75,7 +72,7 @@ int HMC5883_I2C::probe()
 {
 	uint8_t data[3] = {0, 0, 0};
 
-	_retries = 10;
+	_retries = 1;
 
 	if (read(ADDR_ID_A, &data[0], 1) ||
 	    read(ADDR_ID_B, &data[1], 1) ||
@@ -83,8 +80,6 @@ int HMC5883_I2C::probe()
 		DEVICE_DEBUG("read_reg fail");
 		return -EIO;
 	}
-
-	_retries = 2;
 
 	if ((data[0] != ID_A_WHO_AM_I) ||
 	    (data[1] != ID_B_WHO_AM_I) ||

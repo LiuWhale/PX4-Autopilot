@@ -56,7 +56,6 @@ from __future__ import print_function
 import sys
 import argparse
 import binascii
-import serial
 import socket
 import struct
 import json
@@ -67,6 +66,16 @@ import array
 import os
 
 from sys import platform as _platform
+
+try:
+    import serial
+except ImportError as e:
+    print("Failed to import serial: " + str(e))
+    print("")
+    print("You may need to install it using:")
+    print("    pip3 install --user pyserial")
+    print("")
+    sys.exit(1)
 
 # Detect python version
 if sys.version_info[0] < 3:
@@ -287,13 +296,13 @@ class uploader(object):
             if (len(data) != count):
                 raise RuntimeError("Ack Window %i not %i " % (len(data), count))
             for i in range(0, len(data), 2):
-                if chr(data[i]) != self.INSYNC:
+                if bytes([data[i]]) != self.INSYNC:
                     raise RuntimeError("unexpected %s instead of INSYNC" % data[i])
-                if chr(data[i+1]) == self.INVALID:
+                if bytes([data[i+1]]) == self.INVALID:
                     raise RuntimeError("bootloader reports INVALID OPERATION")
-                if chr(data[i+1]) == self.FAILED:
+                if bytes([data[i+1]]) == self.FAILED:
                     raise RuntimeError("bootloader reports OPERATION FAILED")
-                if chr(data[i+1]) != self.OK:
+                if bytes([data[i+1]]) != self.OK:
                     raise RuntimeError("unexpected response 0x%x instead of OK" % ord(data[i+1]))
 
     # attempt to get back into sync with the bootloader
@@ -344,10 +353,11 @@ class uploader(object):
         try:
             self.__getSync(False)
         except:
-            # if it fails we are on a real Serial Port
-            self.ackWindowedMode = True
-
-        self.port.baudrate = self.baudrate_bootloader
+            # if it fails we are on a real serial port - only leave this enabled on Windows
+            if sys.platform.startswith('win'):
+                self.ackWindowedMode = True
+        finally:
+            self.port.baudrate = self.baudrate_bootloader
 
     # send the GET_DEVICE command and wait for an info parameter
     def __getInfo(self, param):
@@ -426,10 +436,7 @@ class uploader(object):
     # send a PROG_MULTI command to write a collection of bytes
     def __program_multi(self, data, windowMode):
 
-        if runningPython3:
-            length = len(data).to_bytes(1, byteorder='big')
-        else:
-            length = chr(len(data))
+        length = len(data).to_bytes(1, byteorder='big')
 
         self.__send(uploader.PROG_MULTI)
         self.__send(length)
@@ -450,10 +457,7 @@ class uploader(object):
     # verify multiple bytes in flash
     def __verify_multi(self, data):
 
-        if runningPython3:
-            length = len(data).to_bytes(1, byteorder='big')
-        else:
-            length = chr(len(data))
+        length = len(data).to_bytes(1, byteorder='big')
 
         self.__send(uploader.READ_MULTI)
         self.__send(length)
@@ -678,7 +682,28 @@ class uploader(object):
 
         return True
 
-    def send_reboot(self):
+    def send_protocol_splitter_format(self, data):
+        # Header Structure:
+        #      bits:   1 2 3 4 5 6 7 8
+        # header[0] - |     Magic     | (='S')
+        # header[1] - |T|   LenH      | (T - 0: mavlink; 1: rtps)
+        # header[2] - |     LenL      |
+        # header[3] - |   Checksum    |
+
+        MAGIC = 83
+
+        len_bytes = len(data).to_bytes(2, "big")
+        LEN_H = len_bytes[0] & 127
+        LEN_L = len_bytes[1] & 255
+        CHECKSUM = MAGIC ^ LEN_H ^ LEN_L
+
+        header_ints = [MAGIC, LEN_H, LEN_L, CHECKSUM]
+        header_bytes = struct.pack("{}B".format(len(header_ints)), *header_ints)
+
+        self.__send(header_bytes)
+        self.__send(data)
+
+    def send_reboot(self, use_protocol_splitter_format=False):
         if (not self.__next_baud_flightstack()):
             return False
 
@@ -689,15 +714,19 @@ class uploader(object):
             print("If the board does not respond, unplug and re-plug the USB connector.", file=sys.stderr)
 
         try:
+            send_fct = self.__send
+            if use_protocol_splitter_format:
+                send_fct = self.send_protocol_splitter_format
+
             # try MAVLINK command first
             self.port.flush()
-            self.__send(uploader.MAVLINK_REBOOT_ID1)
-            self.__send(uploader.MAVLINK_REBOOT_ID0)
+            send_fct(uploader.MAVLINK_REBOOT_ID1)
+            send_fct(uploader.MAVLINK_REBOOT_ID0)
             # then try reboot via NSH
-            self.__send(uploader.NSH_INIT)
-            self.__send(uploader.NSH_REBOOT_BL)
-            self.__send(uploader.NSH_INIT)
-            self.__send(uploader.NSH_REBOOT)
+            send_fct(uploader.NSH_INIT)
+            send_fct(uploader.NSH_REBOOT_BL)
+            send_fct(uploader.NSH_INIT)
+            send_fct(uploader.NSH_REBOOT)
             self.port.flush()
             self.port.baudrate = self.baudrate_bootloader
         except Exception:
@@ -711,6 +740,9 @@ class uploader(object):
 
 
 def main():
+    # Python2 is EOL
+    if not runningPython3:
+        raise RuntimeError("Python 2 is not supported. Please try again using Python 3.")
 
     # Parse commandline arguments
     parser = argparse.ArgumentParser(description="Firmware uploader for the PX autopilot system.")
@@ -719,37 +751,18 @@ def main():
     parser.add_argument('--baud-flightstack', action="store", default="57600", help="Comma-separated list of baud rate of the serial port (default is 57600) when communicating with flight stack (Mavlink or NSH), only required for true serial ports.")
     parser.add_argument('--force', action='store_true', default=False, help='Override board type check, or silicon errata checks and continue loading')
     parser.add_argument('--boot-delay', type=int, default=None, help='minimum boot delay to store in flash')
+    parser.add_argument('--use-protocol-splitter-format', action='store_true', help='use protocol splitter format for reboot')
     parser.add_argument('firmware', action="store", help="Firmware file to be uploaded")
     args = parser.parse_args()
+
+    if args.use_protocol_splitter_format:
+        print("Using protocol splitter format to reboot pixhawk!")
 
     # warn people about ModemManager which interferes badly with Pixhawk
     if os.path.exists("/usr/sbin/ModemManager"):
         print("==========================================================================================================")
         print("WARNING: You should uninstall ModemManager as it conflicts with any non-modem serial device (like Pixhawk)")
         print("==========================================================================================================")
-
-    # We need to check for pyserial because the import itself doesn't
-    # seem to fail, at least not on macOS.
-    pyserial_installed = False
-    try:
-        if serial.__version__:
-            pyserial_installed = True
-    except:
-        pass
-
-    try:
-        if serial.VERSION:
-            pyserial_installed = True
-    except:
-        pass
-
-    if not pyserial_installed:
-        print("Error: pyserial not installed!")
-        print("")
-        print("You may need to install it using:")
-        print("    pip3 install --user pyserial")
-        print("")
-        sys.exit(1)
 
     # Load the firmware file
     fw = firmware(args.firmware)
@@ -846,7 +859,7 @@ def main():
 
                     except Exception:
 
-                        if not up.send_reboot():
+                        if not up.send_reboot(args.use_protocol_splitter_format):
                             break
 
                         # wait for the reboot, without we might run into Serial I/O Error 5

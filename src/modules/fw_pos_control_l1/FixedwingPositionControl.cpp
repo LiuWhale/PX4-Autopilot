@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2013-2019 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2013-2022 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,7 +33,20 @@
 
 #include "FixedwingPositionControl.hpp"
 
-#include <vtol_att_control/vtol_type.h>
+#include <px4_platform_common/events.h>
+
+using math::constrain;
+using math::max;
+using math::min;
+using math::radians;
+
+using matrix::Dcmf;
+using matrix::Eulerf;
+using matrix::Quatf;
+using matrix::Vector2f;
+using matrix::Vector2d;
+using matrix::Vector3f;
+using matrix::wrap_pi;
 
 FixedwingPositionControl::FixedwingPositionControl(bool vtol) :
 	ModuleParams(nullptr),
@@ -45,16 +58,16 @@ FixedwingPositionControl::FixedwingPositionControl(bool vtol) :
 {
 	if (vtol) {
 		_param_handle_airspeed_trans = param_find("VT_ARSP_TRANS");
-
-		// VTOL parameter VTOL_TYPE
-		int32_t vt_type = -1;
-		param_get(param_find("VT_TYPE"), &vt_type);
-
-		_vtol_tailsitter = (static_cast<vtol_type>(vt_type) == vtol_type::TAILSITTER);
 	}
 
 	// limit to 50 Hz
 	_local_pos_sub.set_interval_ms(20);
+
+	_pos_ctrl_status_pub.advertise();
+	_pos_ctrl_landing_status_pub.advertise();
+	_tecs_status_pub.advertise();
+
+	_airspeed_slew_rate_controller.setSlewRate(ASPD_SP_SLEW_RATE);
 
 	/* fetch initial parameter values */
 	parameters_update();
@@ -69,7 +82,7 @@ bool
 FixedwingPositionControl::init()
 {
 	if (!_local_pos_sub.registerCallback()) {
-		PX4_ERR("vehicle local position callback registration failed!");
+		PX4_ERR("callback registration failed");
 		return false;
 	}
 
@@ -92,25 +105,45 @@ FixedwingPositionControl::parameters_update()
 	_l1_control.set_l1_roll_limit(radians(_param_fw_r_lim.get()));
 	_l1_control.set_roll_slew_rate(radians(_param_fw_l1_r_slew_max.get()));
 
+	// NPFG parameters
+	_npfg.setPeriod(_param_npfg_period.get());
+	_npfg.setDamping(_param_npfg_damping.get());
+	_npfg.enablePeriodLB(_param_npfg_en_period_lb.get());
+	_npfg.enablePeriodUB(_param_npfg_en_period_ub.get());
+	_npfg.enableMinGroundSpeed(_param_npfg_en_min_gsp.get());
+	_npfg.enableTrackKeeping(_param_npfg_en_track_keeping.get());
+	_npfg.enableWindExcessRegulation(_param_npfg_en_wind_reg.get());
+	_npfg.setMinGroundSpeed(_param_fw_gnd_spd_min.get());
+	_npfg.setMaxTrackKeepingMinGroundSpeed(_param_npfg_track_keeping_gsp_max.get());
+	_npfg.setRollTimeConst(_param_npfg_roll_time_const.get());
+	_npfg.setSwitchDistanceMultiplier(_param_npfg_switch_distance_multiplier.get());
+	_npfg.setRollLimit(radians(_param_fw_r_lim.get()));
+	_npfg.setRollSlewRate(radians(_param_fw_l1_r_slew_max.get()));
+	_npfg.setPeriodSafetyFactor(_param_npfg_period_safety_factor.get());
+
 	// TECS parameters
 	_tecs.set_max_climb_rate(_param_fw_t_clmb_max.get());
 	_tecs.set_max_sink_rate(_param_fw_t_sink_max.get());
 	_tecs.set_speed_weight(_param_fw_t_spdweight.get());
-	_tecs.set_indicated_airspeed_min(_param_fw_airspd_min.get());
-	_tecs.set_indicated_airspeed_max(_param_fw_airspd_max.get());
-	_tecs.set_time_const_throt(_param_fw_t_thro_const.get());
-	_tecs.set_time_const(_param_fw_t_time_const.get());
+	_tecs.set_equivalent_airspeed_cruise(_param_fw_airspd_trim.get());
+	_tecs.set_equivalent_airspeed_min(_param_fw_airspd_min.get());
+	_tecs.set_equivalent_airspeed_max(_param_fw_airspd_max.get());
 	_tecs.set_min_sink_rate(_param_fw_t_sink_min.get());
 	_tecs.set_throttle_damp(_param_fw_t_thr_damp.get());
-	_tecs.set_integrator_gain(_param_fw_t_integ_gain.get());
+	_tecs.set_integrator_gain_throttle(_param_fw_t_I_gain_thr.get());
+	_tecs.set_integrator_gain_pitch(_param_fw_t_I_gain_pit.get());
 	_tecs.set_throttle_slewrate(_param_fw_thr_slew_max.get());
 	_tecs.set_vertical_accel_limit(_param_fw_t_vert_acc.get());
 	_tecs.set_speed_comp_filter_omega(_param_fw_t_spd_omega.get());
 	_tecs.set_roll_throttle_compensation(_param_fw_t_rll2thr.get());
 	_tecs.set_pitch_damping(_param_fw_t_ptch_damp.get());
-	_tecs.set_heightrate_p(_param_fw_t_hrate_p.get());
+	_tecs.set_height_error_time_constant(_param_fw_t_h_error_tc.get());
 	_tecs.set_heightrate_ff(_param_fw_t_hrate_ff.get());
-	_tecs.set_speedrate_p(_param_fw_t_srate_p.get());
+	_tecs.set_airspeed_error_time_constant(_param_fw_t_tas_error_tc.get());
+	_tecs.set_ste_rate_time_const(_param_ste_rate_time_const.get());
+	_tecs.set_speed_derivative_time_constant(_param_tas_rate_time_const.get());
+	_tecs.set_seb_rate_ff_gain(_param_seb_rate_ff.get());
+
 
 	// Landing slope
 	/* check if negative value for 2/3 of flare altitude is set for throttle cut */
@@ -125,19 +158,65 @@ FixedwingPositionControl::parameters_update()
 
 	landing_status_publish();
 
+	int check_ret = PX4_OK;
+
 	// sanity check parameters
-	if ((_param_fw_airspd_max.get() < _param_fw_airspd_min.get()) ||
-	    (_param_fw_airspd_max.get() < 5.0f) ||
-	    (_param_fw_airspd_min.get() > 100.0f) ||
-	    (_param_fw_airspd_trim.get() < _param_fw_airspd_min.get()) ||
-	    (_param_fw_airspd_trim.get() > _param_fw_airspd_max.get())) {
-
-		mavlink_log_critical(&_mavlink_log_pub, "Airspeed parameters invalid");
-
-		return PX4_ERROR;
+	if (_param_fw_airspd_max.get() < _param_fw_airspd_min.get()) {
+		mavlink_log_critical(&_mavlink_log_pub, "Config invalid: Airspeed max smaller than min\t");
+		/* EVENT
+		 * @description
+		 * - <param>FW_AIRSPD_MAX</param>: {1:.1}
+		 * - <param>FW_AIRSPD_MIN</param>: {2:.1}
+		 */
+		events::send<float, float>(events::ID("fixedwing_position_control_conf_invalid_airspeed"), events::Log::Error,
+					   "Invalid configuration: Airspeed max smaller than min",
+					   _param_fw_airspd_max.get(), _param_fw_airspd_min.get());
+		check_ret = PX4_ERROR;
 	}
 
-	return PX4_OK;
+	if (_param_fw_airspd_max.get() < 5.0f || _param_fw_airspd_min.get() > 100.0f) {
+		mavlink_log_critical(&_mavlink_log_pub, "Config invalid: Airspeed max < 5 m/s or min > 100 m/s\t");
+		/* EVENT
+		 * @description
+		 * - <param>FW_AIRSPD_MAX</param>: {1:.1}
+		 * - <param>FW_AIRSPD_MIN</param>: {2:.1}
+		 */
+		events::send<float, float>(events::ID("fixedwing_position_control_conf_invalid_airspeed_bounds"), events::Log::Error,
+					   "Invalid configuration: Airspeed max \\< 5 m/s or min \\> 100 m/s",
+					   _param_fw_airspd_max.get(), _param_fw_airspd_min.get());
+		check_ret = PX4_ERROR;
+	}
+
+	if (_param_fw_airspd_trim.get() < _param_fw_airspd_min.get() ||
+	    _param_fw_airspd_trim.get() > _param_fw_airspd_max.get()) {
+		mavlink_log_critical(&_mavlink_log_pub, "Config invalid: Airspeed cruise out of min or max bounds\t");
+		/* EVENT
+		 * @description
+		 * - <param>FW_AIRSPD_MAX</param>: {1:.1}
+		 * - <param>FW_AIRSPD_MIN</param>: {2:.1}
+		 * - <param>FW_AIRSPD_TRIM</param>: {3:.1}
+		 */
+		events::send<float, float, float>(events::ID("fixedwing_position_control_conf_invalid_cruise_bounds"),
+						  events::Log::Error,
+						  "Invalid configuration: Airspeed cruise out of min or max bounds",
+						  _param_fw_airspd_max.get(), _param_fw_airspd_min.get(), _param_fw_airspd_trim.get());
+		check_ret = PX4_ERROR;
+	}
+
+	if (_param_fw_airspd_stall.get() > _param_fw_airspd_min.get() * 0.9f) {
+		mavlink_log_critical(&_mavlink_log_pub, "Config invalid: Stall airspeed higher than 0.9 of min\t");
+		/* EVENT
+		 * @description
+		 * - <param>FW_AIRSPD_MIN</param>: {1:.1}
+		 * - <param>FW_AIRSPD_STALL</param>: {2:.1}
+		 */
+		events::send<float, float>(events::ID("fixedwing_position_control_conf_invalid_stall"), events::Log::Error,
+					   "Invalid configuration: Stall airspeed higher than 90% of minimum airspeed",
+					   _param_fw_airspd_min.get(), _param_fw_airspd_stall.get());
+		check_ret = PX4_ERROR;
+	}
+
+	return check_ret;
 }
 
 void
@@ -160,9 +239,31 @@ FixedwingPositionControl::vehicle_control_mode_poll()
 void
 FixedwingPositionControl::vehicle_command_poll()
 {
-	if (_vehicle_command_sub.updated()) {
-		_vehicle_command_sub.copy(&_vehicle_command);
-		handle_command();
+	vehicle_command_s vehicle_command;
+
+	while (_vehicle_command_sub.update(&vehicle_command)) {
+		if (vehicle_command.command == vehicle_command_s::VEHICLE_CMD_DO_GO_AROUND) {
+			// only abort landing before point of no return (horizontal and vertical)
+			if (_control_mode.flag_control_auto_enabled &&
+			    _pos_sp_triplet.current.valid &&
+			    (_pos_sp_triplet.current.type == position_setpoint_s::SETPOINT_TYPE_LAND)) {
+
+				abort_landing(true);
+			}
+
+		} else if ((vehicle_command.command == vehicle_command_s::VEHICLE_CMD_DO_CHANGE_SPEED)
+			   && (static_cast<uint8_t>(vehicle_command.param1 + .5f) == vehicle_command_s::SPEED_TYPE_AIRSPEED)
+			   && (vehicle_command.param2 > 0.f)) {
+
+			if (_control_mode_current == FW_POSCTRL_MODE_AUTO) {
+				_pos_sp_triplet.current.cruising_speed = vehicle_command.param2;
+
+			} else if (_control_mode_current == FW_POSCTRL_MODE_MANUAL_ALTITUDE
+				   || _control_mode_current == FW_POSCTRL_MODE_MANUAL_POSITION) {
+				_commanded_airspeed_setpoint = vehicle_command.param2;
+			}
+
+		}
 	}
 }
 
@@ -170,27 +271,27 @@ void
 FixedwingPositionControl::airspeed_poll()
 {
 	bool airspeed_valid = _airspeed_valid;
+	airspeed_validated_s airspeed_validated;
 
-	if ((_param_fw_arsp_mode.get() == 0) && _airspeed_validated_sub.update()) {
+	if ((_param_fw_arsp_mode.get() == 0) && _airspeed_validated_sub.update(&airspeed_validated)) {
 
-		const airspeed_validated_s &airspeed_validated = _airspeed_validated_sub.get();
 		_eas2tas = 1.0f; //this is the default value, taken in case of invalid airspeed
 
-		if (PX4_ISFINITE(airspeed_validated.equivalent_airspeed_m_s)
+		if (PX4_ISFINITE(airspeed_validated.calibrated_airspeed_m_s)
 		    && PX4_ISFINITE(airspeed_validated.true_airspeed_m_s)
-		    && (airspeed_validated.equivalent_airspeed_m_s > 0.0f)) {
+		    && (airspeed_validated.calibrated_airspeed_m_s > 0.0f)) {
 
 			airspeed_valid = true;
 
-			_airspeed_last_valid = airspeed_validated.timestamp;
-			_airspeed = airspeed_validated.equivalent_airspeed_m_s;
+			_time_airspeed_last_valid = airspeed_validated.timestamp;
+			_airspeed = airspeed_validated.calibrated_airspeed_m_s;
 
-			_eas2tas = constrain(airspeed_validated.true_airspeed_m_s / airspeed_validated.equivalent_airspeed_m_s, 0.9f, 2.0f);
+			_eas2tas = constrain(airspeed_validated.true_airspeed_m_s / airspeed_validated.calibrated_airspeed_m_s, 0.9f, 2.0f);
 		}
 
 	} else {
 		// no airspeed updates for one second
-		if (airspeed_valid && (hrt_elapsed_time(&_airspeed_last_valid) > 1_s)) {
+		if (airspeed_valid && (hrt_elapsed_time(&_time_airspeed_last_valid) > 1_s)) {
 			airspeed_valid = false;
 		}
 	}
@@ -203,102 +304,180 @@ FixedwingPositionControl::airspeed_poll()
 }
 
 void
+FixedwingPositionControl::wind_poll()
+{
+	if (_wind_sub.updated()) {
+		wind_s wind;
+		_wind_sub.update(&wind);
+
+		// assumes wind is valid if finite
+		_wind_valid = PX4_ISFINITE(wind.windspeed_north)
+			      && PX4_ISFINITE(wind.windspeed_east);
+
+		_time_wind_last_received = hrt_absolute_time();
+
+		_wind_vel(0) = wind.windspeed_north;
+		_wind_vel(1) = wind.windspeed_east;
+
+	} else {
+		// invalidate wind estimate usage (and correspondingly NPFG, if enabled) after subscription timeout
+		_wind_valid = _wind_valid && (hrt_absolute_time() - _time_wind_last_received) < WIND_EST_TIMEOUT;
+	}
+}
+
+void
+FixedwingPositionControl::manual_control_setpoint_poll()
+{
+	_manual_control_setpoint_sub.update(&_manual_control_setpoint);
+
+	_manual_control_setpoint_for_height_rate = _manual_control_setpoint.x;
+	_manual_control_setpoint_for_airspeed = math::constrain(_manual_control_setpoint.z, 0.0f, 1.0f);
+
+	if (_param_fw_pos_stk_conf.get() & STICK_CONFIG_SWAP_STICKS_BIT) {
+		/* Alternate stick allocation (similar concept as for multirotor systems:
+		 * demanding up/down with the throttle stick, and move faster/break with the pitch one.
+		 */
+		_manual_control_setpoint_for_height_rate = -(math::constrain(_manual_control_setpoint.z, 0.0f, 1.0f) * 2.f - 1.f);
+		_manual_control_setpoint_for_airspeed = math::constrain(_manual_control_setpoint.x, -1.0f, 1.0f) / 2.f + 0.5f;
+	}
+
+	// send neutral setpoints if no update for 1 s
+	if (hrt_elapsed_time(&_manual_control_setpoint.timestamp) > 1_s) {
+		_manual_control_setpoint_for_height_rate = 0.f;
+		_manual_control_setpoint_for_airspeed = 0.5f;
+	}
+}
+
+
+void
 FixedwingPositionControl::vehicle_attitude_poll()
 {
-	if (_vehicle_attitude_sub.update(&_att)) {
-		/* set rotation matrix and euler angles */
-		_R_nb = Quatf(_att.q);
+	vehicle_attitude_s att;
+
+	if (_vehicle_attitude_sub.update(&att)) {
+		vehicle_angular_velocity_s angular_velocity{};
+		_vehicle_angular_velocity_sub.copy(&angular_velocity);
+		const Vector3f rates{angular_velocity.xyz};
+
+		Dcmf R{Quatf(att.q)};
 
 		// if the vehicle is a tailsitter we have to rotate the attitude by the pitch offset
 		// between multirotor and fixed wing flight
-		if (_vtol_tailsitter) {
-			Dcmf R_offset = Eulerf(0, M_PI_2_F, 0);
-			_R_nb = _R_nb * R_offset;
+		if (_vehicle_status.is_vtol_tailsitter) {
+			const Dcmf R_offset{Eulerf{0.f, M_PI_2_F, 0.f}};
+			R = R * R_offset;
+
+			_yawrate = rates(0);
+
+		} else {
+			_yawrate = rates(2);
 		}
 
-		const Eulerf euler_angles(_R_nb);
-		_roll    = euler_angles(0);
-		_pitch   = euler_angles(1);
-		_yaw     = euler_angles(2);
+		const Eulerf euler_angles(R);
+		_pitch = euler_angles(1);
+		_yaw = euler_angles(2);
+
+		_body_acceleration = R.transpose() * Vector3f{_local_pos.ax, _local_pos.ay, _local_pos.az};
+		_body_velocity = R.transpose() * Vector3f{_local_pos.vx, _local_pos.vy, _local_pos.vz};
+
+		// update TECS load factor
+		const float load_factor = 1.f / cosf(euler_angles(0));
+		_tecs.set_load_factor(load_factor);
 	}
 }
 
 float
-FixedwingPositionControl::get_demanded_airspeed()
+FixedwingPositionControl::get_manual_airspeed_setpoint()
 {
-	float altctrl_airspeed = 0;
+	float altctrl_airspeed = _param_fw_airspd_trim.get();
 
-	// neutral throttle corresponds to trim airspeed
-	if (_manual_control_setpoint.z < 0.5f) {
-		// lower half of throttle is min to trim airspeed
-		altctrl_airspeed = _param_fw_airspd_min.get() +
-				   (_param_fw_airspd_trim.get() - _param_fw_airspd_min.get()) *
-				   _manual_control_setpoint.z * 2;
+	if (_param_fw_pos_stk_conf.get() & STICK_CONFIG_ENABLE_AIRSPEED_SP_MANUAL_BIT) {
+		// neutral throttle corresponds to trim airspeed
+		if (_manual_control_setpoint_for_airspeed < 0.5f) {
+			// lower half of throttle is min to trim airspeed
+			altctrl_airspeed = _param_fw_airspd_min.get() +
+					   (_param_fw_airspd_trim.get() - _param_fw_airspd_min.get()) *
+					   _manual_control_setpoint_for_airspeed * 2;
 
-	} else {
-		// upper half of throttle is trim to max airspeed
-		altctrl_airspeed = _param_fw_airspd_trim.get() +
-				   (_param_fw_airspd_max.get() - _param_fw_airspd_trim.get()) *
-				   (_manual_control_setpoint.z * 2 - 1);
+		} else {
+			// upper half of throttle is trim to max airspeed
+			altctrl_airspeed = _param_fw_airspd_trim.get() +
+					   (_param_fw_airspd_max.get() - _param_fw_airspd_trim.get()) *
+					   (_manual_control_setpoint_for_airspeed * 2 - 1);
+		}
+
+	} else if (PX4_ISFINITE(_commanded_airspeed_setpoint)) {
+		altctrl_airspeed = _commanded_airspeed_setpoint;
 	}
 
 	return altctrl_airspeed;
 }
 
 float
-FixedwingPositionControl::calculate_target_airspeed(float airspeed_demand, const Vector2f &ground_speed)
+FixedwingPositionControl::get_auto_airspeed_setpoint(const float control_interval, const float pos_sp_cruise_airspeed,
+		const Vector2f &ground_speed)
 {
-	/*
-	 * Calculate accelerated stall airspeed factor from commanded bank angle and use it to increase minimum airspeed.
-	 *
-	 *  We don't know the stall speed of the aircraft, but assuming user defined
-	 *  minimum airspeed (FW_AIRSPD_MIN) is slightly larger than stall speed
-	 *  this is close enough.
-	 *
-	 * increase lift vector to balance additional weight in bank
-	 *  cos(bank angle) = W/L = 1/n
-	 *   n is the load factor
-	 *
-	 * lift is proportional to airspeed^2 so the increase in stall speed is
-	 *  Vsacc = Vs * sqrt(n)
-	 *
-	 */
-	float adjusted_min_airspeed = _param_fw_airspd_min.get();
+	// overwrite internal setpoint (e.g. set prior through MAV_CMD_DO_CHANGE_SPEED) in case
+	// the current position_setpoint contains a valid airspeed setpoint
+	float airspeed_setpoint = _param_fw_airspd_trim.get();
 
-	if (_airspeed_valid && PX4_ISFINITE(_att_sp.roll_body)) {
-
-		adjusted_min_airspeed = constrain(_param_fw_airspd_min.get() / sqrtf(cosf(_att_sp.roll_body)),
-						  _param_fw_airspd_min.get(), _param_fw_airspd_max.get());
+	if (PX4_ISFINITE(pos_sp_cruise_airspeed) && pos_sp_cruise_airspeed > FLT_EPSILON) {
+		airspeed_setpoint = pos_sp_cruise_airspeed;
 	}
 
-	// groundspeed undershoot
-	if (!_l1_control.circle_mode()) {
-
-		// rotate ground speed vector with current attitude
-		Vector2f yaw_vector(_R_nb(0, 0), _R_nb(1, 0));
-		yaw_vector.normalize();
-
-		const float ground_speed_body = yaw_vector * ground_speed;
-
+	// Adapt cruise airspeed when otherwise the min groundspeed couldn't be maintained
+	if (!_l1_control.circle_mode() && !using_npfg_with_wind_estimate()) {
 		/*
 		 * This error value ensures that a plane (as long as its throttle capability is
 		 * not exceeded) travels towards a waypoint (and is not pushed more and more away
-		 * by wind). Not countering this would lead to a fly-away.
+		 * by wind). Not countering this would lead to a fly-away. Only non-zero in presence
+		 * of sufficient wind. "minimum ground speed undershoot".
 		 */
+		const float ground_speed_body = _body_velocity(0);
+
 		if (ground_speed_body < _param_fw_gnd_spd_min.get()) {
-			airspeed_demand += max(_param_fw_gnd_spd_min.get() - ground_speed_body, 0.0f);
+			airspeed_setpoint += _param_fw_gnd_spd_min.get() - ground_speed_body;
 		}
 	}
 
-	// add minimum ground speed undershoot (only non-zero in presence of sufficient wind)
-	// sanity check: limit to range
-	return constrain(airspeed_demand, adjusted_min_airspeed, _param_fw_airspd_max.get());
+	float airspeed_min_adjusted = _param_fw_airspd_min.get();
+
+	/*
+	 * Calculate accelerated stall airspeed factor from commanded bank angle and use it to increase minimum airspeed.
+	 *
+	 * Increase lift vector to balance additional weight in bank
+	 * cos(bank angle) = W/L = 1/n, n is the load factor
+	 *
+	 * lift is proportional to airspeed^2 so the increase in stall speed is Vsacc = Vs * sqrt(n)
+	 */
+
+	if (_airspeed_valid && PX4_ISFINITE(_att_sp.roll_body)) {
+		airspeed_min_adjusted = constrain(_param_fw_airspd_stall.get() / sqrtf(cosf(_att_sp.roll_body)),
+						  airspeed_min_adjusted, _param_fw_airspd_max.get());
+	}
+
+	// constrain setpoint
+	airspeed_setpoint = constrain(airspeed_setpoint, airspeed_min_adjusted, _param_fw_airspd_max.get());
+
+	// initialize to current airspeed setpoint, also if previous setpoint is out of bounds to not apply slew rate in that case
+	const bool outside_of_limits = _airspeed_slew_rate_controller.getState() < airspeed_min_adjusted
+				       || _airspeed_slew_rate_controller.getState() > _param_fw_airspd_max.get();
+
+	if (!PX4_ISFINITE(_airspeed_slew_rate_controller.getState()) || outside_of_limits) {
+		_airspeed_slew_rate_controller.setForcedValue(airspeed_setpoint);
+
+	} else if (control_interval > FLT_EPSILON) {
+		// constrain airspeed setpoint changes with slew rate of ASPD_SP_SLEW_RATE m/s/s
+		airspeed_setpoint = _airspeed_slew_rate_controller.update(airspeed_setpoint, control_interval);
+	}
+
+	return airspeed_setpoint;
 }
 
 void
 FixedwingPositionControl::tecs_status_publish()
 {
-	tecs_status_s t = {};
+	tecs_status_s t{};
 
 	switch (_tecs.tecs_mode()) {
 	case TECS::ECL_TECS_MODE_NORMAL:
@@ -318,17 +497,20 @@ FixedwingPositionControl::tecs_status_publish()
 		break;
 	}
 
-	t.altitude_sp = _tecs.hgt_setpoint_adj();
+	t.altitude_sp = _tecs.hgt_setpoint();
 	t.altitude_filtered = _tecs.vert_pos_state();
 
-	t.airspeed_sp = _tecs.TAS_setpoint_adj();
-	t.airspeed_filtered = _tecs.tas_state();
+	t.true_airspeed_sp = _tecs.TAS_setpoint_adj();
+	t.true_airspeed_filtered = _tecs.tas_state();
 
 	t.height_rate_setpoint = _tecs.hgt_rate_setpoint();
 	t.height_rate = _tecs.vert_vel_state();
 
-	t.airspeed_derivative_sp = _tecs.TAS_rate_setpoint();
-	t.airspeed_derivative = _tecs.speed_derivative();
+	t.equivalent_airspeed_sp = _tecs.get_EAS_setpoint();
+	t.true_airspeed_derivative_sp = _tecs.TAS_rate_setpoint();
+	t.true_airspeed_derivative = _tecs.speed_derivative();
+	t.true_airspeed_derivative_raw = _tecs.speed_derivative_raw();
+	t.true_airspeed_innovation = _tecs.getTASInnovation();
 
 	t.total_energy_error = _tecs.STE_error();
 	t.total_energy_rate_error = _tecs.STE_rate_error();
@@ -336,8 +518,21 @@ FixedwingPositionControl::tecs_status_publish()
 	t.energy_distribution_error = _tecs.SEB_error();
 	t.energy_distribution_rate_error = _tecs.SEB_rate_error();
 
+	t.total_energy = _tecs.STE();
+	t.total_energy_rate = _tecs.STE_rate();
+	t.total_energy_balance = _tecs.SEB();
+	t.total_energy_balance_rate = _tecs.SEB_rate();
+
+	t.total_energy_sp = _tecs.STE_setpoint();
+	t.total_energy_rate_sp = _tecs.STE_rate_setpoint();
+	t.total_energy_balance_sp = _tecs.SEB_setpoint();
+	t.total_energy_balance_rate_sp = _tecs.SEB_rate_setpoint();
+
 	t.throttle_integ = _tecs.throttle_integ_state();
 	t.pitch_integ = _tecs.pitch_integ_state();
+
+	t.throttle_sp = _tecs.get_throttle_setpoint();
+	t.pitch_sp_rad = _tecs.get_pitch_setpoint();
 
 	t.timestamp = hrt_absolute_time();
 
@@ -351,19 +546,61 @@ FixedwingPositionControl::status_publish()
 
 	pos_ctrl_status.nav_roll = _att_sp.roll_body;
 	pos_ctrl_status.nav_pitch = _att_sp.pitch_body;
-	pos_ctrl_status.nav_bearing = _l1_control.nav_bearing();
 
-	pos_ctrl_status.target_bearing = _l1_control.target_bearing();
-	pos_ctrl_status.xtrack_error = _l1_control.crosstrack_error();
+	if (_l1_control.has_guidance_updated()) {
+		pos_ctrl_status.nav_bearing = _l1_control.nav_bearing();
+
+		pos_ctrl_status.target_bearing = _l1_control.target_bearing();
+		pos_ctrl_status.xtrack_error = _l1_control.crosstrack_error();
+
+	} else {
+		pos_ctrl_status.nav_bearing = NAN;
+		pos_ctrl_status.target_bearing = NAN;
+		pos_ctrl_status.xtrack_error = NAN;
+
+	}
+
+	if (_param_fw_use_npfg.get()) {
+		npfg_status_s npfg_status = {};
+
+		npfg_status.wind_est_valid = _wind_valid;
+
+		const float bearing = _npfg.getBearing(); // dont repeat atan2 calc
+
+		pos_ctrl_status.nav_bearing = bearing;
+		pos_ctrl_status.target_bearing = _npfg.targetBearing();
+		pos_ctrl_status.xtrack_error = _npfg.getTrackError();
+		pos_ctrl_status.acceptance_radius = _npfg.switchDistance(500.0f);
+
+		npfg_status.lat_accel = _npfg.getLateralAccel();
+		npfg_status.lat_accel_ff = _npfg.getLateralAccelFF();
+		npfg_status.heading_ref = _npfg.getHeadingRef();
+		npfg_status.bearing = bearing;
+		npfg_status.bearing_feas = _npfg.getBearingFeas();
+		npfg_status.bearing_feas_on_track = _npfg.getOnTrackBearingFeas();
+		npfg_status.signed_track_error = _npfg.getTrackError();
+		npfg_status.track_error_bound = _npfg.getTrackErrorBound();
+		npfg_status.airspeed_ref = _npfg.getAirspeedRef();
+		npfg_status.min_ground_speed_ref = _npfg.getMinGroundSpeedRef();
+		npfg_status.adapted_period = _npfg.getAdaptedPeriod();
+		npfg_status.p_gain = _npfg.getPGain();
+		npfg_status.time_const = _npfg.getTimeConst();
+		npfg_status.timestamp = hrt_absolute_time();
+
+		_npfg_status_pub.publish(npfg_status);
+
+	} else {
+		pos_ctrl_status.acceptance_radius = _l1_control.switch_distance(500.0f);
+	}
 
 	pos_ctrl_status.wp_dist = get_distance_to_next_waypoint(_current_latitude, _current_longitude,
 				  _pos_sp_triplet.current.lat, _pos_sp_triplet.current.lon);
 
-	pos_ctrl_status.acceptance_radius = _l1_control.switch_distance(500.0f);
-
 	pos_ctrl_status.yaw_acceptance = NAN;
 
 	pos_ctrl_status.timestamp = hrt_absolute_time();
+
+	pos_ctrl_status.type = _position_sp_type;
 
 	_pos_ctrl_status_pub.publish(pos_ctrl_status);
 }
@@ -389,7 +626,9 @@ FixedwingPositionControl::abort_landing(bool abort)
 {
 	// only announce changes
 	if (abort && !_land_abort) {
-		mavlink_log_critical(&_mavlink_log_pub, "Landing aborted");
+		mavlink_log_critical(&_mavlink_log_pub, "Landing aborted\t");
+		// TODO: add reason
+		events::send(events::ID("fixedwing_position_control_land_aborted"), events::Log::Critical, "Landing aborted");
 	}
 
 	_land_abort = abort;
@@ -425,11 +664,11 @@ FixedwingPositionControl::get_waypoint_heading_distance(float heading, position_
 	}
 
 	waypoint_prev = temp_prev;
-	waypoint_prev.alt = _hold_alt;
+	waypoint_prev.alt = _current_altitude;
 	waypoint_prev.valid = true;
 
 	waypoint_next = temp_next;
-	waypoint_next.alt = _hold_alt;
+	waypoint_next.alt = _current_altitude;
 	waypoint_next.valid = true;
 }
 
@@ -445,8 +684,8 @@ FixedwingPositionControl::get_terrain_altitude_takeoff(float takeoff_alt)
 	return takeoff_alt;
 }
 
-bool
-FixedwingPositionControl::update_desired_altitude(float dt)
+float
+FixedwingPositionControl::getManualHeightRateSetpoint()
 {
 	/*
 	 * The complete range is -1..+1, so this is 6%
@@ -461,55 +700,28 @@ FixedwingPositionControl::update_desired_altitude(float dt)
 	 */
 	const float factor = 1.0f - deadBand;
 
-	/* Climbout mode sets maximum throttle and pitch up */
-	bool climbout_mode = false;
-
-	/*
-	 * Reset the hold altitude to the current altitude if the uncertainty
-	 * changes significantly.
-	 * This is to guard against uncommanded altitude changes
-	 * when the altitude certainty increases or decreases.
-	 */
-
-	if (fabsf(_althold_epv - _local_pos.epv) > ALTHOLD_EPV_RESET_THRESH) {
-		_hold_alt = _current_altitude;
-		_althold_epv = _local_pos.epv;
-	}
+	float height_rate_setpoint = 0.0f;
 
 	/*
 	 * Manual control has as convention the rotation around
 	 * an axis. Positive X means to rotate positively around
 	 * the X axis in NED frame, which is pitching down
 	 */
-	if (_manual_control_setpoint.x > deadBand) {
+	if (_manual_control_setpoint_for_height_rate > deadBand) {
 		/* pitching down */
-		float pitch = -(_manual_control_setpoint.x - deadBand) / factor;
-		_hold_alt += (_param_fw_t_sink_max.get() * dt) * pitch;
-		_was_in_deadband = false;
+		float pitch = -(_manual_control_setpoint_for_height_rate - deadBand) / factor;
+		height_rate_setpoint = pitch * _param_sinkrate_target.get();
 
-	} else if (_manual_control_setpoint.x < - deadBand) {
+	} else if (_manual_control_setpoint_for_height_rate < - deadBand) {
 		/* pitching up */
-		float pitch = -(_manual_control_setpoint.x + deadBand) / factor;
-		_hold_alt += (_param_fw_t_clmb_max.get() * dt) * pitch;
-		_was_in_deadband = false;
-		climbout_mode = (pitch > MANUAL_THROTTLE_CLIMBOUT_THRESH);
+		float pitch = -(_manual_control_setpoint_for_height_rate + deadBand) / factor;
+		const float climb_rate_target = _param_climbrate_target.get();
 
-	} else if (!_was_in_deadband) {
-		/* store altitude at which manual.x was inside deadBand
-		 * The aircraft should immediately try to fly at this altitude
-		 * as this is what the pilot expects when he moves the stick to the center */
-		_hold_alt = _current_altitude;
-		_althold_epv = _local_pos.epv;
-		_was_in_deadband = true;
+		height_rate_setpoint = pitch * climb_rate_target;
+
 	}
 
-	if (_vehicle_status.is_vtol) {
-		if (_vehicle_status.vehicle_type == vehicle_status_s::VEHICLE_TYPE_ROTARY_WING || _vehicle_status.in_transition_mode) {
-			_hold_alt = _current_altitude;
-		}
-	}
-
-	return climbout_mode;
+	return height_rate_setpoint;
 }
 
 bool
@@ -526,547 +738,683 @@ FixedwingPositionControl::in_takeoff_situation()
 }
 
 void
-FixedwingPositionControl::do_takeoff_help(float *hold_altitude, float *pitch_limit_min)
+FixedwingPositionControl::set_control_mode_current(const hrt_abstime &now, bool pos_sp_curr_valid)
 {
-	/* demand "climbout_diff" m above ground if user switched into this mode during takeoff */
-	if (in_takeoff_situation()) {
-		*hold_altitude = _takeoff_ground_alt + _param_fw_clmbout_diff.get();
-		*pitch_limit_min = radians(10.0f);
-	}
-}
-
-bool
-FixedwingPositionControl::control_position(const hrt_abstime &now, const Vector2f &curr_pos,
-		const Vector2f &ground_speed,
-		const position_setpoint_s &pos_sp_prev, const position_setpoint_s &pos_sp_curr, const position_setpoint_s &pos_sp_next)
-{
-	const float dt = math::constrain((now - _control_position_last_called) * 1e-6f, 0.01f, 0.05f);
-	_control_position_last_called = now;
-
-	_l1_control.set_dt(dt);
-
 	/* only run position controller in fixed-wing mode and during transitions for VTOL */
 	if (_vehicle_status.vehicle_type == vehicle_status_s::VEHICLE_TYPE_ROTARY_WING && !_vehicle_status.in_transition_mode) {
 		_control_mode_current = FW_POSCTRL_MODE_OTHER;
-		return false;
+		return; // do not publish the setpoint
 	}
 
-	bool setpoint = true;
+	if (((_control_mode.flag_control_auto_enabled && _control_mode.flag_control_position_enabled) ||
+	     _control_mode.flag_control_offboard_enabled) && pos_sp_curr_valid) {
 
-	_att_sp.fw_control_yaw = false;		// by default we don't want yaw to be contoller directly with rudder
-	_att_sp.apply_flaps = vehicle_attitude_setpoint_s::FLAPS_OFF;		// by default we don't use flaps
+		if (_pos_sp_triplet.current.type == position_setpoint_s::SETPOINT_TYPE_TAKEOFF) {
 
-	Vector2f nav_speed_2d{ground_speed};
+			if (_vehicle_status.is_vtol && _vehicle_status.in_transition_mode) {
+				_control_mode_current = FW_POSCTRL_MODE_AUTO;
 
-	if (_airspeed_valid) {
-		// l1 navigation logic breaks down when wind speed exceeds max airspeed
-		// compute 2D groundspeed from airspeed-heading projection
-		const Vector2f air_speed_2d{_airspeed * cosf(_yaw), _airspeed * sinf(_yaw)};
+				// in this case we want the waypoint handled as a position setpoint -- a submode in control_auto()
+				_pos_sp_triplet.current.type = position_setpoint_s::SETPOINT_TYPE_POSITION;
 
-		// angle between air_speed_2d and ground_speed
-		const float air_gnd_angle = acosf((air_speed_2d * ground_speed) / (air_speed_2d.length() * ground_speed.length()));
-
-		// if angle > 90 degrees or groundspeed is less than threshold, replace groundspeed with airspeed projection
-		if ((fabsf(air_gnd_angle) > M_PI_2_F) || (ground_speed.length() < 3.0f)) {
-			nav_speed_2d = air_speed_2d;
-		}
-	}
-
-	/* no throttle limit as default */
-	float throttle_max = 1.0f;
-
-	/* save time when airplane is in air */
-	if (!_was_in_air && !_vehicle_land_detected.landed) {
-		_was_in_air = true;
-		_time_went_in_air = now;
-		_takeoff_ground_alt = _current_altitude;
-	}
-
-	/* reset flag when airplane landed */
-	if (_vehicle_land_detected.landed) {
-		_was_in_air = false;
-	}
-
-	/* Reset integrators if switching to this mode from a other mode in which posctl was not active */
-	if (_control_mode_current == FW_POSCTRL_MODE_OTHER) {
-		/* reset integrators */
-		_tecs.reset_state();
-	}
-
-	if ((_control_mode.flag_control_auto_enabled || _control_mode.flag_control_offboard_enabled) && pos_sp_curr.valid) {
-		/* AUTONOMOUS FLIGHT */
-
-		_control_mode_current = FW_POSCTRL_MODE_AUTO;
-
-		/* reset hold altitude */
-		_hold_alt = _current_altitude;
-
-		/* reset hold yaw */
-		_hdg_hold_yaw = _yaw;
-
-		/* get circle mode */
-		bool was_circle_mode = _l1_control.circle_mode();
-
-		/* restore TECS parameters, in case changed intermittently (e.g. in landing handling) */
-		_tecs.set_speed_weight(_param_fw_t_spdweight.get());
-		_tecs.set_time_const_throt(_param_fw_t_thro_const.get());
-
-		Vector2f curr_wp{0.0f, 0.0f};
-		Vector2f prev_wp{0.0f, 0.0f};
-
-		if (_vehicle_status.in_transition_to_fw) {
-
-			if (!PX4_ISFINITE(_transition_waypoint(0))) {
-				double lat_transition, lon_transition;
-				// create a virtual waypoint HDG_HOLD_DIST_NEXT meters in front of the vehicle which the L1 controller can track
-				// during the transition
-				waypoint_from_heading_and_distance(_current_latitude, _current_longitude, _yaw, HDG_HOLD_DIST_NEXT, &lat_transition,
-								   &lon_transition);
-
-				_transition_waypoint(0) = (float)lat_transition;
-				_transition_waypoint(1) = (float)lon_transition;
+			} else {
+				_control_mode_current = FW_POSCTRL_MODE_AUTO_TAKEOFF;
 			}
 
+		} else if (_pos_sp_triplet.current.type == position_setpoint_s::SETPOINT_TYPE_LAND) {
 
-			curr_wp = prev_wp = _transition_waypoint;
+			if (!_vehicle_status.in_transition_mode) {
+				_control_mode_current = FW_POSCTRL_MODE_AUTO_LANDING;
+
+			} else {
+				// in this case we want the waypoint handled as a position setpoint -- a submode in control_auto()
+				_pos_sp_triplet.current.type = position_setpoint_s::SETPOINT_TYPE_POSITION;
+			}
 
 		} else {
-			/* current waypoint (the one currently heading for) */
-			curr_wp = Vector2f((float)pos_sp_curr.lat, (float)pos_sp_curr.lon);
-
-			if (pos_sp_prev.valid) {
-				prev_wp(0) = (float)pos_sp_prev.lat;
-				prev_wp(1) = (float)pos_sp_prev.lon;
-
-			} else {
-				/*
-				 * No valid previous waypoint, go for the current wp.
-				 * This is automatically handled by the L1 library.
-				 */
-				prev_wp(0) = (float)pos_sp_curr.lat;
-				prev_wp(1) = (float)pos_sp_curr.lon;
-			}
-
-
-			/* reset transition waypoint, will be set upon entering front transition */
-			_transition_waypoint.setNaN();
+			_control_mode_current = FW_POSCTRL_MODE_AUTO;
 		}
 
-		/* Initialize attitude controller integrator reset flags to 0 */
-		_att_sp.roll_reset_integral = false;
-		_att_sp.pitch_reset_integral = false;
-		_att_sp.yaw_reset_integral = false;
+	} else if (_control_mode.flag_control_auto_enabled && _control_mode.flag_control_climb_rate_enabled
+		   && pos_sp_curr_valid) {
 
-		float mission_airspeed = _param_fw_airspd_trim.get();
-
-		if (PX4_ISFINITE(pos_sp_curr.cruising_speed) &&
-		    pos_sp_curr.cruising_speed > 0.1f) {
-
-			mission_airspeed = pos_sp_curr.cruising_speed;
+		// reset timer the first time we switch into this mode
+		if (_control_mode_current != FW_POSCTRL_MODE_AUTO_ALTITUDE && _control_mode_current != FW_POSCTRL_MODE_AUTO_CLIMBRATE) {
+			_time_in_fixed_bank_loiter = now;
 		}
 
-		float mission_throttle = _param_fw_thr_cruise.get();
+		if (hrt_elapsed_time(&_time_in_fixed_bank_loiter) < (_param_nav_gpsf_lt.get() * 1_s)
+		    && !_vehicle_status.in_transition_mode) {
+			if (_control_mode_current != FW_POSCTRL_MODE_AUTO_ALTITUDE) {
+				// Need to init because last loop iteration was in a different mode
+				mavlink_log_critical(&_mavlink_log_pub, "Start loiter with fixed bank angle.\t");
+				events::send(events::ID("fixedwing_position_control_fb_loiter"), events::Log::Critical,
+					     "Start loiter with fixed bank angle");
+			}
 
-		if (PX4_ISFINITE(pos_sp_curr.cruising_throttle) &&
-		    pos_sp_curr.cruising_throttle >= 0.0f) {
-			mission_throttle = pos_sp_curr.cruising_throttle;
+			_control_mode_current = FW_POSCTRL_MODE_AUTO_ALTITUDE;
+
+		} else {
+			if (_control_mode_current != FW_POSCTRL_MODE_AUTO_CLIMBRATE && !_vehicle_status.in_transition_mode) {
+				mavlink_log_critical(&_mavlink_log_pub, "Start descending.\t");
+				events::send(events::ID("fixedwing_position_control_descend"), events::Log::Critical, "Start descending");
+			}
+
+			_control_mode_current = FW_POSCTRL_MODE_AUTO_CLIMBRATE;
 		}
 
-		if (pos_sp_curr.type == position_setpoint_s::SETPOINT_TYPE_IDLE) {
-			_att_sp.thrust_body[0] = 0.0f;
-			_att_sp.roll_body = 0.0f;
-			_att_sp.pitch_body = 0.0f;
 
-		} else if (pos_sp_curr.type == position_setpoint_s::SETPOINT_TYPE_POSITION) {
-			/* waypoint is a plain navigation waypoint */
-			_l1_control.navigate_waypoints(prev_wp, curr_wp, curr_pos, nav_speed_2d);
-			_att_sp.roll_body = _l1_control.get_roll_setpoint();
-			_att_sp.yaw_body = _l1_control.nav_bearing();
-
-			float tecs_fw_thr_min;
-			float tecs_fw_thr_max;
-			float tecs_fw_mission_throttle;
-
-			if (mission_throttle < _param_fw_thr_min.get()) {
-				/* enable gliding with this waypoint */
-				_tecs.set_speed_weight(2.0f);
-				tecs_fw_thr_min = 0.0;
-				tecs_fw_thr_max = 0.0;
-				tecs_fw_mission_throttle = 0.0;
-
-			} else {
-				tecs_fw_thr_min = _param_fw_thr_min.get();
-				tecs_fw_thr_max = _param_fw_thr_max.get();
-				tecs_fw_mission_throttle = mission_throttle;
-			}
-
-			tecs_update_pitch_throttle(now, pos_sp_curr.alt,
-						   calculate_target_airspeed(mission_airspeed, ground_speed),
-						   radians(_param_fw_p_lim_min.get()) - radians(_param_fw_psp_off.get()),
-						   radians(_param_fw_p_lim_max.get()) - radians(_param_fw_psp_off.get()),
-						   tecs_fw_thr_min,
-						   tecs_fw_thr_max,
-						   tecs_fw_mission_throttle,
-						   false,
-						   radians(_param_fw_p_lim_min.get()));
-
-
-		} else if (pos_sp_curr.type == position_setpoint_s::SETPOINT_TYPE_LOITER) {
-
-			/* waypoint is a loiter waypoint */
-			float loiter_radius = pos_sp_curr.loiter_radius;
-			uint8_t loiter_direction = pos_sp_curr.loiter_direction;
-
-			if (fabsf(pos_sp_curr.loiter_radius) < FLT_EPSILON) {
-				loiter_radius = _param_nav_loiter_rad.get();
-				loiter_direction = (loiter_radius > 0) ? 1 : -1;
-
-			}
-
-			_l1_control.navigate_loiter(curr_wp, curr_pos, loiter_radius, loiter_direction, nav_speed_2d);
-
-			_att_sp.roll_body = _l1_control.get_roll_setpoint();
-			_att_sp.yaw_body = _l1_control.nav_bearing();
-
-			float alt_sp = pos_sp_curr.alt;
-
-			if (pos_sp_next.type == position_setpoint_s::SETPOINT_TYPE_LAND && pos_sp_next.valid
-			    && _l1_control.circle_mode() && _param_fw_lnd_earlycfg.get()) {
-				// We're in a loiter directly before a landing WP. Enable our landing configuration (flaps,
-				// landing airspeed and potentially tighter throttle control) already such that we don't
-				// have to do this switch (which can cause significant altitude errors) close to the ground.
-				_tecs.set_time_const_throt(_param_fw_thrtc_sc.get() * _param_fw_t_thro_const.get());
-				mission_airspeed = _param_fw_lnd_airspd_sc.get() * _param_fw_airspd_min.get();
-				_att_sp.apply_flaps = true;
-			}
-
-			if (in_takeoff_situation()) {
-				alt_sp = max(alt_sp, _takeoff_ground_alt + _param_fw_clmbout_diff.get());
-				_att_sp.roll_body = constrain(_att_sp.roll_body, radians(-5.0f), radians(5.0f));
-			}
-
-			if (_land_abort) {
-				if (pos_sp_curr.alt - _current_altitude  < _param_fw_clmbout_diff.get()) {
-					// aborted landing complete, normal loiter over landing point
-					abort_landing(false);
-
-				} else {
-					// continue straight until vehicle has sufficient altitude
-					_att_sp.roll_body = 0.0f;
-				}
-
-				_tecs.set_time_const_throt(_param_fw_thrtc_sc.get() * _param_fw_t_thro_const.get());
-			}
-
-
-			float tecs_fw_thr_min;
-			float tecs_fw_thr_max;
-			float tecs_fw_mission_throttle;
-
-			if (mission_throttle < _param_fw_thr_min.get()) {
-				/* enable gliding with this waypoint */
-				_tecs.set_speed_weight(2.0f);
-				tecs_fw_thr_min = 0.0;
-				tecs_fw_thr_max = 0.0;
-				tecs_fw_mission_throttle = 0.0;
-
-			} else {
-				tecs_fw_thr_min = _param_fw_thr_min.get();
-				tecs_fw_thr_max = _param_fw_thr_max.get();
-				tecs_fw_mission_throttle = _param_fw_thr_cruise.get();
-			}
-
-			tecs_update_pitch_throttle(now, alt_sp,
-						   calculate_target_airspeed(mission_airspeed, ground_speed),
-						   radians(_param_fw_p_lim_min.get()) - radians(_param_fw_psp_off.get()),
-						   radians(_param_fw_p_lim_max.get()) - radians(_param_fw_psp_off.get()),
-						   tecs_fw_thr_min,
-						   tecs_fw_thr_max,
-						   tecs_fw_mission_throttle,
-						   false,
-						   radians(_param_fw_p_lim_min.get()));
-
-		} else if (pos_sp_curr.type == position_setpoint_s::SETPOINT_TYPE_LAND) {
-			control_landing(now, curr_pos, ground_speed, pos_sp_prev, pos_sp_curr);
-
-		} else if (pos_sp_curr.type == position_setpoint_s::SETPOINT_TYPE_TAKEOFF) {
-			control_takeoff(now, curr_pos, ground_speed, pos_sp_prev, pos_sp_curr);
-		}
-
-		/* reset landing state */
-		if (pos_sp_curr.type != position_setpoint_s::SETPOINT_TYPE_LAND) {
-			reset_landing_state();
-		}
-
-		/* reset takeoff/launch state */
-		if (pos_sp_curr.type != position_setpoint_s::SETPOINT_TYPE_TAKEOFF) {
-			reset_takeoff_state();
-		}
-
-		if (was_circle_mode && !_l1_control.circle_mode()) {
-			/* just kicked out of loiter, reset roll integrals */
-			_att_sp.roll_reset_integral = true;
-		}
-
-	} else if (_control_mode.flag_control_velocity_enabled &&
-		   _control_mode.flag_control_altitude_enabled) {
-		/* POSITION CONTROL: pitch stick moves altitude setpoint, throttle stick sets airspeed,
-		   heading is set to a distant waypoint */
-
-		if (_control_mode_current != FW_POSCTRL_MODE_POSITION) {
+	} else if (_control_mode.flag_control_manual_enabled && _control_mode.flag_control_position_enabled) {
+		if (_control_mode_current != FW_POSCTRL_MODE_MANUAL_POSITION) {
 			/* Need to init because last loop iteration was in a different mode */
-			_hold_alt = _current_altitude;
-			_hdg_hold_yaw = _yaw;
+			_hdg_hold_yaw = _yaw; // yaw is not controlled, so set setpoint to current yaw
 			_hdg_hold_enabled = false; // this makes sure the waypoints are reset below
 			_yaw_lock_engaged = false;
 
 			/* reset setpoints from other modes (auto) otherwise we won't
 			 * level out without new manual input */
-			_att_sp.roll_body = _manual_control_setpoint.y * radians(_param_fw_man_r_max.get());
-			_att_sp.yaw_body = 0;
+			_att_sp.roll_body = _manual_control_setpoint.y * radians(_param_fw_r_lim.get());
+			_att_sp.yaw_body = _yaw; // yaw is not controlled, so set setpoint to current yaw
 		}
 
-		_control_mode_current = FW_POSCTRL_MODE_POSITION;
+		_control_mode_current = FW_POSCTRL_MODE_MANUAL_POSITION;
 
-		float altctrl_airspeed = get_demanded_airspeed();
+	} else if (_control_mode.flag_control_manual_enabled && _control_mode.flag_control_altitude_enabled) {
 
-		/* update desired altitude based on user pitch stick input */
-		bool climbout_requested = update_desired_altitude(dt);
-
-		// if we assume that user is taking off then help by demanding altitude setpoint well above ground
-		// and set limit to pitch angle to prevent steering into ground
-		// this will only affect planes and not VTOL
-		float pitch_limit_min = _param_fw_p_lim_min.get();
-		do_takeoff_help(&_hold_alt, &pitch_limit_min);
-
-		/* throttle limiting */
-		throttle_max = _param_fw_thr_max.get();
-
-		if (_vehicle_land_detected.landed && (fabsf(_manual_control_setpoint.z) < THROTTLE_THRESH)) {
-			throttle_max = 0.0f;
-		}
-
-		tecs_update_pitch_throttle(now, _hold_alt,
-					   altctrl_airspeed,
-					   radians(_param_fw_p_lim_min.get()),
-					   radians(_param_fw_p_lim_max.get()),
-					   _param_fw_thr_min.get(),
-					   throttle_max,
-					   _param_fw_thr_cruise.get(),
-					   climbout_requested,
-					   climbout_requested ? radians(10.0f) : pitch_limit_min,
-					   tecs_status_s::TECS_MODE_NORMAL);
-
-		/* heading control */
-		if (fabsf(_manual_control_setpoint.y) < HDG_HOLD_MAN_INPUT_THRESH &&
-		    fabsf(_manual_control_setpoint.r) < HDG_HOLD_MAN_INPUT_THRESH) {
-
-			/* heading / roll is zero, lock onto current heading */
-			if (fabsf(_vehicle_rates_sub.get().xyz[2]) < HDG_HOLD_YAWRATE_THRESH && !_yaw_lock_engaged) {
-				// little yaw movement, lock to current heading
-				_yaw_lock_engaged = true;
-
-			}
-
-			/* user tries to do a takeoff in heading hold mode, reset the yaw setpoint on every iteration
-			  to make sure the plane does not start rolling
-			*/
-			if (in_takeoff_situation()) {
-				_hdg_hold_enabled = false;
-				_yaw_lock_engaged = true;
-			}
-
-			if (_yaw_lock_engaged) {
-
-				/* just switched back from non heading-hold to heading hold */
-				if (!_hdg_hold_enabled) {
-					_hdg_hold_enabled = true;
-					_hdg_hold_yaw = _yaw;
-
-					get_waypoint_heading_distance(_hdg_hold_yaw, _hdg_hold_prev_wp, _hdg_hold_curr_wp, true);
-				}
-
-				/* we have a valid heading hold position, are we too close? */
-				float dist = get_distance_to_next_waypoint(_current_latitude, _current_longitude, _hdg_hold_curr_wp.lat,
-						_hdg_hold_curr_wp.lon);
-
-				if (dist < HDG_HOLD_REACHED_DIST) {
-					get_waypoint_heading_distance(_hdg_hold_yaw, _hdg_hold_prev_wp, _hdg_hold_curr_wp, false);
-				}
-
-				Vector2f prev_wp{(float)_hdg_hold_prev_wp.lat, (float)_hdg_hold_prev_wp.lon};
-				Vector2f curr_wp{(float)_hdg_hold_curr_wp.lat, (float)_hdg_hold_curr_wp.lon};
-
-				/* populate l1 control setpoint */
-				_l1_control.navigate_waypoints(prev_wp, curr_wp, curr_pos, ground_speed);
-
-				_att_sp.roll_body = _l1_control.get_roll_setpoint();
-				_att_sp.yaw_body = _l1_control.nav_bearing();
-
-				if (in_takeoff_situation()) {
-					/* limit roll motion to ensure enough lift */
-					_att_sp.roll_body = constrain(_att_sp.roll_body, radians(-15.0f), radians(15.0f));
-				}
-			}
-		}
-
-		if (!_yaw_lock_engaged || fabsf(_manual_control_setpoint.y) >= HDG_HOLD_MAN_INPUT_THRESH ||
-		    fabsf(_manual_control_setpoint.r) >= HDG_HOLD_MAN_INPUT_THRESH) {
-
-			_hdg_hold_enabled = false;
-			_yaw_lock_engaged = false;
-			_att_sp.roll_body = _manual_control_setpoint.y * radians(_param_fw_man_r_max.get());
-			_att_sp.yaw_body = 0;
-		}
-
-	} else if (_control_mode.flag_control_altitude_enabled) {
-		/* ALTITUDE CONTROL: pitch stick moves altitude setpoint, throttle stick sets airspeed */
-
-		if (_control_mode_current != FW_POSCTRL_MODE_POSITION && _control_mode_current != FW_POSCTRL_MODE_ALTITUDE) {
-			/* Need to init because last loop iteration was in a different mode */
-			_hold_alt = _current_altitude;
-		}
-
-		_control_mode_current = FW_POSCTRL_MODE_ALTITUDE;
-
-		/* Get demanded airspeed */
-		float altctrl_airspeed = get_demanded_airspeed();
-
-		/* update desired altitude based on user pitch stick input */
-		bool climbout_requested = update_desired_altitude(dt);
-
-		// if we assume that user is taking off then help by demanding altitude setpoint well above ground
-		// and set limit to pitch angle to prevent steering into ground
-		// this will only affect planes and not VTOL
-		float pitch_limit_min = _param_fw_p_lim_min.get();
-		do_takeoff_help(&_hold_alt, &pitch_limit_min);
-
-		/* throttle limiting */
-		throttle_max = _param_fw_thr_max.get();
-
-		if (_vehicle_land_detected.landed && (fabsf(_manual_control_setpoint.z) < THROTTLE_THRESH)) {
-			throttle_max = 0.0f;
-		}
-
-		tecs_update_pitch_throttle(now, _hold_alt,
-					   altctrl_airspeed,
-					   radians(_param_fw_p_lim_min.get()),
-					   radians(_param_fw_p_lim_max.get()),
-					   _param_fw_thr_min.get(),
-					   throttle_max,
-					   _param_fw_thr_cruise.get(),
-					   climbout_requested,
-					   climbout_requested ? radians(10.0f) : pitch_limit_min,
-					   tecs_status_s::TECS_MODE_NORMAL);
-
-		_att_sp.roll_body = _manual_control_setpoint.y * radians(_param_fw_man_r_max.get());
-		_att_sp.yaw_body = 0;
+		_control_mode_current = FW_POSCTRL_MODE_MANUAL_ALTITUDE;
 
 	} else {
 		_control_mode_current = FW_POSCTRL_MODE_OTHER;
-
-		/* do not publish the setpoint */
-		setpoint = false;
-
-		// reset hold altitude
-		_hold_alt = _current_altitude;
-
-		/* reset landing and takeoff state */
-		if (!_last_manual) {
-			reset_landing_state();
-			reset_takeoff_state();
-		}
 	}
-
-	/* Copy thrust output for publication */
-	if (_control_mode_current == FW_POSCTRL_MODE_AUTO && // launchdetector only available in auto
-	    pos_sp_curr.type == position_setpoint_s::SETPOINT_TYPE_TAKEOFF &&
-	    _launch_detection_state != LAUNCHDETECTION_RES_DETECTED_ENABLEMOTORS &&
-	    !_runway_takeoff.runwayTakeoffEnabled()) {
-
-		/* making sure again that the correct thrust is used,
-		 * without depending on library calls for safety reasons.
-		   the pre-takeoff throttle and the idle throttle normally map to the same parameter. */
-		_att_sp.thrust_body[0] = _param_fw_thr_idle.get();
-
-	} else if (_control_mode_current == FW_POSCTRL_MODE_AUTO &&
-		   pos_sp_curr.type == position_setpoint_s::SETPOINT_TYPE_TAKEOFF &&
-		   _runway_takeoff.runwayTakeoffEnabled()) {
-
-		_att_sp.thrust_body[0] = _runway_takeoff.getThrottle(now, min(get_tecs_thrust(), throttle_max));
-
-	} else if (_control_mode_current == FW_POSCTRL_MODE_AUTO &&
-		   pos_sp_curr.type == position_setpoint_s::SETPOINT_TYPE_IDLE) {
-
-		_att_sp.thrust_body[0] = 0.0f;
-
-	} else if (_control_mode_current == FW_POSCTRL_MODE_OTHER) {
-		_att_sp.thrust_body[0] = min(_att_sp.thrust_body[0], _param_fw_thr_max.get());
-
-	} else {
-		/* Copy thrust and pitch values from tecs */
-		if (_vehicle_land_detected.landed) {
-			// when we are landed state we want the motor to spin at idle speed
-			_att_sp.thrust_body[0] = min(_param_fw_thr_idle.get(), throttle_max);
-
-		} else {
-			_att_sp.thrust_body[0] = min(get_tecs_thrust(), throttle_max);
-		}
-	}
-
-	// decide when to use pitch setpoint from TECS because in some cases pitch
-	// setpoint is generated by other means
-	bool use_tecs_pitch = true;
-
-	// auto runway takeoff
-	use_tecs_pitch &= !(_control_mode_current == FW_POSCTRL_MODE_AUTO &&
-			    pos_sp_curr.type == position_setpoint_s::SETPOINT_TYPE_TAKEOFF &&
-			    (_launch_detection_state == LAUNCHDETECTION_RES_NONE || _runway_takeoff.runwayTakeoffEnabled()));
-
-	// flaring during landing
-	use_tecs_pitch &= !(pos_sp_curr.type == position_setpoint_s::SETPOINT_TYPE_LAND && _land_noreturn_vertical);
-
-	// manual attitude control
-	use_tecs_pitch &= !(_control_mode_current == FW_POSCTRL_MODE_OTHER);
-
-	if (use_tecs_pitch) {
-		_att_sp.pitch_body = get_tecs_pitch();
-	}
-
-	if (_control_mode.flag_control_position_enabled) {
-		_last_manual = false;
-
-	} else {
-		_last_manual = true;
-	}
-
-	return setpoint;
 }
 
 void
-FixedwingPositionControl::control_takeoff(const hrt_abstime &now, const Vector2f &curr_pos,
+FixedwingPositionControl::update_in_air_states(const hrt_abstime now)
+{
+	/* save time when airplane is in air */
+	if (!_was_in_air && !_landed) {
+		_was_in_air = true;
+		_time_went_in_air = now;
+		_takeoff_ground_alt = _current_altitude; // XXX: is this really a good idea?
+	}
+
+	/* reset flag when airplane landed */
+	if (_landed) {
+		_was_in_air = false;
+	}
+}
+
+void
+FixedwingPositionControl::move_position_setpoint_for_vtol_transition(position_setpoint_s &current_sp)
+{
+	// TODO: velocity, altitude, or just a heading hold position mode should be used for this, not position
+	// shifting hacks
+
+	if (_vehicle_status.in_transition_to_fw) {
+
+		if (!PX4_ISFINITE(_transition_waypoint(0))) {
+			double lat_transition, lon_transition;
+			// create a virtual waypoint HDG_HOLD_DIST_NEXT meters in front of the vehicle which the L1 controller can track
+			// during the transition
+			waypoint_from_heading_and_distance(_current_latitude, _current_longitude, _yaw, HDG_HOLD_DIST_NEXT, &lat_transition,
+							   &lon_transition);
+
+			_transition_waypoint(0) = lat_transition;
+			_transition_waypoint(1) = lon_transition;
+		}
+
+
+		current_sp.lat = _transition_waypoint(0);
+		current_sp.lon = _transition_waypoint(1);
+
+	} else {
+		/* reset transition waypoint, will be set upon entering front transition */
+		_transition_waypoint(0) = static_cast<double>(NAN);
+		_transition_waypoint(1) = static_cast<double>(NAN);
+	}
+}
+
+void
+FixedwingPositionControl::control_auto(const float control_interval, const Vector2d &curr_pos,
+				       const Vector2f &ground_speed, const position_setpoint_s &pos_sp_prev, const position_setpoint_s &pos_sp_curr,
+				       const position_setpoint_s &pos_sp_next)
+{
+	position_setpoint_s current_sp = pos_sp_curr;
+	move_position_setpoint_for_vtol_transition(current_sp);
+
+	const uint8_t position_sp_type = handle_setpoint_type(current_sp);
+
+	_position_sp_type = position_sp_type;
+
+	if (position_sp_type == position_setpoint_s::SETPOINT_TYPE_LOITER
+	    || current_sp.type == position_setpoint_s::SETPOINT_TYPE_LOITER) {
+		publishOrbitStatus(current_sp);
+	}
+
+	const bool was_circle_mode = (_param_fw_use_npfg.get()) ? _npfg.circleMode() : _l1_control.circle_mode();
+
+	switch (position_sp_type) {
+	case position_setpoint_s::SETPOINT_TYPE_IDLE:
+		_att_sp.thrust_body[0] = 0.0f;
+		_att_sp.roll_body = 0.0f;
+		_att_sp.pitch_body = radians(_param_fw_psp_off.get());
+		_att_sp.apply_flaps = vehicle_attitude_setpoint_s::FLAPS_OFF;
+		_att_sp.apply_spoilers = vehicle_attitude_setpoint_s::SPOILERS_OFF;
+
+		break;
+
+	case position_setpoint_s::SETPOINT_TYPE_POSITION:
+		control_auto_position(control_interval, curr_pos, ground_speed, pos_sp_prev, current_sp);
+		break;
+
+	case position_setpoint_s::SETPOINT_TYPE_VELOCITY:
+		control_auto_velocity(control_interval, curr_pos, ground_speed, current_sp);
+		break;
+
+	case position_setpoint_s::SETPOINT_TYPE_LOITER:
+		control_auto_loiter(control_interval, curr_pos, ground_speed, pos_sp_prev, current_sp, pos_sp_next);
+		break;
+	}
+
+	if (was_circle_mode && !_l1_control.circle_mode()) {
+		/* just kicked out of loiter, reset roll integrals */
+		_att_sp.roll_reset_integral = true;
+	}
+
+	/* Copy thrust output for publication, handle special cases */
+	if (position_sp_type == position_setpoint_s::SETPOINT_TYPE_IDLE) {
+
+		_att_sp.thrust_body[0] = 0.0f;
+
+	} else {
+		// when we are landed state we want the motor to spin at idle speed
+		_att_sp.thrust_body[0] = (_landed) ? min(_param_fw_thr_idle.get(), 1.f) : get_tecs_thrust();
+	}
+
+	/* Copy thrust and pitch values from tecs */
+	_att_sp.pitch_body = get_tecs_pitch();
+
+	if (!_vehicle_status.in_transition_to_fw) {
+		publishLocalPositionSetpoint(current_sp);
+	}
+}
+
+void
+FixedwingPositionControl::control_auto_fixed_bank_alt_hold(const float control_interval)
+{
+	// only control altitude and airspeed ("fixed-bank loiter")
+
+	tecs_update_pitch_throttle(control_interval,
+				   _current_altitude,
+				   _param_fw_airspd_trim.get(),
+				   radians(_param_fw_p_lim_min.get()),
+				   radians(_param_fw_p_lim_max.get()),
+				   _param_fw_thr_min.get(),
+				   _param_fw_thr_max.get(),
+				   _param_fw_thr_cruise.get(),
+				   false,
+				   _param_fw_p_lim_min.get());
+
+	_att_sp.roll_body = math::radians(_param_nav_gpsf_r.get()); // open loop loiter bank angle
+	_att_sp.yaw_body = 0.f;
+
+	if (_landed) {
+		_att_sp.thrust_body[0] = _param_fw_thr_min.get();
+
+	} else {
+		_att_sp.thrust_body[0] = min(get_tecs_thrust(), _param_fw_thr_max.get());
+	}
+
+	_att_sp.pitch_body = get_tecs_pitch();
+
+	_att_sp.apply_flaps = vehicle_attitude_setpoint_s::FLAPS_OFF;
+	_att_sp.apply_spoilers = vehicle_attitude_setpoint_s::SPOILERS_OFF;
+}
+
+void
+FixedwingPositionControl::control_auto_descend(const float control_interval)
+{
+	// Hard-code descend rate to 0.5m/s. This is a compromise to give the system to recover,
+	// but not letting it drift too far away.
+	const float descend_rate = -0.5f;
+
+	tecs_update_pitch_throttle(control_interval,
+				   _current_altitude,
+				   _param_fw_airspd_trim.get(),
+				   radians(_param_fw_p_lim_min.get()),
+				   radians(_param_fw_p_lim_max.get()),
+				   _param_fw_thr_min.get(),
+				   _param_fw_thr_max.get(),
+				   _param_fw_thr_cruise.get(),
+				   false,
+				   _param_fw_p_lim_min.get(),
+				   false,
+				   descend_rate);
+
+	_att_sp.roll_body = math::radians(_param_nav_gpsf_r.get()); // open loop loiter bank angle
+	_att_sp.yaw_body = 0.f;
+
+	_att_sp.thrust_body[0] = (_landed) ? _param_fw_thr_min.get() : min(get_tecs_thrust(), _param_fw_thr_max.get());
+	_att_sp.pitch_body = get_tecs_pitch();
+
+	_att_sp.apply_flaps = vehicle_attitude_setpoint_s::FLAPS_OFF;
+	_att_sp.apply_spoilers = vehicle_attitude_setpoint_s::SPOILERS_OFF;
+}
+
+uint8_t
+FixedwingPositionControl::handle_setpoint_type(const position_setpoint_s &pos_sp_curr)
+{
+	uint8_t position_sp_type = pos_sp_curr.type;
+
+	if (!_control_mode.flag_control_position_enabled && _control_mode.flag_control_velocity_enabled) {
+		return position_setpoint_s::SETPOINT_TYPE_VELOCITY;
+	}
+
+	Vector2d curr_wp{0, 0};
+
+	/* current waypoint (the one currently heading for) */
+	curr_wp = Vector2d(pos_sp_curr.lat, pos_sp_curr.lon);
+
+	const float acc_rad = (_param_fw_use_npfg.get()) ? _npfg.switchDistance(500.0f) : _l1_control.switch_distance(500.0f);
+
+	if (pos_sp_curr.type == position_setpoint_s::SETPOINT_TYPE_POSITION
+	    || pos_sp_curr.type == position_setpoint_s::SETPOINT_TYPE_LOITER) {
+
+		float dist_xy = -1.f;
+		float dist_z = -1.f;
+
+		const float dist = get_distance_to_point_global_wgs84(
+					   (double)curr_wp(0), (double)curr_wp(1), pos_sp_curr.alt,
+					   _current_latitude, _current_longitude, _current_altitude,
+					   &dist_xy, &dist_z);
+
+		float loiter_radius_abs = fabsf(_param_nav_loiter_rad.get());
+
+		if (fabsf(pos_sp_curr.loiter_radius) > FLT_EPSILON) {
+			loiter_radius_abs = fabsf(pos_sp_curr.loiter_radius);
+		}
+
+		if (pos_sp_curr.type == position_setpoint_s::SETPOINT_TYPE_POSITION) {
+			// POSITION: achieve position setpoint altitude via loiter
+			// close to waypoint, but altitude error greater than twice acceptance
+			if ((!_vehicle_status.in_transition_mode) && (dist >= 0.f)
+			    && (dist_z > _param_nav_fw_alt_rad.get())
+			    && (dist_xy < 2.f * math::max(acc_rad, loiter_radius_abs))) {
+				// SETPOINT_TYPE_POSITION -> SETPOINT_TYPE_LOITER
+				position_sp_type = position_setpoint_s::SETPOINT_TYPE_LOITER;
+			}
+
+		} else if (pos_sp_curr.type == position_setpoint_s::SETPOINT_TYPE_LOITER) {
+			// LOITER: use SETPOINT_TYPE_POSITION to get to SETPOINT_TYPE_LOITER (NPFG handles this internally)
+			if ((dist >= 0.f)
+			    && (dist_xy > 2.f * math::max(acc_rad, loiter_radius_abs))
+			    && !_param_fw_use_npfg.get()) {
+				// SETPOINT_TYPE_LOITER -> SETPOINT_TYPE_POSITION
+				position_sp_type = position_setpoint_s::SETPOINT_TYPE_POSITION;
+			}
+		}
+	}
+
+	return position_sp_type;
+}
+
+void
+FixedwingPositionControl::control_auto_position(const float control_interval, const Vector2d &curr_pos,
 		const Vector2f &ground_speed, const position_setpoint_s &pos_sp_prev, const position_setpoint_s &pos_sp_curr)
 {
+	const float acc_rad = (_param_fw_use_npfg.get()) ? _npfg.switchDistance(500.0f) : _l1_control.switch_distance(500.0f);
+	Vector2d curr_wp{0, 0};
+	Vector2d prev_wp{0, 0};
+
 	/* current waypoint (the one currently heading for) */
-	Vector2f curr_wp((float)pos_sp_curr.lat, (float)pos_sp_curr.lon);
-	Vector2f prev_wp{0.0f, 0.0f}; /* previous waypoint */
+	curr_wp = Vector2d(pos_sp_curr.lat, pos_sp_curr.lon);
 
 	if (pos_sp_prev.valid) {
-		prev_wp(0) = (float)pos_sp_prev.lat;
-		prev_wp(1) = (float)pos_sp_prev.lon;
+		prev_wp(0) = pos_sp_prev.lat;
+		prev_wp(1) = pos_sp_prev.lon;
+
+	} else {
+		/*
+			* No valid previous waypoint, go for the current wp.
+			* This is automatically handled by the L1 library.
+			*/
+		prev_wp(0) = pos_sp_curr.lat;
+		prev_wp(1) = pos_sp_curr.lon;
+	}
+
+	float tecs_fw_thr_min;
+	float tecs_fw_thr_max;
+	float tecs_fw_mission_throttle;
+
+	float mission_throttle = _param_fw_thr_cruise.get();
+
+	if (PX4_ISFINITE(pos_sp_curr.cruising_throttle) &&
+	    pos_sp_curr.cruising_throttle >= 0.0f) {
+		mission_throttle = pos_sp_curr.cruising_throttle;
+	}
+
+	if (mission_throttle < _param_fw_thr_min.get()) {
+		/* enable gliding with this waypoint */
+		_tecs.set_speed_weight(2.0f);
+		tecs_fw_thr_min = 0.0;
+		tecs_fw_thr_max = 0.0;
+		tecs_fw_mission_throttle = 0.0;
+
+	} else {
+		tecs_fw_thr_min = _param_fw_thr_min.get();
+		tecs_fw_thr_max = _param_fw_thr_max.get();
+		tecs_fw_mission_throttle = mission_throttle;
+	}
+
+	// waypoint is a plain navigation waypoint
+	float position_sp_alt = pos_sp_curr.alt;
+
+	// Altitude first order hold (FOH)
+	if (pos_sp_prev.valid && PX4_ISFINITE(pos_sp_prev.alt) &&
+	    ((pos_sp_prev.type == position_setpoint_s::SETPOINT_TYPE_POSITION) ||
+	     (pos_sp_prev.type == position_setpoint_s::SETPOINT_TYPE_LOITER))
+	   ) {
+		const float d_curr_prev = get_distance_to_next_waypoint((double)curr_wp(0), (double)curr_wp(1),
+					  pos_sp_prev.lat, pos_sp_prev.lon);
+
+		// Do not try to find a solution if the last waypoint is inside the acceptance radius of the current one
+		if (d_curr_prev > math::max(acc_rad, fabsf(pos_sp_curr.loiter_radius))) {
+			// Calculate distance to current waypoint
+			const float d_curr = get_distance_to_next_waypoint((double)curr_wp(0), (double)curr_wp(1),
+					     _current_latitude, _current_longitude);
+
+			// Save distance to waypoint if it is the smallest ever achieved, however make sure that
+			// _min_current_sp_distance_xy is never larger than the distance between the current and the previous wp
+			_min_current_sp_distance_xy = math::min(d_curr, _min_current_sp_distance_xy, d_curr_prev);
+
+			// if the minimal distance is smaller than the acceptance radius, we should be at waypoint alt
+			// navigator will soon switch to the next waypoint item (if there is one) as soon as we reach this altitude
+			if (_min_current_sp_distance_xy > math::max(acc_rad, fabsf(pos_sp_curr.loiter_radius))) {
+				// The setpoint is set linearly and such that the system reaches the current altitude at the acceptance
+				// radius around the current waypoint
+				const float delta_alt = (pos_sp_curr.alt - pos_sp_prev.alt);
+				const float grad = -delta_alt / (d_curr_prev - math::max(acc_rad, fabsf(pos_sp_curr.loiter_radius)));
+				const float a = pos_sp_prev.alt - grad * d_curr_prev;
+
+				position_sp_alt = a + grad * _min_current_sp_distance_xy;
+			}
+		}
+	}
+
+	float target_airspeed = get_auto_airspeed_setpoint(control_interval, pos_sp_curr.cruising_speed, ground_speed);
+
+	Vector2f curr_pos_local{_local_pos.x, _local_pos.y};
+	Vector2f curr_wp_local = _global_local_proj_ref.project(curr_wp(0), curr_wp(1));
+	Vector2f prev_wp_local = _global_local_proj_ref.project(prev_wp(0), prev_wp(1));
+
+	if (_param_fw_use_npfg.get()) {
+		_npfg.setAirspeedNom(target_airspeed * _eas2tas);
+		_npfg.setAirspeedMax(_param_fw_airspd_max.get() * _eas2tas);
+
+		if (_control_mode.flag_control_offboard_enabled && PX4_ISFINITE(pos_sp_curr.vx) && PX4_ISFINITE(pos_sp_curr.vy)) {
+			// Navigate directly on position setpoint and path tangent
+			matrix::Vector2f velocity_2d(pos_sp_curr.vx, pos_sp_curr.vy);
+			float curvature = PX4_ISFINITE(_pos_sp_triplet.current.loiter_radius) ? 1 / _pos_sp_triplet.current.loiter_radius :
+					  0.0f;
+			_npfg.navigatePathTangent(curr_pos_local, curr_wp_local, velocity_2d.normalized(), get_nav_speed_2d(ground_speed),
+						  _wind_vel, curvature);
+
+		} else {
+			_npfg.navigateWaypoints(prev_wp_local, curr_wp_local, curr_pos_local, get_nav_speed_2d(ground_speed), _wind_vel);
+		}
+
+		_att_sp.roll_body = _npfg.getRollSetpoint();
+		target_airspeed = _npfg.getAirspeedRef() / _eas2tas;
+
+	} else {
+		_l1_control.navigate_waypoints(prev_wp_local, curr_wp_local, curr_pos_local, get_nav_speed_2d(ground_speed));
+		_att_sp.roll_body = _l1_control.get_roll_setpoint();
+	}
+
+	_att_sp.yaw_body = _yaw; // yaw is not controlled, so set setpoint to current yaw
+
+	_att_sp.apply_flaps = vehicle_attitude_setpoint_s::FLAPS_OFF;
+	_att_sp.apply_spoilers = vehicle_attitude_setpoint_s::SPOILERS_OFF;
+
+	tecs_update_pitch_throttle(control_interval,
+				   position_sp_alt,
+				   target_airspeed,
+				   radians(_param_fw_p_lim_min.get()),
+				   radians(_param_fw_p_lim_max.get()),
+				   tecs_fw_thr_min,
+				   tecs_fw_thr_max,
+				   tecs_fw_mission_throttle,
+				   false,
+				   radians(_param_fw_p_lim_min.get()));
+}
+
+void
+FixedwingPositionControl::control_auto_velocity(const float control_interval, const Vector2d &curr_pos,
+		const Vector2f &ground_speed, const position_setpoint_s &pos_sp_curr)
+{
+	float tecs_fw_thr_min;
+	float tecs_fw_thr_max;
+	float tecs_fw_mission_throttle;
+
+	float mission_throttle = _param_fw_thr_cruise.get();
+
+	if (PX4_ISFINITE(pos_sp_curr.cruising_throttle) &&
+	    pos_sp_curr.cruising_throttle >= 0.0f) {
+		mission_throttle = pos_sp_curr.cruising_throttle;
+	}
+
+	if (mission_throttle < _param_fw_thr_min.get()) {
+		/* enable gliding with this waypoint */
+		_tecs.set_speed_weight(2.0f);
+		tecs_fw_thr_min = 0.0;
+		tecs_fw_thr_max = 0.0;
+		tecs_fw_mission_throttle = 0.0;
+
+	} else {
+		tecs_fw_thr_min = _param_fw_thr_min.get();
+		tecs_fw_thr_max = _param_fw_thr_max.get();
+		tecs_fw_mission_throttle = mission_throttle;
+	}
+
+	// waypoint is a plain navigation waypoint
+	float position_sp_alt = pos_sp_curr.alt;
+
+
+	//Offboard velocity control
+	Vector2f target_velocity{pos_sp_curr.vx, pos_sp_curr.vy};
+	_target_bearing = wrap_pi(atan2f(target_velocity(1), target_velocity(0)));
+
+	float target_airspeed = get_auto_airspeed_setpoint(control_interval, pos_sp_curr.cruising_speed, ground_speed);
+
+	if (_param_fw_use_npfg.get()) {
+		_npfg.setAirspeedNom(target_airspeed * _eas2tas);
+		_npfg.setAirspeedMax(_param_fw_airspd_max.get() * _eas2tas);
+		_npfg.navigateBearing(_target_bearing, ground_speed, _wind_vel);
+		_att_sp.roll_body = _npfg.getRollSetpoint();
+		target_airspeed = _npfg.getAirspeedRef() / _eas2tas;
+
+	} else {
+		_l1_control.navigate_heading(_target_bearing, _yaw, ground_speed);
+		_att_sp.roll_body = _l1_control.get_roll_setpoint();
+	}
+
+	_att_sp.yaw_body = _yaw;
+
+	_att_sp.apply_flaps = vehicle_attitude_setpoint_s::FLAPS_OFF;
+	_att_sp.apply_spoilers = vehicle_attitude_setpoint_s::SPOILERS_OFF;
+
+	tecs_update_pitch_throttle(control_interval,
+				   position_sp_alt,
+				   target_airspeed,
+				   radians(_param_fw_p_lim_min.get()),
+				   radians(_param_fw_p_lim_max.get()),
+				   tecs_fw_thr_min,
+				   tecs_fw_thr_max,
+				   tecs_fw_mission_throttle,
+				   false,
+				   radians(_param_fw_p_lim_min.get()),
+				   tecs_status_s::TECS_MODE_NORMAL,
+				   pos_sp_curr.vz);
+}
+
+void
+FixedwingPositionControl::control_auto_loiter(const float control_interval, const Vector2d &curr_pos,
+		const Vector2f &ground_speed, const position_setpoint_s &pos_sp_prev, const position_setpoint_s &pos_sp_curr,
+		const position_setpoint_s &pos_sp_next)
+{
+	Vector2d curr_wp{0, 0};
+	Vector2d prev_wp{0, 0};
+
+	/* current waypoint (the one currently heading for) */
+	curr_wp = Vector2d(pos_sp_curr.lat, pos_sp_curr.lon);
+
+	if (pos_sp_prev.valid) {
+		prev_wp(0) = pos_sp_prev.lat;
+		prev_wp(1) = pos_sp_prev.lon;
+
+	} else {
+		/*
+			* No valid previous waypoint, go for the current wp.
+			* This is automatically handled by the L1 library.
+			*/
+		prev_wp(0) = pos_sp_curr.lat;
+		prev_wp(1) = pos_sp_curr.lon;
+	}
+
+	float airspeed_sp = -1.f;
+
+	if (PX4_ISFINITE(pos_sp_curr.cruising_speed) &&
+	    pos_sp_curr.cruising_speed > FLT_EPSILON) {
+
+		airspeed_sp = pos_sp_curr.cruising_speed;
+	}
+
+	float tecs_fw_thr_min;
+	float tecs_fw_thr_max;
+	float tecs_fw_mission_throttle;
+
+	float mission_throttle = _param_fw_thr_cruise.get();
+
+	if (PX4_ISFINITE(pos_sp_curr.cruising_throttle) &&
+	    pos_sp_curr.cruising_throttle >= 0.0f) {
+		mission_throttle = pos_sp_curr.cruising_throttle;
+	}
+
+	if (mission_throttle < _param_fw_thr_min.get()) {
+		/* enable gliding with this waypoint */
+		_tecs.set_speed_weight(2.0f);
+		tecs_fw_thr_min = 0.0;
+		tecs_fw_thr_max = 0.0;
+		tecs_fw_mission_throttle = 0.0;
+
+	} else {
+		tecs_fw_thr_min = _param_fw_thr_min.get();
+		tecs_fw_thr_max = _param_fw_thr_max.get();
+		tecs_fw_mission_throttle = mission_throttle;
+	}
+
+	/* waypoint is a loiter waypoint */
+	float loiter_radius = pos_sp_curr.loiter_radius;
+	uint8_t loiter_direction = pos_sp_curr.loiter_direction;
+
+	if (fabsf(pos_sp_curr.loiter_radius) < FLT_EPSILON) {
+		loiter_radius = _param_nav_loiter_rad.get();
+		loiter_direction = signNoZero(loiter_radius);
+	}
+
+	const bool in_circle_mode = (_param_fw_use_npfg.get()) ? _npfg.circleMode() : _l1_control.circle_mode();
+
+	if (pos_sp_next.type == position_setpoint_s::SETPOINT_TYPE_LAND && pos_sp_next.valid
+	    && in_circle_mode && _param_fw_lnd_earlycfg.get()) {
+		// We're in a loiter directly before a landing WP. Enable our landing configuration (flaps,
+		// landing airspeed and potentially tighter altitude control) already such that we don't
+		// have to do this switch (which can cause significant altitude errors) close to the ground.
+		_tecs.set_height_error_time_constant(_param_fw_thrtc_sc.get() * _param_fw_t_h_error_tc.get());
+		airspeed_sp = _param_fw_lnd_airspd_sc.get() * _param_fw_airspd_min.get();
+		_att_sp.apply_flaps = vehicle_attitude_setpoint_s::FLAPS_LAND;
+		_att_sp.apply_spoilers = vehicle_attitude_setpoint_s::SPOILERS_LAND;
+
+	} else {
+		_att_sp.apply_flaps = vehicle_attitude_setpoint_s::FLAPS_OFF;
+		_att_sp.apply_spoilers = vehicle_attitude_setpoint_s::SPOILERS_OFF;
+	}
+
+	float target_airspeed = get_auto_airspeed_setpoint(control_interval, airspeed_sp, ground_speed);
+
+	Vector2f curr_pos_local{_local_pos.x, _local_pos.y};
+	Vector2f curr_wp_local = _global_local_proj_ref.project(curr_wp(0), curr_wp(1));
+
+	if (_param_fw_use_npfg.get()) {
+		_npfg.setAirspeedNom(target_airspeed * _eas2tas);
+		_npfg.setAirspeedMax(_param_fw_airspd_max.get() * _eas2tas);
+		_npfg.navigateLoiter(curr_wp_local, curr_pos_local, loiter_radius, loiter_direction, get_nav_speed_2d(ground_speed),
+				     _wind_vel);
+		_att_sp.roll_body = _npfg.getRollSetpoint();
+		target_airspeed = _npfg.getAirspeedRef() / _eas2tas;
+
+	} else {
+		_l1_control.navigate_loiter(curr_wp_local, curr_pos_local, loiter_radius, loiter_direction,
+					    get_nav_speed_2d(ground_speed));
+		_att_sp.roll_body = _l1_control.get_roll_setpoint();
+	}
+
+	_att_sp.yaw_body = _yaw; // yaw is not controlled, so set setpoint to current yaw
+
+	float alt_sp = pos_sp_curr.alt;
+
+	if (in_takeoff_situation()) {
+		alt_sp = max(alt_sp, _takeoff_ground_alt + _param_fw_clmbout_diff.get());
+		_att_sp.roll_body = constrain(_att_sp.roll_body, radians(-5.0f), radians(5.0f));
+	}
+
+	if (_land_abort) {
+		if (pos_sp_curr.alt - _current_altitude  < _param_fw_clmbout_diff.get()) {
+			// aborted landing complete, normal loiter over landing point
+			abort_landing(false);
+
+		} else {
+			// continue straight until vehicle has sufficient altitude
+			_att_sp.roll_body = 0.0f;
+		}
+
+		_tecs.set_height_error_time_constant(_param_fw_thrtc_sc.get() * _param_fw_t_h_error_tc.get());
+	}
+
+	tecs_update_pitch_throttle(control_interval,
+				   alt_sp,
+				   target_airspeed,
+				   radians(_param_fw_p_lim_min.get()),
+				   radians(_param_fw_p_lim_max.get()),
+				   tecs_fw_thr_min,
+				   tecs_fw_thr_max,
+				   tecs_fw_mission_throttle,
+				   false,
+				   radians(_param_fw_p_lim_min.get()));
+}
+
+void
+FixedwingPositionControl::control_auto_takeoff(const hrt_abstime &now, const float control_interval,
+		const Vector2d &curr_pos, const Vector2f &ground_speed, const position_setpoint_s &pos_sp_prev,
+		const position_setpoint_s &pos_sp_curr)
+{
+	/* current waypoint (the one currently heading for) */
+	Vector2d curr_wp(pos_sp_curr.lat, pos_sp_curr.lon);
+	Vector2d prev_wp{0, 0}; /* previous waypoint */
+	Vector2f curr_pos_local{_local_pos.x, _local_pos.y};
+	Vector2f curr_wp_local = _global_local_proj_ref.project(curr_wp(0), curr_wp(1));
+
+	if (pos_sp_prev.valid) {
+		prev_wp(0) = pos_sp_prev.lat;
+		prev_wp(1) = pos_sp_prev.lon;
 
 	} else {
 		/*
 		 * No valid previous waypoint, go for the current wp.
 		 * This is automatically handled by the L1 library.
 		 */
-		prev_wp(0) = (float)pos_sp_curr.lat;
-		prev_wp(1) = (float)pos_sp_curr.lon;
+		prev_wp(0) = pos_sp_curr.lat;
+		prev_wp(1) = pos_sp_curr.lon;
 	}
-
-	// apply flaps for takeoff according to the corresponding scale factor set
-	// via FW_FLAPS_TO_SCL
-	_att_sp.apply_flaps = vehicle_attitude_setpoint_s::FLAPS_TAKEOFF;
 
 	// continuously reset launch detection and runway takeoff until armed
 	if (!_control_mode.flag_armed) {
@@ -1077,14 +1425,14 @@ FixedwingPositionControl::control_takeoff(const hrt_abstime &now, const Vector2f
 
 	if (_runway_takeoff.runwayTakeoffEnabled()) {
 		if (!_runway_takeoff.isInitialized()) {
-			Eulerf euler(Quatf(_att.q));
-			_runway_takeoff.init(now, euler.psi(), _current_latitude, _current_longitude);
+			_runway_takeoff.init(now, _yaw, _current_latitude, _current_longitude);
 
 			/* need this already before takeoff is detected
 			 * doesn't matter if it gets reset when takeoff is detected eventually */
 			_takeoff_ground_alt = _current_altitude;
 
-			mavlink_log_info(&_mavlink_log_pub, "Takeoff on runway");
+			mavlink_log_info(&_mavlink_log_pub, "Takeoff on runway\t");
+			events::send(events::ID("fixedwing_position_control_takeoff"), events::Log::Info, "Takeoff on runway");
 		}
 
 		float terrain_alt = get_terrain_altitude_takeoff(_takeoff_ground_alt);
@@ -1093,35 +1441,58 @@ FixedwingPositionControl::control_takeoff(const hrt_abstime &now, const Vector2f
 		_runway_takeoff.update(now, _airspeed, _current_altitude - terrain_alt,
 				       _current_latitude, _current_longitude, &_mavlink_log_pub);
 
+		float target_airspeed = get_auto_airspeed_setpoint(control_interval,
+					_runway_takeoff.getMinAirspeedScaling() * _param_fw_airspd_min.get(), ground_speed);
+
 		/*
 		 * Update navigation: _runway_takeoff returns the start WP according to mode and phase.
 		 * If we use the navigator heading or not is decided later.
 		 */
-		_l1_control.navigate_waypoints(_runway_takeoff.getStartWP(), curr_wp, curr_pos, ground_speed);
+		Vector2f prev_wp_local = _global_local_proj_ref.project(_runway_takeoff.getStartWP()(0),
+					 _runway_takeoff.getStartWP()(1));
+
+		if (_param_fw_use_npfg.get()) {
+			_npfg.setAirspeedNom(target_airspeed * _eas2tas);
+			_npfg.setAirspeedMax(_param_fw_airspd_max.get() * _eas2tas);
+			// NOTE: current waypoint is passed twice to trigger the "point following" logic -- TODO: create
+			// point following navigation interface instead of this hack.
+			_npfg.navigateWaypoints(curr_wp_local, curr_wp_local, curr_pos_local, ground_speed, _wind_vel);
+			_att_sp.roll_body = _runway_takeoff.getRoll(_npfg.getRollSetpoint());
+			target_airspeed = _npfg.getAirspeedRef() / _eas2tas;
+
+		} else {
+			_l1_control.navigate_waypoints(prev_wp_local, curr_wp_local, curr_pos_local, ground_speed);
+			_att_sp.roll_body = _runway_takeoff.getRoll(_l1_control.get_roll_setpoint());
+		}
+
+		_att_sp.yaw_body = _runway_takeoff.getYaw(_yaw);
+
 
 		// update tecs
 		const float takeoff_pitch_max_deg = _runway_takeoff.getMaxPitch(_param_fw_p_lim_max.get());
 
-		tecs_update_pitch_throttle(now, pos_sp_curr.alt,
-					   calculate_target_airspeed(_runway_takeoff.getMinAirspeedScaling() * _param_fw_airspd_min.get(), ground_speed),
+		tecs_update_pitch_throttle(control_interval,
+					   pos_sp_curr.alt,
+					   target_airspeed,
 					   radians(_param_fw_p_lim_min.get()),
 					   radians(takeoff_pitch_max_deg),
 					   _param_fw_thr_min.get(),
 					   _param_fw_thr_max.get(), // XXX should we also set runway_takeoff_throttle here?
 					   _param_fw_thr_cruise.get(),
 					   _runway_takeoff.climbout(),
-					   radians(_runway_takeoff.getMinPitch(pos_sp_curr.pitch_min, 10.0f, _param_fw_p_lim_min.get())),
-					   tecs_status_s::TECS_MODE_TAKEOFF);
+					   radians(_runway_takeoff.getMinPitch(_takeoff_pitch_min.get(), _param_fw_p_lim_min.get())));
 
 		// assign values
-		_att_sp.roll_body = _runway_takeoff.getRoll(_l1_control.get_roll_setpoint());
-		_att_sp.yaw_body = _runway_takeoff.getYaw(_l1_control.nav_bearing());
 		_att_sp.fw_control_yaw = _runway_takeoff.controlYaw();
 		_att_sp.pitch_body = _runway_takeoff.getPitch(get_tecs_pitch());
 
 		// reset integrals except yaw (which also counts for the wheel controller)
 		_att_sp.roll_reset_integral = _runway_takeoff.resetIntegrators();
 		_att_sp.pitch_reset_integral = _runway_takeoff.resetIntegrators();
+
+		// apply flaps for takeoff according to the corresponding scale factor set via FW_FLAPS_TO_SCL
+		_att_sp.apply_flaps = vehicle_attitude_setpoint_s::FLAPS_TAKEOFF;
+		_att_sp.apply_spoilers = vehicle_attitude_setpoint_s::SPOILERS_OFF;
 
 	} else {
 		/* Perform launch detection */
@@ -1133,12 +1504,13 @@ FixedwingPositionControl::control_takeoff(const hrt_abstime &now, const Vector2f
 
 				/* Inform user that launchdetection is running every 4s */
 				if ((now - _launch_detection_notify) > 4_s) {
-					mavlink_log_critical(&_mavlink_log_pub, "Launch detection running");
+					mavlink_log_critical(&_mavlink_log_pub, "Launch detection running\t");
+					events::send(events::ID("fixedwing_position_control_launch_detection"), events::Log::Info, "Launch detection running");
 					_launch_detection_notify = now;
 				}
 
 				/* Detect launch using body X (forward) acceleration */
-				_launchDetector.update(now, _vehicle_acceleration_sub.get().xyz[0]);
+				_launchDetector.update(control_interval, _body_acceleration(0));
 
 				/* update our copy of the launch detection state */
 				_launch_detection_state = _launchDetector.getLaunchDetected();
@@ -1153,9 +1525,23 @@ FixedwingPositionControl::control_takeoff(const hrt_abstime &now, const Vector2f
 		if (_launch_detection_state != LAUNCHDETECTION_RES_NONE) {
 			/* Launch has been detected, hence we have to control the plane. */
 
-			_l1_control.navigate_waypoints(prev_wp, curr_wp, curr_pos, ground_speed);
-			_att_sp.roll_body = _l1_control.get_roll_setpoint();
-			_att_sp.yaw_body = _l1_control.nav_bearing();
+			float target_airspeed = get_auto_airspeed_setpoint(control_interval, _param_fw_airspd_trim.get(), ground_speed);
+
+			Vector2f prev_wp_local = _global_local_proj_ref.project(prev_wp(0), prev_wp(1));
+
+			if (_param_fw_use_npfg.get()) {
+				_npfg.setAirspeedNom(target_airspeed * _eas2tas);
+				_npfg.setAirspeedMax(_param_fw_airspd_max.get() * _eas2tas);
+				_npfg.navigateWaypoints(prev_wp_local, curr_wp_local, curr_pos_local, ground_speed, _wind_vel);
+				_att_sp.roll_body = _npfg.getRollSetpoint();
+				target_airspeed = _npfg.getAirspeedRef() / _eas2tas;
+
+			} else {
+				_l1_control.navigate_waypoints(prev_wp_local, curr_wp_local, curr_pos_local, ground_speed);
+				_att_sp.roll_body = _l1_control.get_roll_setpoint();
+			}
+
+			_att_sp.yaw_body = _yaw; // yaw is not controlled, so set setpoint to current yaw
 
 			/* Select throttle: only in LAUNCHDETECTION_RES_DETECTED_ENABLEMOTORS we want to use
 			 * full throttle, otherwise we use idle throttle */
@@ -1173,23 +1559,24 @@ FixedwingPositionControl::control_takeoff(const hrt_abstime &now, const Vector2f
 			/* apply minimum pitch and limit roll if target altitude is not within climbout_diff meters */
 			if (_param_fw_clmbout_diff.get() > 0.0f && altitude_error > _param_fw_clmbout_diff.get()) {
 				/* enforce a minimum of 10 degrees pitch up on takeoff, or take parameter */
-				tecs_update_pitch_throttle(now, pos_sp_curr.alt,
-							   _param_fw_airspd_trim.get(),
+				tecs_update_pitch_throttle(control_interval,
+							   pos_sp_curr.alt,
+							   target_airspeed,
 							   radians(_param_fw_p_lim_min.get()),
 							   radians(takeoff_pitch_max_deg),
 							   _param_fw_thr_min.get(),
 							   takeoff_throttle,
 							   _param_fw_thr_cruise.get(),
 							   true,
-							   max(radians(pos_sp_curr.pitch_min), radians(10.0f)),
-							   tecs_status_s::TECS_MODE_TAKEOFF);
+							   radians(_takeoff_pitch_min.get()));
 
 				/* limit roll motion to ensure enough lift */
 				_att_sp.roll_body = constrain(_att_sp.roll_body, radians(-15.0f), radians(15.0f));
 
 			} else {
-				tecs_update_pitch_throttle(now, pos_sp_curr.alt,
-							   calculate_target_airspeed(_param_fw_airspd_trim.get(), ground_speed),
+				tecs_update_pitch_throttle(control_interval,
+							   pos_sp_curr.alt,
+							   target_airspeed,
 							   radians(_param_fw_p_lim_min.get()),
 							   radians(_param_fw_p_lim_max.get()),
 							   _param_fw_thr_min.get(),
@@ -1208,38 +1595,64 @@ FixedwingPositionControl::control_takeoff(const hrt_abstime &now, const Vector2f
 
 			/* Set default roll and pitch setpoints during detection phase */
 			_att_sp.roll_body = 0.0f;
-			_att_sp.pitch_body = max(radians(pos_sp_curr.pitch_min), radians(10.0f));
+			_att_sp.pitch_body = radians(_takeoff_pitch_min.get());
 		}
+
+		_att_sp.apply_flaps = vehicle_attitude_setpoint_s::FLAPS_OFF;
+		_att_sp.apply_spoilers = vehicle_attitude_setpoint_s::SPOILERS_OFF;
+	}
+
+	if (_launch_detection_state != LAUNCHDETECTION_RES_DETECTED_ENABLEMOTORS && !_runway_takeoff.runwayTakeoffEnabled()) {
+
+		/* making sure again that the correct thrust is used,
+		 * without depending on library calls for safety reasons.
+		   the pre-takeoff throttle and the idle throttle normally map to the same parameter. */
+		_att_sp.thrust_body[0] = _param_fw_thr_idle.get();
+
+	} else if (_runway_takeoff.runwayTakeoffEnabled()) {
+
+		_att_sp.thrust_body[0] = _runway_takeoff.getThrottle(now, get_tecs_thrust());
+
+	} else {
+		/* Copy thrust and pitch values from tecs */
+		// when we are landed state we want the motor to spin at idle speed
+		_att_sp.thrust_body[0] = (_landed) ? min(_param_fw_thr_idle.get(), 1.f) : get_tecs_thrust();
+	}
+
+	// only use TECS pitch setpoint if launch has not been detected and runway takeoff is not enabled
+	if (!(_launch_detection_state == LAUNCHDETECTION_RES_NONE || _runway_takeoff.runwayTakeoffEnabled())) {
+		_att_sp.pitch_body = get_tecs_pitch();
+	}
+
+	if (!_vehicle_status.in_transition_to_fw) {
+		publishLocalPositionSetpoint(pos_sp_curr);
 	}
 }
 
 void
-FixedwingPositionControl::control_landing(const hrt_abstime &now, const Vector2f &curr_pos,
-		const Vector2f &ground_speed, const position_setpoint_s &pos_sp_prev, const position_setpoint_s &pos_sp_curr)
+FixedwingPositionControl::control_auto_landing(const hrt_abstime &now, const float control_interval,
+		const Vector2d &curr_pos, const Vector2f &ground_speed, const position_setpoint_s &pos_sp_prev,
+		const position_setpoint_s &pos_sp_curr)
 {
+	// Enable tighter altitude control for landings
+	_tecs.set_height_error_time_constant(_param_fw_thrtc_sc.get() * _param_fw_t_h_error_tc.get());
+
 	/* current waypoint (the one currently heading for) */
-	Vector2f curr_wp((float)pos_sp_curr.lat, (float)pos_sp_curr.lon);
-	Vector2f prev_wp{0.0f, 0.0f}; /* previous waypoint */
+	Vector2d curr_wp(pos_sp_curr.lat, pos_sp_curr.lon);
+	Vector2d prev_wp{0, 0}; /* previous waypoint */
 
 	if (pos_sp_prev.valid) {
-		prev_wp(0) = (float)pos_sp_prev.lat;
-		prev_wp(1) = (float)pos_sp_prev.lon;
+		prev_wp(0) = pos_sp_prev.lat;
+		prev_wp(1) = pos_sp_prev.lon;
 
 	} else {
 		/*
 		 * No valid previous waypoint, go for the current wp.
 		 * This is automatically handled by the L1 library.
 		 */
-		prev_wp(0) = (float)pos_sp_curr.lat;
-		prev_wp(1) = (float)pos_sp_curr.lon;
+		prev_wp(0) = pos_sp_curr.lat;
+		prev_wp(1) = pos_sp_curr.lon;
 	}
-
-	// apply full flaps for landings. this flag will also trigger the use of flaperons
-	// if they have been enabled using the corresponding parameter
-	_att_sp.apply_flaps = vehicle_attitude_setpoint_s::FLAPS_LAND;
-
-	// Enable tighter throttle control for landings
-	_tecs.set_time_const_throt(_param_fw_thrtc_sc.get() * _param_fw_t_thro_const.get());
 
 	// save time at which we started landing and reset abort_landing
 	if (_time_started_landing == 0) {
@@ -1280,9 +1693,14 @@ FixedwingPositionControl::control_landing(const hrt_abstime &now, const Vector2f
 		create_waypoint_from_line_and_dist(pos_sp_curr.lat, pos_sp_curr.lon,
 						   pos_sp_prev.lat, pos_sp_prev.lon, -1000.0f, &lat, &lon);
 
-		curr_wp(0) = (float)lat;
-		curr_wp(1) = (float)lon;
+		curr_wp(0) = lat;
+		curr_wp(1) = lon;
 	}
+
+	Vector2f curr_pos_local{_local_pos.x, _local_pos.y};
+	Vector2f curr_wp_local = _global_local_proj_ref.project(curr_wp(0), curr_wp(1));
+	Vector2f prev_wp_local = _global_local_proj_ref.project(prev_wp(0),
+				 prev_wp(1));
 
 	// we want the plane to keep tracking the desired flight path until we start flaring
 	// if we go into heading hold mode earlier then we risk to be pushed away from the runway by cross winds
@@ -1298,24 +1716,8 @@ FixedwingPositionControl::control_landing(const hrt_abstime &now, const Vector2f
 		}
 
 		_land_noreturn_horizontal = true;
-		mavlink_log_info(&_mavlink_log_pub, "Landing, heading hold");
-	}
-
-	if (_land_noreturn_horizontal) {
-		// heading hold
-		_l1_control.navigate_heading(_target_bearing, _yaw, ground_speed);
-
-	} else {
-		// normal navigation
-		_l1_control.navigate_waypoints(prev_wp, curr_wp, curr_pos, ground_speed);
-	}
-
-	_att_sp.roll_body = _l1_control.get_roll_setpoint();
-	_att_sp.yaw_body = _l1_control.nav_bearing();
-
-	if (_land_noreturn_horizontal) {
-		/* limit roll motion to prevent wings from touching the ground first */
-		_att_sp.roll_body = constrain(_att_sp.roll_body, radians(-10.0f), radians(10.0f));
+		mavlink_log_info(&_mavlink_log_pub, "Landing, heading hold\t");
+		events::send(events::ID("fixedwing_position_control_landing"), events::Log::Info, "Landing, heading hold");
 	}
 
 	/* Vertical landing control */
@@ -1329,10 +1731,10 @@ FixedwingPositionControl::control_landing(const hrt_abstime &now, const Vector2f
 			// all good, have valid terrain altitude
 			float terrain_vpos = _local_pos.dist_bottom + _local_pos.z;
 			terrain_alt = (_local_pos.ref_alt - terrain_vpos);
-			_t_alt_prev_valid = terrain_alt;
-			_time_last_t_alt = now;
+			_last_valid_terrain_alt_estimate = terrain_alt;
+			_last_time_terrain_alt_was_valid = now;
 
-		} else if (_time_last_t_alt == 0) {
+		} else if (_last_time_terrain_alt_was_valid == 0) {
 			// we have started landing phase but don't have valid terrain
 			// wait for some time, maybe we will soon get a valid estimate
 			// until then just use the altitude of the landing waypoint
@@ -1345,16 +1747,16 @@ FixedwingPositionControl::control_landing(const hrt_abstime &now, const Vector2f
 				abort_landing(true);
 			}
 
-		} else if ((!_local_pos.dist_bottom_valid && (now - _time_last_t_alt) < T_ALT_TIMEOUT)
+		} else if ((!_local_pos.dist_bottom_valid && (now - _last_time_terrain_alt_was_valid) < TERRAIN_ALT_TIMEOUT)
 			   || _land_noreturn_vertical) {
 			// use previous terrain estimate for some time and hope to recover
 			// if we are already flaring (land_noreturn_vertical) then just
 			//  go with the old estimate
-			terrain_alt = _t_alt_prev_valid;
+			terrain_alt = _last_valid_terrain_alt_estimate;
 
 		} else {
 			// terrain alt was not valid for long time, abort landing
-			terrain_alt = _t_alt_prev_valid;
+			terrain_alt = _last_valid_terrain_alt_estimate;
 			abort_landing(true);
 		}
 	}
@@ -1374,12 +1776,6 @@ FixedwingPositionControl::control_landing(const hrt_abstime &now, const Vector2f
 		/* kill the throttle if param requests it */
 		float throttle_max = _param_fw_thr_max.get();
 
-		/* enable direct yaw control using rudder/wheel */
-		if (_land_noreturn_horizontal) {
-			_att_sp.yaw_body = _target_bearing;
-			_att_sp.fw_control_yaw = true;
-		}
-
 		if (((_current_altitude < terrain_alt + _landingslope.motor_lim_relative_alt()) &&
 		     (wp_distance_save < _landingslope.flare_length() + 5.0f)) || // Only kill throttle when close to WP
 		    _land_motor_lim) {
@@ -1387,7 +1783,9 @@ FixedwingPositionControl::control_landing(const hrt_abstime &now, const Vector2f
 
 			if (!_land_motor_lim) {
 				_land_motor_lim  = true;
-				mavlink_log_info(&_mavlink_log_pub, "Landing, limiting throttle");
+				mavlink_log_info(&_mavlink_log_pub, "Landing, limiting throttle\t");
+				events::send(events::ID("fixedwing_position_control_landing_limit_throttle"), events::Log::Info,
+					     "Landing, limiting throttle");
 			}
 		}
 
@@ -1401,10 +1799,57 @@ FixedwingPositionControl::control_landing(const hrt_abstime &now, const Vector2f
 		}
 
 		const float airspeed_land = _param_fw_lnd_airspd_sc.get() * _param_fw_airspd_min.get();
+		float target_airspeed = get_auto_airspeed_setpoint(control_interval, airspeed_land, ground_speed);
+
 		const float throttle_land = _param_fw_thr_min.get() + (_param_fw_thr_max.get() - _param_fw_thr_min.get()) * 0.1f;
 
-		tecs_update_pitch_throttle(now, terrain_alt + flare_curve_alt_rel,
-					   calculate_target_airspeed(airspeed_land, ground_speed),
+		/* lateral guidance */
+		if (_param_fw_use_npfg.get()) {
+			_npfg.setAirspeedNom(target_airspeed * _eas2tas);
+			_npfg.setAirspeedMax(_param_fw_airspd_max.get() * _eas2tas);
+
+			if (_land_noreturn_horizontal) {
+				// heading hold
+				_npfg.navigateHeading(_target_bearing, ground_speed, _wind_vel);
+
+			} else {
+				// normal navigation
+				_npfg.navigateWaypoints(prev_wp_local, curr_wp_local, curr_pos_local, ground_speed, _wind_vel);
+			}
+
+			target_airspeed = _npfg.getAirspeedRef() /  _eas2tas;
+			_att_sp.roll_body = _npfg.getRollSetpoint();
+
+		} else {
+			if (_land_noreturn_horizontal) {
+				// heading hold
+				_l1_control.navigate_heading(_target_bearing, _yaw, ground_speed);
+
+			} else {
+				// normal navigation
+				_l1_control.navigate_waypoints(prev_wp_local, curr_wp_local, curr_pos_local, ground_speed);
+			}
+
+			_att_sp.roll_body = _l1_control.get_roll_setpoint();
+		}
+
+		if (_land_noreturn_horizontal) {
+			/* limit roll motion to prevent wings from touching the ground first */
+			_att_sp.roll_body = constrain(_att_sp.roll_body, radians(-10.0f), radians(10.0f));
+		}
+
+		/* enable direct yaw control using rudder/wheel */
+		if (_land_noreturn_horizontal) {
+			_att_sp.yaw_body = _target_bearing;
+			_att_sp.fw_control_yaw = true;
+
+		} else {
+			_att_sp.yaw_body = _yaw; // yaw is not controlled, so set setpoint to current yaw
+		}
+
+		tecs_update_pitch_throttle(control_interval,
+					   terrain_alt + flare_curve_alt_rel,
+					   target_airspeed,
 					   radians(_param_fw_lnd_fl_pmin.get()),
 					   radians(_param_fw_lnd_fl_pmax.get()),
 					   0.0f,
@@ -1412,13 +1857,14 @@ FixedwingPositionControl::control_landing(const hrt_abstime &now, const Vector2f
 					   throttle_land,
 					   false,
 					   _land_motor_lim ? radians(_param_fw_lnd_fl_pmin.get()) : radians(_param_fw_p_lim_min.get()),
-					   _land_motor_lim ? tecs_status_s::TECS_MODE_LAND_THROTTLELIM : tecs_status_s::TECS_MODE_LAND);
+					   true);
 
 		if (!_land_noreturn_vertical) {
 			// just started with the flaring phase
-			_flare_pitch_sp = 0.0f;
+			_flare_pitch_sp = radians(_param_fw_psp_off.get());
 			_flare_height = _current_altitude - terrain_alt;
-			mavlink_log_info(&_mavlink_log_pub, "Landing, flaring");
+			mavlink_log_info(&_mavlink_log_pub, "Landing, flaring\t");
+			events::send(events::ID("fixedwing_position_control_landing_flaring"), events::Log::Info, "Landing, flaring");
 			_land_noreturn_vertical = true;
 
 		} else {
@@ -1455,7 +1901,8 @@ FixedwingPositionControl::control_landing(const hrt_abstime &now, const Vector2f
 			altitude_desired = terrain_alt + landing_slope_alt_rel_desired;
 
 			if (!_land_onslope) {
-				mavlink_log_info(&_mavlink_log_pub, "Landing, on slope");
+				mavlink_log_info(&_mavlink_log_pub, "Landing, on slope\t");
+				events::send(events::ID("fixedwing_position_control_landing_on_slope"), events::Log::Info, "Landing, on slope");
 				_land_onslope = true;
 			}
 
@@ -1470,9 +1917,43 @@ FixedwingPositionControl::control_landing(const hrt_abstime &now, const Vector2f
 		}
 
 		const float airspeed_approach = _param_fw_lnd_airspd_sc.get() * _param_fw_airspd_min.get();
+		float target_airspeed = get_auto_airspeed_setpoint(control_interval, airspeed_approach, ground_speed);
 
-		tecs_update_pitch_throttle(now, altitude_desired,
-					   calculate_target_airspeed(airspeed_approach, ground_speed),
+		/* lateral guidance */
+		if (_param_fw_use_npfg.get()) {
+			_npfg.setAirspeedNom(target_airspeed * _eas2tas);
+			_npfg.setAirspeedMax(_param_fw_airspd_max.get() * _eas2tas);
+
+			if (_land_noreturn_horizontal) {
+				// heading hold
+				_npfg.navigateHeading(_target_bearing, ground_speed, _wind_vel);
+
+			} else {
+				// normal navigation
+				_npfg.navigateWaypoints(prev_wp_local, curr_wp_local, curr_pos_local, ground_speed, _wind_vel);
+			}
+
+			target_airspeed = _npfg.getAirspeedRef() / _eas2tas;
+			_att_sp.roll_body = _npfg.getRollSetpoint();
+
+		} else {
+			if (_land_noreturn_horizontal) {
+				// heading hold
+				_l1_control.navigate_heading(_target_bearing, _yaw, ground_speed);
+
+			} else {
+				// normal navigation
+				_l1_control.navigate_waypoints(prev_wp_local, curr_wp_local, curr_pos_local, ground_speed);
+			}
+
+			_att_sp.roll_body = _l1_control.get_roll_setpoint();
+		}
+
+		_att_sp.yaw_body = _yaw; // yaw is not controlled, so set setpoint to current yaw
+
+		tecs_update_pitch_throttle(control_interval,
+					   altitude_desired,
+					   target_airspeed,
 					   radians(_param_fw_p_lim_min.get()),
 					   radians(_param_fw_p_lim_max.get()),
 					   _param_fw_thr_min.get(),
@@ -1480,43 +1961,255 @@ FixedwingPositionControl::control_landing(const hrt_abstime &now, const Vector2f
 					   _param_fw_thr_cruise.get(),
 					   false,
 					   radians(_param_fw_p_lim_min.get()));
+		_att_sp.pitch_body = get_tecs_pitch();
 	}
+
+	/* Copy thrust and pitch values from tecs */
+	// when we are landed state we want the motor to spin at idle speed
+	_att_sp.thrust_body[0] = (_landed) ? min(_param_fw_thr_idle.get(), 1.f) : get_tecs_thrust();
+
+	// Apply flaps and spoilers for landing. Amount of deflection is handled in the FW attitdue controller
+	_att_sp.apply_flaps = vehicle_attitude_setpoint_s::FLAPS_LAND;
+	_att_sp.apply_spoilers = vehicle_attitude_setpoint_s::SPOILERS_LAND;
+
+	if (!_vehicle_status.in_transition_to_fw) {
+		publishLocalPositionSetpoint(pos_sp_curr);
+	}
+}
+
+void
+FixedwingPositionControl::control_manual_altitude(const float control_interval, const Vector2d &curr_pos,
+		const Vector2f &ground_speed)
+{
+	/* ALTITUDE CONTROL: pitch stick moves altitude setpoint, throttle stick sets airspeed */
+
+	/* Get demanded airspeed */
+	float altctrl_airspeed = get_manual_airspeed_setpoint();
+
+	// if we assume that user is taking off then help by demanding altitude setpoint well above ground
+	// and set limit to pitch angle to prevent steering into ground
+	// this will only affect planes and not VTOL
+	float pitch_limit_min = _param_fw_p_lim_min.get();
+	float height_rate_sp = NAN;
+	float altitude_sp_amsl = _current_altitude;
+
+	if (in_takeoff_situation()) {
+		// if we assume that user is taking off then help by demanding altitude setpoint well above ground
+		// and set limit to pitch angle to prevent steering into ground
+		// this will only affect planes and not VTOL
+		altitude_sp_amsl = _takeoff_ground_alt + _param_fw_clmbout_diff.get();
+		pitch_limit_min = radians(10.0f);
+
+	} else {
+		height_rate_sp = getManualHeightRateSetpoint();
+	}
+
+	/* throttle limiting */
+	float throttle_max = _param_fw_thr_max.get();
+
+	if (_landed && (fabsf(_manual_control_setpoint_for_airspeed) < THROTTLE_THRESH)) {
+		throttle_max = 0.0f;
+	}
+
+	tecs_update_pitch_throttle(control_interval,
+				   altitude_sp_amsl,
+				   altctrl_airspeed,
+				   radians(_param_fw_p_lim_min.get()),
+				   radians(_param_fw_p_lim_max.get()),
+				   _param_fw_thr_min.get(),
+				   throttle_max,
+				   _param_fw_thr_cruise.get(),
+				   false,
+				   pitch_limit_min,
+				   false,
+				   height_rate_sp);
+
+	_att_sp.roll_body = _manual_control_setpoint.y * radians(_param_fw_r_lim.get());
+	_att_sp.yaw_body = _yaw; // yaw is not controlled, so set setpoint to current yaw
+
+	/* Copy thrust and pitch values from tecs */
+	if (_landed) {
+		// when we are landed state we want the motor to spin at idle speed
+		_att_sp.thrust_body[0] = min(_param_fw_thr_idle.get(), throttle_max);
+
+	} else {
+		_att_sp.thrust_body[0] = min(get_tecs_thrust(), throttle_max);
+	}
+
+	_att_sp.pitch_body = get_tecs_pitch();
+
+	// In Manual modes flaps and spoilers are directly controlled in FW Attitude controller and not passed
+	// through attitdue setpoints
+	_att_sp.apply_flaps = vehicle_attitude_setpoint_s::FLAPS_OFF;
+	_att_sp.apply_spoilers = vehicle_attitude_setpoint_s::SPOILERS_OFF;
+}
+
+void
+FixedwingPositionControl::control_manual_position(const float control_interval, const Vector2d &curr_pos,
+		const Vector2f &ground_speed)
+{
+	// if we assume that user is taking off then help by demanding altitude setpoint well above ground
+	// and set limit to pitch angle to prevent steering into ground
+	// this will only affect planes and not VTOL
+	float pitch_limit_min = _param_fw_p_lim_min.get();
+	float height_rate_sp = NAN;
+	float altitude_sp_amsl = _current_altitude;
+
+	if (in_takeoff_situation()) {
+		// if we assume that user is taking off then help by demanding altitude setpoint well above ground
+		// and set limit to pitch angle to prevent steering into ground
+		// this will only affect planes and not VTOL
+		altitude_sp_amsl = _takeoff_ground_alt + _param_fw_clmbout_diff.get();
+		pitch_limit_min = radians(10.0f);
+
+	} else {
+		height_rate_sp = getManualHeightRateSetpoint();
+	}
+
+	/* throttle limiting */
+	float throttle_max = _param_fw_thr_max.get();
+
+	if (_landed && (fabsf(_manual_control_setpoint_for_airspeed) < THROTTLE_THRESH)) {
+		throttle_max = 0.0f;
+	}
+
+	float target_airspeed = get_manual_airspeed_setpoint();
+
+	/* heading control */
+	if (fabsf(_manual_control_setpoint.y) < HDG_HOLD_MAN_INPUT_THRESH &&
+	    fabsf(_manual_control_setpoint.r) < HDG_HOLD_MAN_INPUT_THRESH) {
+
+		/* heading / roll is zero, lock onto current heading */
+		if (fabsf(_yawrate) < HDG_HOLD_YAWRATE_THRESH && !_yaw_lock_engaged) {
+			// little yaw movement, lock to current heading
+			_yaw_lock_engaged = true;
+		}
+
+		/* user tries to do a takeoff in heading hold mode, reset the yaw setpoint on every iteration
+			to make sure the plane does not start rolling
+		*/
+		if (in_takeoff_situation()) {
+			_hdg_hold_enabled = false;
+			_yaw_lock_engaged = true;
+		}
+
+		if (_yaw_lock_engaged) {
+
+			/* just switched back from non heading-hold to heading hold */
+			if (!_hdg_hold_enabled) {
+				_hdg_hold_enabled = true;
+				_hdg_hold_yaw = _yaw;
+
+				get_waypoint_heading_distance(_hdg_hold_yaw, _hdg_hold_prev_wp, _hdg_hold_curr_wp, true);
+			}
+
+			/* we have a valid heading hold position, are we too close? */
+			const float dist = get_distance_to_next_waypoint(_current_latitude, _current_longitude, _hdg_hold_curr_wp.lat,
+					   _hdg_hold_curr_wp.lon);
+
+			if (dist < HDG_HOLD_REACHED_DIST) {
+				get_waypoint_heading_distance(_hdg_hold_yaw, _hdg_hold_prev_wp, _hdg_hold_curr_wp, false);
+			}
+
+			Vector2d prev_wp{_hdg_hold_prev_wp.lat, _hdg_hold_prev_wp.lon};
+			Vector2d curr_wp{_hdg_hold_curr_wp.lat, _hdg_hold_curr_wp.lon};
+
+			Vector2f curr_pos_local{_local_pos.x, _local_pos.y};
+			Vector2f curr_wp_local = _global_local_proj_ref.project(curr_wp(0), curr_wp(1));
+			Vector2f prev_wp_local = _global_local_proj_ref.project(prev_wp(0),
+						 prev_wp(1));
+
+			if (_param_fw_use_npfg.get()) {
+				_npfg.setAirspeedNom(target_airspeed * _eas2tas);
+				_npfg.setAirspeedMax(_param_fw_airspd_max.get() * _eas2tas);
+				_npfg.navigateWaypoints(prev_wp_local, curr_wp_local, curr_pos_local, ground_speed, _wind_vel);
+				_att_sp.roll_body = _npfg.getRollSetpoint();
+				target_airspeed = _npfg.getAirspeedRef() / _eas2tas;
+
+			} else {
+				/* populate l1 control setpoint */
+				_l1_control.navigate_waypoints(prev_wp_local, curr_wp_local, curr_pos_local, ground_speed);
+				_att_sp.roll_body = _l1_control.get_roll_setpoint();
+			}
+
+			_att_sp.yaw_body = _yaw; // yaw is not controlled, so set setpoint to current yaw
+
+			if (in_takeoff_situation()) {
+				/* limit roll motion to ensure enough lift */
+				_att_sp.roll_body = constrain(_att_sp.roll_body, radians(-15.0f), radians(15.0f));
+			}
+		}
+	}
+
+	tecs_update_pitch_throttle(control_interval,
+				   altitude_sp_amsl,
+				   target_airspeed,
+				   radians(_param_fw_p_lim_min.get()),
+				   radians(_param_fw_p_lim_max.get()),
+				   _param_fw_thr_min.get(),
+				   throttle_max,
+				   _param_fw_thr_cruise.get(),
+				   false,
+				   pitch_limit_min,
+				   false,
+				   height_rate_sp);
+
+	if (!_yaw_lock_engaged || fabsf(_manual_control_setpoint.y) >= HDG_HOLD_MAN_INPUT_THRESH ||
+	    fabsf(_manual_control_setpoint.r) >= HDG_HOLD_MAN_INPUT_THRESH) {
+
+		_hdg_hold_enabled = false;
+		_yaw_lock_engaged = false;
+
+		// do slew rate limiting on roll if enabled
+		float roll_sp_new = _manual_control_setpoint.y * radians(_param_fw_r_lim.get());
+		const float roll_rate_slew_rad = radians(_param_fw_l1_r_slew_max.get());
+
+		if (control_interval > 0.f && roll_rate_slew_rad > 0.f) {
+			roll_sp_new = constrain(roll_sp_new, _att_sp.roll_body - roll_rate_slew_rad * control_interval,
+						_att_sp.roll_body + roll_rate_slew_rad * control_interval);
+		}
+
+		_att_sp.roll_body = roll_sp_new;
+		_att_sp.yaw_body = _yaw; // yaw is not controlled, so set setpoint to current yaw
+	}
+
+	/* Copy thrust and pitch values from tecs */
+	if (_landed) {
+		// when we are landed state we want the motor to spin at idle speed
+		_att_sp.thrust_body[0] = min(_param_fw_thr_idle.get(), throttle_max);
+
+	} else {
+		_att_sp.thrust_body[0] = min(get_tecs_thrust(), throttle_max);
+	}
+
+	_att_sp.pitch_body = get_tecs_pitch();
+
+	// In Manual modes flaps and spoilers are directly controlled in FW Attitude controller and not passed
+	// through attitdue setpoints
+	_att_sp.apply_flaps = vehicle_attitude_setpoint_s::FLAPS_OFF;
+	_att_sp.apply_spoilers = vehicle_attitude_setpoint_s::SPOILERS_OFF;
 }
 
 float
 FixedwingPositionControl::get_tecs_pitch()
 {
 	if (_is_tecs_running) {
-		return _tecs.get_pitch_setpoint();
+		return _tecs.get_pitch_setpoint() + radians(_param_fw_psp_off.get());
 	}
 
-	// return 0 to prevent stale tecs state when it's not running
-	return 0.0f;
+	// return level flight pitch offset to prevent stale tecs state when it's not running
+	return radians(_param_fw_psp_off.get());
 }
 
 float
 FixedwingPositionControl::get_tecs_thrust()
 {
 	if (_is_tecs_running) {
-		return _tecs.get_throttle_setpoint();
+		return min(_tecs.get_throttle_setpoint(), 1.f);
 	}
 
 	// return 0 to prevent stale tecs state when it's not running
 	return 0.0f;
-}
-
-void
-FixedwingPositionControl::handle_command()
-{
-	if (_vehicle_command.command == vehicle_command_s::VEHICLE_CMD_DO_GO_AROUND) {
-		// only abort landing before point of no return (horizontal and vertical)
-		if (_control_mode.flag_control_auto_enabled &&
-		    _pos_sp_triplet.current.valid &&
-		    _pos_sp_triplet.current.type == position_setpoint_s::SETPOINT_TYPE_LAND) {
-
-			abort_landing(true);
-		}
-	}
 }
 
 void
@@ -1533,6 +2226,10 @@ FixedwingPositionControl::Run()
 	/* only run controller if position changed */
 
 	if (_local_pos_sub.update(&_local_pos)) {
+
+		const float control_interval = math::constrain((_local_pos.timestamp - _last_time_position_control_called) * 1e-6f,
+					       MIN_AUTO_TIMESTEP, MAX_AUTO_TIMESTEP);
+		_last_time_position_control_called = _local_pos.timestamp;
 
 		// check for parameter updates
 		if (_parameter_update_sub.updated()) {
@@ -1556,7 +2253,6 @@ FixedwingPositionControl::Run()
 		// handle estimator reset events. we only adjust setpoins for manual modes
 		if (_control_mode.flag_control_manual_enabled) {
 			if (_control_mode.flag_control_altitude_enabled && _local_pos.vz_reset_counter != _alt_reset_counter) {
-				_hold_alt += -_local_pos.delta_z;
 				// make TECS accept step in altitude and demanded altitude
 				_tecs.handle_alt_step(-_local_pos.delta_z, _current_altitude);
 			}
@@ -1574,56 +2270,208 @@ FixedwingPositionControl::Run()
 		_alt_reset_counter = _local_pos.vz_reset_counter;
 		_pos_reset_counter = _local_pos.vxy_reset_counter;
 
-		airspeed_poll();
-		_manual_control_setpoint_sub.update(&_manual_control_setpoint);
-		_pos_sp_triplet_sub.update(&_pos_sp_triplet);
-		vehicle_attitude_poll();
-		vehicle_command_poll();
-		vehicle_control_mode_poll();
-		_vehicle_land_detected_sub.update(&_vehicle_land_detected);
-		_vehicle_status_sub.update(&_vehicle_status);
-		_vehicle_acceleration_sub.update();
-		_vehicle_rates_sub.update();
+		// Convert Local setpoints to global setpoints
+		if (!_global_local_proj_ref.isInitialized()
+		    || (_global_local_proj_ref.getProjectionReferenceTimestamp() != _local_pos.ref_timestamp)
+		    || (_local_pos.vxy_reset_counter != _pos_reset_counter)) {
 
-		Vector2f curr_pos((float)_current_latitude, (float)_current_longitude);
-		Vector2f ground_speed(_local_pos.vx, _local_pos.vy);
+			_global_local_proj_ref.initReference(_local_pos.ref_lat, _local_pos.ref_lon,
+							     _local_pos.ref_timestamp);
+			_global_local_alt0 = _local_pos.ref_alt;
+		}
 
-		//Convert Local setpoints to global setpoints
 		if (_control_mode.flag_control_offboard_enabled) {
-			if (!globallocalconverter_initialized()) {
-				globallocalconverter_init(_local_pos.ref_lat, _local_pos.ref_lon,
-							  _local_pos.ref_alt, _local_pos.ref_timestamp);
+			vehicle_local_position_setpoint_s trajectory_setpoint;
 
-			} else {
-				globallocalconverter_toglobal(_pos_sp_triplet.current.x, _pos_sp_triplet.current.y, _pos_sp_triplet.current.z,
-							      &_pos_sp_triplet.current.lat, &_pos_sp_triplet.current.lon, &_pos_sp_triplet.current.alt);
+			if (_trajectory_setpoint_sub.update(&trajectory_setpoint)) {
+				bool valid_setpoint = false;
+				_pos_sp_triplet = {}; // clear any existing
+				_pos_sp_triplet.timestamp = trajectory_setpoint.timestamp;
+				_pos_sp_triplet.current.timestamp = trajectory_setpoint.timestamp;
+				_pos_sp_triplet.current.cruising_speed = NAN; // ignored
+				_pos_sp_triplet.current.cruising_throttle = NAN; // ignored
+				_pos_sp_triplet.current.vx = NAN;
+				_pos_sp_triplet.current.vy = NAN;
+				_pos_sp_triplet.current.vz = NAN;
+				_pos_sp_triplet.current.lat = static_cast<double>(NAN);
+				_pos_sp_triplet.current.lon = static_cast<double>(NAN);
+				_pos_sp_triplet.current.alt = NAN;
+
+				if (PX4_ISFINITE(trajectory_setpoint.x) && PX4_ISFINITE(trajectory_setpoint.y) && PX4_ISFINITE(trajectory_setpoint.z)) {
+					if (_global_local_proj_ref.isInitialized()) {
+						double lat;
+						double lon;
+						_global_local_proj_ref.reproject(trajectory_setpoint.x, trajectory_setpoint.y, lat, lon);
+						valid_setpoint = true;
+						_pos_sp_triplet.current.type = position_setpoint_s::SETPOINT_TYPE_POSITION;
+						_pos_sp_triplet.current.lat = lat;
+						_pos_sp_triplet.current.lon = lon;
+						_pos_sp_triplet.current.alt = _global_local_alt0 - trajectory_setpoint.z;
+					}
+
+				}
+
+				if (PX4_ISFINITE(trajectory_setpoint.vx) && PX4_ISFINITE(trajectory_setpoint.vx)
+				    && PX4_ISFINITE(trajectory_setpoint.vz)) {
+					valid_setpoint = true;
+					_pos_sp_triplet.current.type = position_setpoint_s::SETPOINT_TYPE_POSITION;
+					_pos_sp_triplet.current.vx = trajectory_setpoint.vx;
+					_pos_sp_triplet.current.vy = trajectory_setpoint.vy;
+					_pos_sp_triplet.current.vz = trajectory_setpoint.vz;
+
+					if (PX4_ISFINITE(trajectory_setpoint.acceleration[0]) && PX4_ISFINITE(trajectory_setpoint.acceleration[1])
+					    && PX4_ISFINITE(trajectory_setpoint.acceleration[2])) {
+						Vector2f velocity_sp_2d(trajectory_setpoint.vx, trajectory_setpoint.vy);
+						Vector2f acceleration_sp_2d(trajectory_setpoint.acceleration[0], trajectory_setpoint.acceleration[1]);
+						Vector2f acceleration_normal = acceleration_sp_2d - acceleration_sp_2d.dot(velocity_sp_2d) *
+									       velocity_sp_2d.normalized();
+						_pos_sp_triplet.current.loiter_radius = velocity_sp_2d.norm() * velocity_sp_2d.norm() / acceleration_normal.norm();
+
+					} else {
+						_pos_sp_triplet.current.loiter_radius = NAN;
+					}
+				}
+
+				if (!valid_setpoint) {
+					mavlink_log_critical(&_mavlink_log_pub, "Invalid offboard setpoint\t");
+					events::send(events::ID("fixedwing_position_control_invalid_offboard_sp"), events::Log::Error,
+						     "Invalid offboard setpoint");
+
+				} else {
+					_pos_sp_triplet.current.valid = valid_setpoint;
+				}
+			}
+
+		} else {
+			if (_pos_sp_triplet_sub.update(&_pos_sp_triplet)) {
+				// reset the altitude foh (first order hold) logic
+				_min_current_sp_distance_xy = FLT_MAX;
 			}
 		}
 
-		/*
-		 * Attempt to control position, on success (= sensors present and not in manual mode),
-		 * publish setpoint.
-		 */
-		if (control_position(_local_pos.timestamp, curr_pos, ground_speed, _pos_sp_triplet.previous, _pos_sp_triplet.current,
-				     _pos_sp_triplet.next)) {
+		airspeed_poll();
+		manual_control_setpoint_poll();
+		vehicle_attitude_poll();
+		vehicle_command_poll();
+		vehicle_control_mode_poll();
+		wind_poll();
 
+		if (_vehicle_land_detected_sub.updated()) {
+			vehicle_land_detected_s vehicle_land_detected;
 
-			// add attitude setpoint offsets
-			_att_sp.roll_body += radians(_param_fw_rsp_off.get());
-			_att_sp.pitch_body += radians(_param_fw_psp_off.get());
+			if (_vehicle_land_detected_sub.update(&vehicle_land_detected)) {
+				_landed = vehicle_land_detected.landed;
+			}
+		}
 
-			if (_control_mode.flag_control_manual_enabled) {
-				_att_sp.roll_body = constrain(_att_sp.roll_body, -radians(_param_fw_man_r_max.get()),
-							      radians(_param_fw_man_r_max.get()));
-				_att_sp.pitch_body = constrain(_att_sp.pitch_body, -radians(_param_fw_man_p_max.get()),
-							       radians(_param_fw_man_p_max.get()));
+		_vehicle_status_sub.update(&_vehicle_status);
+
+		Vector2d curr_pos(_current_latitude, _current_longitude);
+		Vector2f ground_speed(_local_pos.vx, _local_pos.vy);
+
+		set_control_mode_current(_local_pos.timestamp, _pos_sp_triplet.current.valid);
+
+		update_in_air_states(_local_pos.timestamp);
+
+		// update lateral guidance timesteps for slewrates
+		if (_param_fw_use_npfg.get()) {
+			_npfg.setDt(control_interval);
+
+		} else {
+			_l1_control.set_dt(control_interval);
+		}
+
+		// restore nominal TECS parameters in case changed intermittently (e.g. in landing handling)
+		_tecs.set_speed_weight(_param_fw_t_spdweight.get());
+		_tecs.set_height_error_time_constant(_param_fw_t_h_error_tc.get());
+
+		_att_sp.roll_reset_integral = false;
+		_att_sp.pitch_reset_integral = false;
+		_att_sp.yaw_reset_integral = false;
+
+		// by default we don't want yaw to be contoller directly with rudder
+		_att_sp.fw_control_yaw = false;
+
+		switch (_control_mode_current) {
+		case FW_POSCTRL_MODE_AUTO: {
+				control_auto(control_interval, curr_pos, ground_speed, _pos_sp_triplet.previous, _pos_sp_triplet.current,
+					     _pos_sp_triplet.next);
+				break;
 			}
 
-			if (_control_mode.flag_control_offboard_enabled ||
-			    _control_mode.flag_control_position_enabled ||
+		case FW_POSCTRL_MODE_AUTO_ALTITUDE: {
+				control_auto_fixed_bank_alt_hold(control_interval);
+				break;
+			}
+
+		case FW_POSCTRL_MODE_AUTO_CLIMBRATE: {
+				control_auto_descend(control_interval);
+				break;
+			}
+
+		case FW_POSCTRL_MODE_AUTO_LANDING: {
+				control_auto_landing(_local_pos.timestamp, control_interval, curr_pos, ground_speed, _pos_sp_triplet.previous,
+						     _pos_sp_triplet.current);
+				break;
+			}
+
+		case FW_POSCTRL_MODE_AUTO_TAKEOFF: {
+				control_auto_takeoff(_local_pos.timestamp, control_interval, curr_pos, ground_speed, _pos_sp_triplet.previous,
+						     _pos_sp_triplet.current);
+				break;
+			}
+
+		case FW_POSCTRL_MODE_MANUAL_POSITION: {
+				control_manual_position(control_interval, curr_pos, ground_speed);
+				break;
+			}
+
+		case FW_POSCTRL_MODE_MANUAL_ALTITUDE: {
+				control_manual_altitude(control_interval, curr_pos, ground_speed);
+				break;
+			}
+
+		case FW_POSCTRL_MODE_OTHER: {
+				/* reset landing and takeoff state */
+				if (!_last_manual) {
+					reset_landing_state();
+					reset_takeoff_state();
+				}
+
+				_att_sp.thrust_body[0] = min(_att_sp.thrust_body[0], _param_fw_thr_max.get());
+
+				_att_sp.apply_flaps = vehicle_attitude_setpoint_s::FLAPS_OFF;
+				_att_sp.apply_spoilers = vehicle_attitude_setpoint_s::SPOILERS_OFF;
+
+				_tecs.reset_state();
+
+				break;
+			}
+
+		}
+
+		if (_control_mode_current != FW_POSCTRL_MODE_AUTO_LANDING) {
+			reset_landing_state();
+		}
+
+		if (_control_mode_current != FW_POSCTRL_MODE_AUTO_TAKEOFF) {
+			reset_takeoff_state();
+		}
+
+		if (_control_mode_current != FW_POSCTRL_MODE_OTHER) {
+
+			if (_control_mode.flag_control_manual_enabled) {
+				_att_sp.roll_body = constrain(_att_sp.roll_body, -radians(_param_fw_r_lim.get()),
+							      radians(_param_fw_r_lim.get()));
+				_att_sp.pitch_body = constrain(_att_sp.pitch_body, radians(_param_fw_p_lim_min.get()),
+							       radians(_param_fw_p_lim_max.get()));
+			}
+
+			if (_control_mode.flag_control_position_enabled ||
 			    _control_mode.flag_control_velocity_enabled ||
 			    _control_mode.flag_control_acceleration_enabled ||
-			    _control_mode.flag_control_altitude_enabled) {
+			    _control_mode.flag_control_altitude_enabled ||
+			    _control_mode.flag_control_climb_rate_enabled) {
 
 				const Quatf q(Eulerf(_att_sp.roll_body, _att_sp.pitch_body, _att_sp.yaw_body));
 				q.copyTo(_att_sp.q_d);
@@ -1638,6 +2486,9 @@ FixedwingPositionControl::Run()
 
 				}
 			}
+
+			_l1_control.reset_has_guidance_updated();
+			_last_manual = !_control_mode.flag_control_position_enabled;
 		}
 
 		perf_end(_loop_perf);
@@ -1648,7 +2499,7 @@ void
 FixedwingPositionControl::reset_takeoff_state(bool force)
 {
 	// only reset takeoff if !armed or just landed
-	if (!_control_mode.flag_armed || (_was_in_air && _vehicle_land_detected.landed) || force) {
+	if (!_control_mode.flag_armed || (_was_in_air && _landed) || force) {
 
 		_runway_takeoff.reset();
 
@@ -1667,7 +2518,7 @@ FixedwingPositionControl::reset_landing_state()
 	_time_started_landing = 0;
 
 	// reset terrain estimation relevant values
-	_time_last_t_alt = 0;
+	_last_time_terrain_alt_was_valid = 0;
 
 	_land_noreturn_horizontal = false;
 	_land_noreturn_vertical = false;
@@ -1682,18 +2533,44 @@ FixedwingPositionControl::reset_landing_state()
 	}
 }
 
+bool FixedwingPositionControl::using_npfg_with_wind_estimate() const
+{
+	// high wind mitigation is handled by NPFG if the wind estimate is valid
+	return _param_fw_use_npfg.get() && _wind_valid;
+}
+
+Vector2f
+FixedwingPositionControl::get_nav_speed_2d(const Vector2f &ground_speed)
+{
+
+	Vector2f nav_speed_2d{ground_speed};
+
+	if (_airspeed_valid && !using_npfg_with_wind_estimate()) {
+		// l1 navigation logic breaks down when wind speed exceeds max airspeed
+		// compute 2D groundspeed from airspeed-heading projection
+		const Vector2f air_speed_2d{_airspeed * cosf(_yaw), _airspeed * sinf(_yaw)};
+
+		// angle between air_speed_2d and ground_speed
+		const float air_gnd_angle = acosf((air_speed_2d * ground_speed) / (air_speed_2d.length() * ground_speed.length()));
+
+		// if angle > 90 degrees or groundspeed is less than threshold, replace groundspeed with airspeed projection
+		if ((fabsf(air_gnd_angle) > M_PI_2_F) || (ground_speed.length() < 3.0f)) {
+			nav_speed_2d = air_speed_2d;
+		}
+	}
+
+	return nav_speed_2d;
+}
+
 void
-FixedwingPositionControl::tecs_update_pitch_throttle(const hrt_abstime &now, float alt_sp, float airspeed_sp,
+FixedwingPositionControl::tecs_update_pitch_throttle(const float control_interval, float alt_sp, float airspeed_sp,
 		float pitch_min_rad, float pitch_max_rad,
 		float throttle_min, float throttle_max, float throttle_cruise,
 		bool climbout_mode, float climbout_pitch_min_rad,
-		uint8_t mode)
+		bool disable_underspeed_detection, float hgt_rate_sp)
 {
-	const float dt = math::constrain((now - _last_tecs_update) * 1e-6f, 0.01f, 0.05f);
-	_last_tecs_update = now;
-
 	// do not run TECS if we are not in air
-	bool run_tecs = !_vehicle_land_detected.landed;
+	bool run_tecs = !_landed;
 
 	// do not run TECS if vehicle is a VTOL and we are in rotary wing mode or in transition
 	// (it should also not run during VTOL blending because airspeed is too low still)
@@ -1709,24 +2586,25 @@ FixedwingPositionControl::tecs_update_pitch_throttle(const hrt_abstime &now, flo
 			// set this to transition airspeed to init tecs correctly
 			if (_param_fw_arsp_mode.get() == 1 && PX4_ISFINITE(_param_airspeed_trans)) {
 				// some vtols fly without airspeed sensor
-				_asp_after_transition = _param_airspeed_trans;
+				_airspeed_after_transition = _param_airspeed_trans;
 
 			} else {
-				_asp_after_transition = _airspeed;
+				_airspeed_after_transition = _airspeed;
 			}
 
-			_asp_after_transition = constrain(_asp_after_transition, _param_fw_airspd_min.get(), _param_fw_airspd_max.get());
+			_airspeed_after_transition = constrain(_airspeed_after_transition, _param_fw_airspd_min.get(),
+							       _param_fw_airspd_max.get());
 
 		} else if (_was_in_transition) {
 			// after transition we ramp up desired airspeed from the speed we had coming out of the transition
-			_asp_after_transition += dt * 2; // increase 2m/s
+			_airspeed_after_transition += control_interval * 2.0f; // increase 2m/s
 
-			if (_asp_after_transition < airspeed_sp && _airspeed < airspeed_sp) {
-				airspeed_sp = max(_asp_after_transition, _airspeed);
+			if (_airspeed_after_transition < airspeed_sp && _airspeed < airspeed_sp) {
+				airspeed_sp = max(_airspeed_after_transition, _airspeed);
 
 			} else {
 				_was_in_transition = false;
-				_asp_after_transition = 0;
+				_airspeed_after_transition = 0.0f;
 			}
 		}
 	}
@@ -1744,40 +2622,18 @@ FixedwingPositionControl::tecs_update_pitch_throttle(const hrt_abstime &now, flo
 		_reinitialize_tecs = false;
 	}
 
-	if (_vehicle_status.engine_failure) {
-		/* Force the slow downwards spiral */
-		pitch_min_rad = M_DEG_TO_RAD_F * -1.0f;
-		pitch_max_rad = M_DEG_TO_RAD_F * 5.0f;
-	}
-
 	/* No underspeed protection in landing mode */
-	_tecs.set_detect_underspeed_enabled(!(mode == tecs_status_s::TECS_MODE_LAND
-					      || mode == tecs_status_s::TECS_MODE_LAND_THROTTLELIM));
-
-	/* Using tecs library */
-	float pitch_for_tecs = _pitch - radians(_param_fw_psp_off.get());
-
-	/* filter speed and altitude for controller */
-	Vector3f accel_body(_vehicle_acceleration_sub.get().xyz);
-
-	// tailsitters use the multicopter frame as reference, in fixed wing
-	// we need to use the fixed wing frame
-	if (_vtol_tailsitter) {
-		float tmp = accel_body(0);
-		accel_body(0) = -accel_body(2);
-		accel_body(2) = tmp;
-	}
+	_tecs.set_detect_underspeed_enabled(!disable_underspeed_detection);
 
 	/* tell TECS to update its state, but let it know when it cannot actually control the plane */
-	bool in_air_alt_control = (!_vehicle_land_detected.landed &&
+	bool in_air_alt_control = (!_landed &&
 				   (_control_mode.flag_control_auto_enabled ||
-				    _control_mode.flag_control_offboard_enabled ||
 				    _control_mode.flag_control_velocity_enabled ||
-				    _control_mode.flag_control_altitude_enabled));
+				    _control_mode.flag_control_altitude_enabled ||
+				    _control_mode.flag_control_climb_rate_enabled));
 
 	/* update TECS vehicle state estimates */
-	_tecs.update_vehicle_state_estimates(_airspeed, _R_nb,
-					     accel_body, (_local_pos.timestamp > 0), in_air_alt_control,
+	_tecs.update_vehicle_state_estimates(_airspeed, _body_acceleration(0), (_local_pos.timestamp > 0), in_air_alt_control,
 					     _current_altitude, _local_pos.vz);
 
 	/* scale throttle cruise by baro pressure */
@@ -1796,14 +2652,69 @@ FixedwingPositionControl::tecs_update_pitch_throttle(const hrt_abstime &now, flo
 		}
 	}
 
-	_tecs.update_pitch_throttle(_R_nb, pitch_for_tecs,
-				    _current_altitude, alt_sp,
-				    airspeed_sp, _airspeed, _eas2tas,
-				    climbout_mode, climbout_pitch_min_rad,
-				    throttle_min, throttle_max, throttle_cruise,
-				    pitch_min_rad, pitch_max_rad);
+	_tecs.update_pitch_throttle(_pitch - radians(_param_fw_psp_off.get()),
+				    _current_altitude,
+				    alt_sp,
+				    airspeed_sp,
+				    _airspeed,
+				    _eas2tas,
+				    climbout_mode,
+				    climbout_pitch_min_rad - radians(_param_fw_psp_off.get()),
+				    throttle_min,
+				    throttle_max,
+				    throttle_cruise,
+				    pitch_min_rad - radians(_param_fw_psp_off.get()),
+				    pitch_max_rad - radians(_param_fw_psp_off.get()),
+				    _param_climbrate_target.get(),
+				    _param_sinkrate_target.get(),
+				    hgt_rate_sp);
 
 	tecs_status_publish();
+}
+
+void FixedwingPositionControl::publishLocalPositionSetpoint(const position_setpoint_s &current_waypoint)
+{
+	if (_global_local_proj_ref.isInitialized()) {
+		Vector2f current_setpoint = _global_local_proj_ref.project(current_waypoint.lat, current_waypoint.lon);
+		vehicle_local_position_setpoint_s local_position_setpoint{};
+		local_position_setpoint.timestamp = hrt_absolute_time();
+		local_position_setpoint.x = current_setpoint(0);
+		local_position_setpoint.y = current_setpoint(1);
+		local_position_setpoint.z = _global_local_alt0 - current_waypoint.alt;
+		local_position_setpoint.yaw = NAN;
+		local_position_setpoint.yawspeed = NAN;
+		local_position_setpoint.vx = NAN;
+		local_position_setpoint.vy = NAN;
+		local_position_setpoint.vz = NAN;
+		local_position_setpoint.acceleration[0] = NAN;
+		local_position_setpoint.acceleration[1] = NAN;
+		local_position_setpoint.acceleration[2] = NAN;
+		local_position_setpoint.thrust[0] = _att_sp.thrust_body[0];
+		local_position_setpoint.thrust[1] = _att_sp.thrust_body[1];
+		local_position_setpoint.thrust[2] = _att_sp.thrust_body[2];
+		_local_pos_sp_pub.publish(local_position_setpoint);
+	}
+}
+
+void FixedwingPositionControl::publishOrbitStatus(const position_setpoint_s pos_sp)
+{
+	orbit_status_s orbit_status{};
+	orbit_status.timestamp = hrt_absolute_time();
+	float loiter_radius = pos_sp.loiter_radius;
+	uint8_t loiter_direction = pos_sp.loiter_direction;
+
+	if (fabsf(loiter_radius) < FLT_EPSILON) {
+		loiter_radius = _param_nav_loiter_rad.get();
+		loiter_direction = signNoZero(loiter_radius);
+	}
+
+	orbit_status.radius = static_cast<float>(loiter_direction) * loiter_radius;
+	orbit_status.frame = 0; // MAV_FRAME::MAV_FRAME_GLOBAL
+	orbit_status.x = static_cast<double>(pos_sp.lat);
+	orbit_status.y = static_cast<double>(pos_sp.lon);
+	orbit_status.z = pos_sp.alt;
+	orbit_status.yaw_behaviour = orbit_status_s::ORBIT_YAW_BEHAVIOUR_HOLD_FRONT_TANGENT_TO_CIRCLE;
+	_orbit_status_pub.publish(orbit_status);
 }
 
 int FixedwingPositionControl::task_spawn(int argc, char *argv[])

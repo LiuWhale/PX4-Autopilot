@@ -34,6 +34,8 @@
 px4_add_library(sensor_calibration
 	Accelerometer.cpp
 	Accelerometer.hpp
+	Barometer.cpp
+	Barometer.hpp
 	Gyroscope.cpp
 	Gyroscope.hpp
 	Magnetometer.cpp
@@ -41,3 +43,5 @@ px4_add_library(sensor_calibration
 	Utilities.cpp
 	Utilities.hpp
 )
+
+target_link_libraries(sensor_calibration PRIVATE conversion)

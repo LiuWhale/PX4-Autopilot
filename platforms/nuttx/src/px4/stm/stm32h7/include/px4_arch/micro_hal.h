@@ -44,12 +44,11 @@ __BEGIN_DECLS
 #define STM32_RCC_APB1RSTR    STM32_RCC_APB1LRSTR
 #define RCC_APB1ENR_TIM2EN    RCC_APB1LENR_TIM2EN
 #define RCC_APB1ENR_TIM3EN    RCC_APB1LENR_TIM3EN
+#define RCC_APB1ENR_TIM4EN    RCC_APB1LENR_TIM4EN
 #define RCC_APB1ENR_TIM5EN    RCC_APB1LENR_TIM5EN
 #define RCC_APB1ENR_TIM14EN   RCC_APB1LENR_TIM14EN
 #define RCC_APB1RSTR_TIM2RST  RCC_APB1LRSTR_TIM2RST
 #define RCC_APB1RSTR_TIM5RST  RCC_APB1LRSTR_TIM5RST
-
-
 
 #include <chip.h>
 #include <hardware/stm32_flash.h>
@@ -59,11 +58,11 @@ __BEGIN_DECLS
 #define PX4_BBSRAM_GETDESC_IOCTL STM32H7_BBSRAM_GETDESC_IOCTL
 #define PX4_FLASH_BASE  0x08000000
 #define PX4_NUMBER_I2C_BUSES STM32H7_NI2C
-#define PX4_ARCH_DCACHE_LINESIZE ARMV7M_DCACHE_LINESIZE //Fix me! REMOVE this The DSHOT added this and needs to be fixed
 
 int stm32h7_flash_lock(size_t addr);
 int stm32h7_flash_unlock(size_t addr);
 int stm32h7_flash_writeprotect(size_t block, bool enabled);
 #define  stm32_flash_lock() stm32h7_flash_lock(PX4_FLASH_BASE)
+#define PX4_ADC_INTERNAL_TEMP_SENSOR_CHANNEL (20) //Valid for ADC3 on H7x3
 
 __END_DECLS

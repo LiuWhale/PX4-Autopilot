@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2020 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2020-2022 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -48,14 +48,20 @@
 #include <uORB/Publication.hpp>
 #include <uORB/PublicationMulti.hpp>
 #include <uORB/Subscription.hpp>
+#include <uORB/SubscriptionMultiArray.hpp>
 #include <uORB/SubscriptionCallback.hpp>
 #include <uORB/topics/actuator_controls.h>
 #include <uORB/topics/battery_status.h>
+#include <uORB/topics/estimator_sensor_bias.h>
+#include <uORB/topics/magnetometer_bias_estimate.h>
 #include <uORB/topics/parameter_update.h>
 #include <uORB/topics/sensor_mag.h>
 #include <uORB/topics/sensor_preflight_mag.h>
+#include <uORB/topics/sensors_status.h>
 #include <uORB/topics/vehicle_control_mode.h>
 #include <uORB/topics/vehicle_magnetometer.h>
+
+using namespace time_literals;
 
 namespace sensors
 {
@@ -74,7 +80,9 @@ public:
 private:
 	void Run() override;
 
-	void ParametersUpdate(bool force = false);
+	void CheckFailover(const hrt_abstime &time_now_us);
+	bool ParametersUpdate(bool force = false);
+	void UpdateStatus();
 
 	void Publish(uint8_t instance, bool multi = false);
 
@@ -83,22 +91,40 @@ private:
 	 */
 	void calcMagInconsistency();
 
+	void UpdateMagBiasEstimate();
+	void UpdateMagCalibration();
+	void UpdatePowerCompensation();
+
 	static constexpr int MAX_SENSOR_COUNT = 4;
+
+	uORB::Publication<sensors_status_s> _sensors_status_mag_pub{ORB_ID(sensors_status_mag)};
 
 	uORB::Publication<sensor_preflight_mag_s> _sensor_preflight_mag_pub{ORB_ID(sensor_preflight_mag)};
 
-	uORB::Publication<vehicle_magnetometer_s> _vehicle_magnetometer_pub{ORB_ID(vehicle_magnetometer)};
-	uORB::PublicationMulti<vehicle_magnetometer_s> _vehicle_magnetometer_multi_pub[MAX_SENSOR_COUNT] {
+	uORB::PublicationMulti<vehicle_magnetometer_s> _vehicle_magnetometer_pub[MAX_SENSOR_COUNT] {
 		{ORB_ID(vehicle_magnetometer)},
 		{ORB_ID(vehicle_magnetometer)},
 		{ORB_ID(vehicle_magnetometer)},
 		{ORB_ID(vehicle_magnetometer)},
 	};
 
+	uORB::SubscriptionInterval _parameter_update_sub{ORB_ID(parameter_update), 1_s};
+
 	uORB::Subscription _actuator_controls_0_sub{ORB_ID(actuator_controls_0)};
 	uORB::Subscription _battery_status_sub{ORB_ID(battery_status), 0};
-	uORB::Subscription _params_sub{ORB_ID(parameter_update)};
-	uORB::Subscription _vcontrol_mode_sub{ORB_ID(vehicle_control_mode)};
+	uORB::Subscription _magnetometer_bias_estimate_sub{ORB_ID(magnetometer_bias_estimate)};
+	uORB::Subscription _vehicle_control_mode_sub{ORB_ID(vehicle_control_mode)};
+
+	// Used to check, save and use learned magnetometer biases
+	uORB::SubscriptionMultiArray<estimator_sensor_bias_s> _estimator_sensor_bias_subs{ORB_ID::estimator_sensor_bias};
+
+	bool _in_flight_mag_cal_available{false}; ///< from navigation filter
+
+	struct MagCal {
+		uint32_t device_id{0};
+		matrix::Vector3f offset{};
+		matrix::Vector3f variance{};
+	} _mag_cal[ORB_MULTI_MAX_INSTANCES] {};
 
 	uORB::SubscriptionCallbackWorkItem _sensor_sub[MAX_SENSOR_COUNT] {
 		{this, ORB_ID(sensor_mag), 0},
@@ -106,6 +132,10 @@ private:
 		{this, ORB_ID(sensor_mag), 2},
 		{this, ORB_ID(sensor_mag), 3}
 	};
+
+	hrt_abstime _last_calibration_update{0};
+
+	matrix::Vector3f _calibration_estimator_bias[MAX_SENSOR_COUNT] {};
 
 	calibration::Magnetometer _calibration[MAX_SENSOR_COUNT];
 
@@ -126,26 +156,28 @@ private:
 	DataValidatorGroup _voter{1};
 	unsigned _last_failover_count{0};
 
-	uint64_t _timestamp_sample_sum[MAX_SENSOR_COUNT] {0};
-	matrix::Vector3f _mag_sum[MAX_SENSOR_COUNT] {};
-	int _mag_sum_count[MAX_SENSOR_COUNT] {};
+	uint64_t _timestamp_sample_sum[MAX_SENSOR_COUNT] {};
+	matrix::Vector3f _data_sum[MAX_SENSOR_COUNT] {};
+	int _data_sum_count[MAX_SENSOR_COUNT] {};
 	hrt_abstime _last_publication_timestamp[MAX_SENSOR_COUNT] {};
 
-	sensor_mag_s _last_data[MAX_SENSOR_COUNT] {};
+	matrix::Vector3f _last_data[MAX_SENSOR_COUNT] {};
 	bool _advertised[MAX_SENSOR_COUNT] {};
 
+	matrix::Vector3f _sensor_diff[MAX_SENSOR_COUNT] {}; // filtered differences between sensor instances
 	float _mag_angle_diff[2] {};			/**< filtered mag angle differences between sensor instances (Ga) */
 
 	uint8_t _priority[MAX_SENSOR_COUNT] {};
 
 	int8_t _selected_sensor_sub_index{-1};
 
-	bool _armed{false};				/**< arming status of the vehicle */
+	bool _armed{false};
 
 	DEFINE_PARAMETERS(
 		(ParamInt<px4::params::CAL_MAG_COMP_TYP>) _param_mag_comp_typ,
 		(ParamBool<px4::params::SENS_MAG_MODE>) _param_sens_mag_mode,
-		(ParamFloat<px4::params::SENS_MAG_RATE>) _param_sens_mag_rate
+		(ParamFloat<px4::params::SENS_MAG_RATE>) _param_sens_mag_rate,
+		(ParamBool<px4::params::SENS_MAG_AUTOCAL>) _param_sens_mag_autocal
 	)
 };
 }; // namespace sensors

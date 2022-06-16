@@ -46,18 +46,28 @@
 #include "navigator_mode.h"
 #include "mission_block.h"
 
+#include <uORB/Subscription.hpp>
 #include <uORB/topics/home_position.h>
+#include <uORB/topics/rtl_time_estimate.h>
+#include <uORB/topics/vehicle_status.h>
+#include <uORB/topics/wind.h>
+#include <matrix/math.hpp>
+#include <lib/geo/geo.h>
 
 class Navigator;
 
 class RTL : public MissionBlock, public ModuleParams
 {
 public:
+	RTL(Navigator *navigator);
+
+	~RTL() = default;
+
 	enum RTLType {
-		RTL_HOME = 0,
-		RTL_LAND,
-		RTL_MISSION,
-		RTL_CLOSEST,
+		RTL_TYPE_HOME_OR_RALLY = 0,
+		RTL_TYPE_MISSION_LANDING,
+		RTL_TYPE_MISSION_LANDING_REVERSED,
+		RTL_TYPE_CLOSEST,
 	};
 
 	enum RTLDestinationType {
@@ -66,9 +76,11 @@ public:
 		RTL_DESTINATION_SAFE_POINT,
 	};
 
-	RTL(Navigator *navigator);
-
-	~RTL() = default;
+	enum RTLHeadingMode {
+		RTL_NAVIGATION_HEADING = 0,
+		RTL_DESTINATION_HEADING,
+		RTL_CURRENT_HEADING,
+	};
 
 	void on_inactivation() override;
 	void on_inactive() override;
@@ -79,33 +91,47 @@ public:
 
 	void set_return_alt_min(bool min) { _rtl_alt_min = min; }
 
-	int rtl_type() const { return _param_rtl_type.get(); }
+	int get_rtl_type() const { return _param_rtl_type.get(); }
 
-	int rtl_destination();
+	void setClimbAndReturnDone(bool done) { _climb_and_return_done = done; }
+
+	bool getClimbAndReturnDone() { return _climb_and_return_done; }
+
+	void get_rtl_xy_z_speed(float &xy, float &z);
+	matrix::Vector2f get_wind();
+
+	bool getShouldEngageMissionForLanding() const { return _should_engange_mission_for_landing; }
 
 private:
-	/**
-	 * Set the RTL item
-	 */
+
 	void set_rtl_item();
 
-	/**
-	 * Move to next RTL item
-	 */
 	void advance_rtl();
 
-
 	float calculate_return_alt_from_cone_half_angle(float cone_half_angle_deg);
+	void calc_and_pub_rtl_time_estimate();
+
+	float getCruiseGroundSpeed();
+
+	float getClimbRate();
+
+	float getDescendRate();
+
+	float getCruiseSpeed();
+
+	float getHoverLandSpeed();
 
 	enum RTLState {
 		RTL_STATE_NONE = 0,
 		RTL_STATE_CLIMB,
 		RTL_STATE_RETURN,
-		RTL_STATE_TRANSITION_TO_MC,
 		RTL_STATE_DESCEND,
 		RTL_STATE_LOITER,
+		RTL_STATE_TRANSITION_TO_MC,
+		RTL_MOVE_TO_LAND_HOVER_VTOL,
 		RTL_STATE_LAND,
 		RTL_STATE_LANDED,
+		RTL_STATE_HEAD_TO_CENTER,
 	} _rtl_state{RTL_STATE_NONE};
 
 	struct RTLPosition {
@@ -132,15 +158,40 @@ private:
 	hrt_abstime _destination_check_time{0};
 
 	float _rtl_alt{0.0f};	// AMSL altitude at which the vehicle should return to the home position
+	float _rtl_loiter_rad{50.0f};		// radius at which a fixed wing would loiter while descending
+
+	bool _climb_and_return_done{false};	// this flag is set to true if RTL is active and we are past the climb state and return state
 	bool _rtl_alt_min{false};
+	bool _should_engange_mission_for_landing{false};
 
 	DEFINE_PARAMETERS(
-		(ParamFloat<px4::params::RTL_RETURN_ALT>) _param_rtl_return_alt,
+		(ParamFloat<px4::params::RTL_RETURN_ALT>)  _param_rtl_return_alt,
 		(ParamFloat<px4::params::RTL_DESCEND_ALT>) _param_rtl_descend_alt,
-		(ParamFloat<px4::params::RTL_LAND_DELAY>) _param_rtl_land_delay,
-		(ParamFloat<px4::params::RTL_MIN_DIST>) _param_rtl_min_dist,
-		(ParamInt<px4::params::RTL_TYPE>) _param_rtl_type,
-		(ParamInt<px4::params::RTL_CONE_ANG>) _param_rtl_cone_half_angle_deg,
-		(ParamInt<px4::params::RTL_PLD_MD>) _param_rtl_pld_md
+		(ParamFloat<px4::params::RTL_LAND_DELAY>)  _param_rtl_land_delay,
+		(ParamFloat<px4::params::RTL_MIN_DIST>)    _param_rtl_min_dist,
+		(ParamInt<px4::params::RTL_TYPE>)          _param_rtl_type,
+		(ParamInt<px4::params::RTL_CONE_ANG>)      _param_rtl_cone_half_angle_deg,
+		(ParamInt<px4::params::RTL_PLD_MD>)        _param_rtl_pld_md,
+		(ParamFloat<px4::params::RTL_LOITER_RAD>)  _param_rtl_loiter_rad,
+		(ParamInt<px4::params::RTL_HDG_MD>)        _param_rtl_hdg_md,
+		(ParamFloat<px4::params::RTL_TIME_FACTOR>) _param_rtl_time_factor,
+		(ParamInt<px4::params::RTL_TIME_MARGIN>)   _param_rtl_time_margin
 	)
+
+	param_t		_param_mpc_z_v_auto_up{PARAM_INVALID};
+	param_t		_param_mpc_z_v_auto_dn{PARAM_INVALID};
+	param_t		_param_mpc_land_speed{PARAM_INVALID};
+	param_t		_param_fw_climb_rate{PARAM_INVALID};
+	param_t		_param_fw_sink_rate{PARAM_INVALID};
+
+	param_t 	_param_fw_airspeed_trim{PARAM_INVALID};
+	param_t 	_param_mpc_xy_cruise{PARAM_INVALID};
+	param_t 	_param_rover_cruise_speed{PARAM_INVALID};
+
+	uORB::SubscriptionData<wind_s>		_wind_sub{ORB_ID(wind)};
+	uORB::Publication<rtl_time_estimate_s> _rtl_time_estimate_pub{ORB_ID(rtl_time_estimate)};
 };
+
+float time_to_home(const matrix::Vector3f &to_home_vec,
+		   const matrix::Vector2f &wind_velocity, float vehicle_speed_m_s,
+		   float vehicle_descent_speed_m_s);

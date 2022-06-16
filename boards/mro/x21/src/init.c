@@ -53,6 +53,7 @@
 #include <string.h>
 #include <debug.h>
 #include <errno.h>
+#include <syslog.h>
 
 #include <nuttx/board.h>
 #include <nuttx/spi/spi.h>
@@ -240,22 +241,11 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 		syslog(LOG_ERR, "DMA alloc FAILED\n");
 	}
 
-	/* set up the serial DMA polling */
+#if defined(SERIAL_HAVE_RXDMA)
+	// set up the serial DMA polling at 1ms intervals for received bytes that have not triggered a DMA event.
 	static struct hrt_call serial_dma_call;
-	struct timespec ts;
-
-	/*
-	 * Poll at 1ms intervals for received bytes that have not triggered
-	 * a DMA event.
-	 */
-	ts.tv_sec = 0;
-	ts.tv_nsec = 1000000;
-
-	hrt_call_every(&serial_dma_call,
-		       ts_to_abstime(&ts),
-		       ts_to_abstime(&ts),
-		       (hrt_callout)stm32_serial_dma_poll,
-		       NULL);
+	hrt_call_every(&serial_dma_call, 1000, 1000, (hrt_callout)stm32_serial_dma_poll, NULL);
+#endif
 
 	/* initial LED state */
 	drv_led_start();
@@ -272,7 +262,6 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	if (!spi1) {
 		syslog(LOG_ERR, "[boot] FAILED to initialize SPI port 1\n");
 		led_on(LED_AMBER);
-		return -ENODEV;
 	}
 
 	/* Default SPI1 to 1MHz and de-assert the known chip selects. */
@@ -288,7 +277,6 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	if (!spi2) {
 		syslog(LOG_ERR, "[boot] FAILED to initialize SPI port 2\n");
 		led_on(LED_AMBER);
-		return -ENODEV;
 	}
 
 	/* Default SPI2 to 37.5 MHz (40 MHz rounded to nearest valid divider, F4 max)
@@ -303,14 +291,11 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 #ifdef CONFIG_MMCSD
 	/* First, get an instance of the SDIO interface */
-
 	sdio = sdio_initialize(CONFIG_NSH_MMCSDSLOTNO);
 
 	if (!sdio) {
-		syslog(LOG_ERR, "[boot] Failed to initialize SDIO slot %d\n",
-		       CONFIG_NSH_MMCSDSLOTNO);
+		syslog(LOG_ERR, "[boot] Failed to initialize SDIO slot %d\n", CONFIG_NSH_MMCSDSLOTNO);
 		led_on(LED_AMBER);
-		return -ENODEV;
 	}
 
 	/* Now bind the SDIO interface to the MMC/SD driver */
@@ -319,13 +304,15 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	if (ret != OK) {
 		syslog(LOG_ERR, "[boot] Failed to bind SDIO to the MMC/SD driver: %d\n", ret);
 		led_on(LED_AMBER);
-		return ret;
 	}
 
 	/* Then let's guess and say that there is a card in the slot. There is no card detect GPIO. */
 	sdio_mediachange(sdio, true);
 
 #endif
+
+	/* Configure the HW based on the manifest */
+	px4_platform_configure();
 
 	return OK;
 }

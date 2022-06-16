@@ -41,6 +41,7 @@
 
 #include "Limits.hpp"
 
+#include <px4_platform_common/defines.h>
 #include <matrix/matrix/math.hpp>
 
 namespace math
@@ -51,6 +52,23 @@ template<typename T>
 int signNoZero(T val)
 {
 	return (T(0) <= val) - (val < T(0));
+}
+
+/**
+ * Sign function based on a boolean
+ *
+ * @param[in] positive Truth value to take the sign from
+ * @return 1 if positive is true, -1 if positive is false
+ */
+inline int signFromBool(bool positive)
+{
+	return positive ? 1 : -1;
+}
+
+template<typename T>
+T sq(T val)
+{
+	return val * val;
 }
 
 /*
@@ -133,7 +151,7 @@ const T expo_deadzone(const T &value, const T &e, const T &dz)
 template<typename T>
 const T gradual(const T &value, const T &x_low, const T &x_high, const T &y_low, const T &y_high)
 {
-	if (value < x_low) {
+	if (value <= x_low) {
 		return y_low;
 
 	} else if (value > x_high) {
@@ -170,6 +188,92 @@ const T gradual3(const T &value,
 	} else {
 		return gradual(value, x_middle, x_high, y_middle, y_high);
 	}
+}
+
+/*
+ * Squareroot, linear function with fixed corner point at intersection (1,1)
+ *                     /
+ *      linear        /
+ *                   /
+ * 1                /
+ *                /
+ *      sqrt     |
+ *              |
+ * 0     -------
+ *             0    1
+ */
+template<typename T>
+const T sqrt_linear(const T &value)
+{
+	if (value < static_cast<T>(0)) {
+		return static_cast<T>(0);
+
+	} else if (value < static_cast<T>(1)) {
+		return sqrtf(value);
+
+	} else {
+		return value;
+	}
+}
+
+/*
+ * Linear interpolation between 2 points a, and b.
+ * s=0 return a
+ * s=1 returns b
+ * Any value for s is valid.
+ */
+template<typename T>
+const T lerp(const T &a, const T &b, const T &s)
+{
+	return (static_cast<T>(1) - s) * a + s * b;
+}
+
+template<typename T>
+constexpr T negate(T value)
+{
+	static_assert(sizeof(T) > 2, "implement for T");
+	return -value;
+}
+
+template<>
+constexpr int16_t negate<int16_t>(int16_t value)
+{
+	if (value == INT16_MAX) {
+		return INT16_MIN;
+
+	} else if (value == INT16_MIN) {
+		return INT16_MAX;
+	}
+
+	return -value;
+}
+
+/*
+ * This function calculates the Hamming weight, i.e. counts the number of bits that are set
+ * in a given integer.
+ */
+
+template<typename T>
+int countSetBits(T n)
+{
+	int count = 0;
+
+	while (n) {
+		count += n & 1;
+		n >>= 1;
+	}
+
+	return count;
+}
+
+inline bool isFinite(const float &value)
+{
+	return PX4_ISFINITE(value);
+}
+
+inline bool isFinite(const matrix::Vector3f &value)
+{
+	return PX4_ISFINITE(value(0)) && PX4_ISFINITE(value(1)) && PX4_ISFINITE(value(2));
 }
 
 } /* namespace math */

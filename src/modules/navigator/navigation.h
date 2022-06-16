@@ -48,8 +48,10 @@
 #  define NUM_MISSIONS_SUPPORTED 50
 #elif defined(__PX4_POSIX)
 #  define NUM_MISSIONS_SUPPORTED (UINT16_MAX-1) // This is allocated as needed.
+#elif defined(RAM_BASED_MISSIONS)
+#  define NUM_MISSIONS_SUPPORTED 500
 #else
-#  define NUM_MISSIONS_SUPPORTED 2000 // This allocates a file of around 181 kB on the SD card.
+#  define NUM_MISSIONS_SUPPORTED 500
 #endif
 
 #define NAV_EPSILON_POSITION	0.001f	/**< Anything smaller than this is considered zero */
@@ -83,8 +85,12 @@ enum NAV_CMD {
 	NAV_CMD_DO_MOUNT_CONTROL = 205,
 	NAV_CMD_DO_SET_CAM_TRIGG_INTERVAL = 214,
 	NAV_CMD_DO_SET_CAM_TRIGG_DIST = 206,
+	NAV_CMD_OBLIQUE_SURVEY = 260,
 	NAV_CMD_SET_CAMERA_MODE = 530,
 	NAV_CMD_SET_CAMERA_ZOOM = 531,
+	NAV_CMD_SET_CAMERA_FOCUS = 532,
+	NAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW = 1000,
+	NAV_CMD_DO_GIMBAL_MANAGER_CONFIGURE = 1001,
 	NAV_CMD_IMAGE_START_CAPTURE = 2000,
 	NAV_CMD_IMAGE_STOP_CAPTURE = 2001,
 	NAV_CMD_DO_TRIGGER_CONTROL = 2003,
@@ -152,7 +158,6 @@ struct mission_item_s {
 		struct {
 			union {
 				float time_inside;		/**< time that the MAV should stay inside the radius before advancing in seconds */
-				float pitch_min;		/**< minimal pitch angle for fixed wing takeoff waypoints */
 				float circle_radius;		/**< geofence circle radius in meters (only used for NAV_CMD_NAV_FENCE_CIRCLE*) */
 			};
 			float acceptance_radius;		/**< default radius in which the mission is accepted as reached in meters */

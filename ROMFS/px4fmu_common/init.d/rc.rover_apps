@@ -8,10 +8,17 @@
 #
 # Start the attitude and position estimator.
 #
-ekf2 start
+ekf2 start &
 #attitude_estimator_q start
 #local_position_estimator start
 
+if param compare SYS_CTRL_ALLOC 1
+then
+	#
+	# Start Control Allocator
+	#
+	control_allocator start
+fi
 
 #
 # Start attitude controllers.

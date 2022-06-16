@@ -44,7 +44,7 @@ function(px4_add_unit_gtest)
 		px4_parse_function_args(
 			NAME px4_add_unit_gtest
 			ONE_VALUE SRC
-			MULTI_VALUE LINKLIBS
+			MULTI_VALUE EXTRA_SRCS COMPILE_FLAGS INCLUDES LINKLIBS
 			REQUIRED SRC
 			ARGN ${ARGN})
 
@@ -54,10 +54,18 @@ function(px4_add_unit_gtest)
 		set(TESTNAME unit-${TESTNAME})
 
 		# build a binary for the unit test
-		add_executable(${TESTNAME} EXCLUDE_FROM_ALL ${SRC})
+		add_executable(${TESTNAME} EXCLUDE_FROM_ALL ${SRC} ${EXTRA_SRCS})
 
 		# link the libary to test and gtest
 		target_link_libraries(${TESTNAME} ${LINKLIBS} gtest_main)
+
+		if(COMPILE_FLAGS)
+			target_compile_options(${TESTNAME} PRIVATE ${COMPILE_FLAGS})
+		endif()
+
+		if(INCLUDES)
+			target_include_directories(${TESTNAME} PRIVATE ${INCLUDES})
+		endif()
 
 		# add the test to the ctest plan
 		add_test(NAME ${TESTNAME}
@@ -76,7 +84,7 @@ function(px4_add_functional_gtest)
 		px4_parse_function_args(
 			NAME px4_add_functional_gtest
 			ONE_VALUE SRC
-			MULTI_VALUE LINKLIBS
+			MULTI_VALUE EXTRA_SRCS COMPILE_FLAGS INCLUDES LINKLIBS
 			REQUIRED SRC
 			ARGN ${ARGN})
 
@@ -86,14 +94,13 @@ function(px4_add_functional_gtest)
 		set(TESTNAME functional-${TESTNAME})
 
 		# build a binary for the unit test
-		add_executable(${TESTNAME} EXCLUDE_FROM_ALL ${SRC})
+		add_executable(${TESTNAME} EXCLUDE_FROM_ALL ${SRC} ${EXTRA_SRCS})
 
 		# link the libary to test and gtest
 		target_link_libraries(${TESTNAME} ${LINKLIBS} gtest_functional_main
-		                                              px4_daemon
-		                                              px4_platform
-		                                              modules__uORB
 		                                              px4_layer
+		                                              px4_platform
+		                                              uORB
 		                                              systemlib
 		                                              cdev
 		                                              px4_work_queue
@@ -104,6 +111,14 @@ function(px4_add_functional_gtest)
 		                                              tinybson
 		                                              uorb_msgs
 		                                              test_stubs)  #put test_stubs last
+
+		if(COMPILE_FLAGS)
+			target_compile_options(${TESTNAME} PRIVATE ${COMPILE_FLAGS})
+		endif()
+
+		if(INCLUDES)
+			target_include_directories(${TESTNAME} PRIVATE ${INCLUDES})
+		endif()
 
 		# add the test to the ctest plan
 		add_test(NAME ${TESTNAME}

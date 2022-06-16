@@ -33,7 +33,7 @@
 #pragma once
 
 
-#include <px4_platform/micro_hal.h>
+#include "../../../nxp_common/include/px4_arch/micro_hal.h"
 
 __BEGIN_DECLS
 
@@ -51,6 +51,7 @@ __BEGIN_DECLS
 #include <s32k1xx_pin.h>
 #include <s32k1xx_lpspi.h>
 #include <s32k1xx_lpi2c.h>
+#include <s32k1xx_flexcan.h>
 //#include <s32k1xx_uid.h>
 
 /* s32k1xx defines the 128 bit UUID as
@@ -88,10 +89,6 @@ __BEGIN_DECLS
 #define PX4_CPU_UUID_WORD32_FORMAT_SIZE         (PX4_CPU_UUID_WORD32_LENGTH-1+(2*PX4_CPU_UUID_BYTE_LENGTH)+1)
 #define PX4_CPU_MFGUID_FORMAT_SIZE              ((2*PX4_CPU_MFGUID_BYTE_LENGTH)+1)
 
-#define s32k1xx_bbsram_savepanic(fileno, context, length) (0) // todo:Not implemented yet
-
-#define px4_savepanic(fileno, context, length)   s32k1xx_bbsram_savepanic(fileno, context, length)
-
 /* bus_num is zero based on s32k1xx and must be translated from the legacy one based */
 
 #define PX4_BUS_OFFSET       1                  /* s32k1xx buses are 0 based and adjustment is needed */
@@ -111,4 +108,16 @@ __BEGIN_DECLS
 #define px4_arch_gpiosetevent(pinset,r,f,e,fp,a)  s32k1xx_gpiosetevent(pinset,r,f,e,fp,a)
 
 #define I2C_RESET(q)
+
+/* CAN bootloader usage */
+
+#define TIMER_HRT_CYCLES_PER_US (STM32_HCLK_FREQUENCY/1000000)
+#define TIMER_HRT_CYCLES_PER_MS (STM32_HCLK_FREQUENCY/1000)
+
+#define crc_HiLOC       S32K1XX_CAN0_RXIMR27
+#define crc_LoLOC       S32K1XX_CAN0_RXIMR28
+#define signature_LOC   S32K1XX_CAN0_RXIMR29
+#define bus_speed_LOC   S32K1XX_CAN0_RXIMR30
+#define node_id_LOC     S32K1XX_CAN0_RXIMR31
+
 __END_DECLS

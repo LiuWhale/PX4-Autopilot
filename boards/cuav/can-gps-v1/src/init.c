@@ -53,6 +53,7 @@
 #include <string.h>
 #include <debug.h>
 #include <errno.h>
+#include <syslog.h>
 
 #include <nuttx/board.h>
 #include <nuttx/i2c/i2c_master.h>
@@ -66,10 +67,15 @@
 
 #include <drivers/drv_hrt.h>
 #include <drivers/drv_board_led.h>
+#include <drivers/drv_watchdog.h>
 
 #include <systemlib/px4_macros.h>
 
 #include <px4_platform_common/init.h>
+
+# if defined(FLASH_BASED_PARAMS)
+#  include <parameters/flashparams/flashfs.h>
+#endif
 
 /************************************************************************************
  * Name: stm32_boardinitialize
@@ -84,11 +90,15 @@
 __EXPORT void
 stm32_boardinitialize(void)
 {
+	watchdog_init();
 	// Configure CAN interface
 	stm32_configgpio(GPIO_CAN1_RX);
 	stm32_configgpio(GPIO_CAN1_TX);
 
 	stm32_configgpio(GPIO_CAN1_SILENT_S0);
+
+	stm32_configgpio(GPIO_LED_SAFETY);
+	stm32_configgpio(GPIO_BTN_SAFETY);
 
 	// Configure SPI all interfaces GPIO & enable power.
 	stm32_spiinitialize();
@@ -122,6 +132,24 @@ stm32_boardinitialize(void)
 __EXPORT int board_app_initialize(uintptr_t arg)
 {
 	px4_platform_init();
+
+#if defined(FLASH_BASED_PARAMS)
+	static sector_descriptor_t params_sector_map[] = {
+		{2, 16 * 1024, 0x08008000},
+		{3, 16 * 1024, 0x0800C000},
+		{0, 0, 0},
+	};
+
+	/* Initialize the flashfs layer to use heap allocated memory */
+	int result = parameter_flashfs_init(params_sector_map, NULL, 0);
+
+	if (result != OK) {
+		syslog(LOG_ERR, "[boot] FAILED to init params in FLASH %d\n", result);
+	}
+
+#endif // FLASH_BASED_PARAMS
+
+	//px4_platform_configure();
 
 	return OK;
 }

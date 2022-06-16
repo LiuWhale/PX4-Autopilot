@@ -79,6 +79,7 @@ SECTIONS
 		_bootdelay_signature = ABSOLUTE(.);
 		FILL(0xffecc2925d7d05c5)
 		. += 8;
+		KEEP(*(.app_descriptor))
 		*(.text .text.*)
 		*(.fixup)
 		*(.gnu.warning)
@@ -100,14 +101,6 @@ SECTIONS
                 _einit = ABSOLUTE(.);
         } > flash
 
-	/*
-	 * Construction data for parameters.
-	 */
-	__param ALIGN(4): {
-		__param_start = ABSOLUTE(.);
-		KEEP(*(__param*))
-		__param_end = ABSOLUTE(.);
-	} > flash
 
 	.ARM.extab : {
 		*(.ARM.extab*)

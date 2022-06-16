@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2014-2017 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2014-2021 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -105,3 +105,241 @@ PARAM_DEFINE_FLOAT(UAVCAN_RNG_MIN, 0.3f);
  * @group UAVCAN
  */
 PARAM_DEFINE_FLOAT(UAVCAN_RNG_MAX, 200.0f);
+
+/**
+ * UAVCAN ANTI_COLLISION light operating mode
+ *
+ * This parameter defines the minimum condition under which the system will command
+ * the ANTI_COLLISION lights on
+ *
+ *  0 - Always off
+ *  1 - When autopilot is armed
+ *  2 - When autopilot is prearmed
+ *  3 - Always on
+ *
+ * @min 0
+ * @max 3
+ * @value 0 Always off
+ * @value 1 When autopilot is armed
+ * @value 2 When autopilot is prearmed
+ * @value 3 Always on
+ * @reboot_required true
+ * @group UAVCAN
+ */
+PARAM_DEFINE_INT32(UAVCAN_LGT_ANTCL, 2);
+
+/**
+ * UAVCAN STROBE light operating mode
+ *
+ * This parameter defines the minimum condition under which the system will command
+ * the STROBE lights on
+ *
+ *  0 - Always off
+ *  1 - When autopilot is armed
+ *  2 - When autopilot is prearmed
+ *  3 - Always on
+ *
+ * @min 0
+ * @max 3
+ * @value 0 Always off
+ * @value 1 When autopilot is armed
+ * @value 2 When autopilot is prearmed
+ * @value 3 Always on
+ * @reboot_required true
+ * @group UAVCAN
+ */
+PARAM_DEFINE_INT32(UAVCAN_LGT_STROB, 1);
+
+/**
+ * UAVCAN RIGHT_OF_WAY light operating mode
+ *
+ * This parameter defines the minimum condition under which the system will command
+ * the RIGHT_OF_WAY lights on
+ *
+ *  0 - Always off
+ *  1 - When autopilot is armed
+ *  2 - When autopilot is prearmed
+ *  3 - Always on
+ *
+ * @min 0
+ * @max 3
+ * @value 0 Always off
+ * @value 1 When autopilot is armed
+ * @value 2 When autopilot is prearmed
+ * @value 3 Always on
+ * @reboot_required true
+ * @group UAVCAN
+ */
+PARAM_DEFINE_INT32(UAVCAN_LGT_NAV, 3);
+
+/**
+ * UAVCAN LIGHT_ID_LANDING light operating mode
+ *
+ * This parameter defines the minimum condition under which the system will command
+ * the LIGHT_ID_LANDING lights on
+ *
+ *  0 - Always off
+ *  1 - When autopilot is armed
+ *  2 - When autopilot is prearmed
+ *  3 - Always on
+ *
+ * @min 0
+ * @max 3
+ * @value 0 Always off
+ * @value 1 When autopilot is armed
+ * @value 2 When autopilot is prearmed
+ * @value 3 Always on
+ * @reboot_required true
+ * @group UAVCAN
+ */
+PARAM_DEFINE_INT32(UAVCAN_LGT_LAND, 0);
+
+/**
+ * subscription airspeed
+ *
+ * Enable UAVCAN airspeed subscriptions.
+ *  uavcan::equipment::air_data::IndicatedAirspeed
+ *  uavcan::equipment::air_data::TrueAirspeed
+ *  uavcan::equipment::air_data::StaticTemperature
+ *
+ * @boolean
+ * @reboot_required true
+ * @group UAVCAN
+ */
+PARAM_DEFINE_INT32(UAVCAN_SUB_ASPD, 0);
+
+/**
+ * subscription barometer
+ *
+ * Enable UAVCAN barometer subscription.
+ *  uavcan::equipment::air_data::StaticPressure
+ *  uavcan::equipment::air_data::StaticTemperature
+ *
+ * @boolean
+ * @reboot_required true
+ * @group UAVCAN
+ */
+PARAM_DEFINE_INT32(UAVCAN_SUB_BARO, 0);
+
+/**
+ * subscription battery
+ *
+ * Enable UAVCAN battery subscription.
+ *  uavcan::equipment::power::BatteryInfo
+ *  ardupilot::equipment::power::BatteryInfoAux
+ *
+ * @boolean
+ * @reboot_required true
+ * @group UAVCAN
+ */
+PARAM_DEFINE_INT32(UAVCAN_SUB_BAT, 0);
+
+/**
+ * subscription differential pressure
+ *
+ * Enable UAVCAN differential pressure subscription.
+ *  uavcan::equipment::air_data::RawAirData
+ *
+ * @boolean
+ * @reboot_required true
+ * @group UAVCAN
+ */
+PARAM_DEFINE_INT32(UAVCAN_SUB_DPRES, 0);
+
+/**
+ * subscription flow
+ *
+ * Enable UAVCAN optical flow subscription.
+ *
+ * @boolean
+ * @reboot_required true
+ * @group UAVCAN
+ */
+PARAM_DEFINE_INT32(UAVCAN_SUB_FLOW, 0);
+
+/**
+ * subscription GPS
+ *
+ * Enable UAVCAN GPS subscriptions.
+ *  uavcan::equipment::gnss::Fix
+ *  uavcan::equipment::gnss::Fix2
+ *  uavcan::equipment::gnss::Auxiliary
+ *
+ * @boolean
+ * @reboot_required true
+ * @group UAVCAN
+ */
+PARAM_DEFINE_INT32(UAVCAN_SUB_GPS, 1);
+
+/**
+ * subscription hygrometer
+ *
+ * Enable UAVCAN hygrometer subscriptions.
+ *  dronecan::sensors::hygrometer::Hygrometer
+ *
+ * @boolean
+ * @reboot_required true
+ * @group UAVCAN
+ */
+PARAM_DEFINE_INT32(UAVCAN_SUB_HYGRO, 0);
+
+/**
+ * subscription ICE
+ *
+ * Enable UAVCAN internal combusion engine (ICE) subscription.
+ *  uavcan::equipment::ice::reciprocating::Status
+ *
+ * @boolean
+ * @reboot_required true
+ * @group UAVCAN
+ */
+PARAM_DEFINE_INT32(UAVCAN_SUB_ICE, 0);
+
+/**
+ * subscription IMU
+ *
+ * Enable UAVCAN IMU subscription.
+ *  uavcan::equipment::ahrs::RawIMU
+ *
+ * @boolean
+ * @reboot_required true
+ * @group UAVCAN
+ */
+PARAM_DEFINE_INT32(UAVCAN_SUB_IMU, 0);
+
+/**
+ * subscription magnetometer
+ *
+ * Enable UAVCAN mag subscription.
+ *  uavcan::equipment::ahrs::MagneticFieldStrength
+ *  uavcan::equipment::ahrs::MagneticFieldStrength2
+ *
+ * @boolean
+ * @reboot_required true
+ * @group UAVCAN
+ */
+PARAM_DEFINE_INT32(UAVCAN_SUB_MAG, 1);
+
+/**
+ * subscription range finder
+ *
+ * Enable UAVCAN range finder subscription.
+ *  uavcan::equipment::range_sensor::Measurement
+ *
+ * @boolean
+ * @reboot_required true
+ * @group UAVCAN
+ */
+PARAM_DEFINE_INT32(UAVCAN_SUB_RNG, 0);
+
+/**
+ * subscription button
+ *
+ * Enable UAVCAN button subscription.
+ *  ardupilot::indication::Button
+ *
+ * @boolean
+ * @reboot_required true
+ * @group UAVCAN
+ */
+PARAM_DEFINE_INT32(UAVCAN_SUB_BTN, 0);

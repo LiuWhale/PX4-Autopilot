@@ -33,35 +33,29 @@
 
 #pragma once
 
-#include <drivers/drv_mag.h>
 #include <drivers/drv_hrt.h>
-#include <lib/cdev/CDev.hpp>
 #include <lib/conversion/rotation.h>
 #include <uORB/PublicationMulti.hpp>
 #include <uORB/topics/sensor_mag.h>
 
-class PX4Magnetometer : public cdev::CDev
+class PX4Magnetometer
 {
 public:
 	PX4Magnetometer(uint32_t device_id, enum Rotation rotation = ROTATION_NONE);
-	~PX4Magnetometer() override;
-
-	bool external() { return _external; }
+	~PX4Magnetometer();
 
 	void set_device_id(uint32_t device_id) { _device_id = device_id; }
 	void set_device_type(uint8_t devtype);
 	void set_error_count(uint32_t error_count) { _error_count = error_count; }
-	void increase_error_count() { _error_count++; }
 	void set_scale(float scale) { _scale = scale; }
 	void set_temperature(float temperature) { _temperature = temperature; }
-	void set_external(bool external) { _external = external; }
 
 	void update(const hrt_abstime &timestamp_sample, float x, float y, float z);
 
-	int get_class_instance() { return _class_device_instance; };
+	int get_instance() { return _sensor_pub.get_instance(); };
 
 private:
-	uORB::PublicationQueuedMulti<sensor_mag_s> _sensor_pub;
+	uORB::PublicationMulti<sensor_mag_s> _sensor_pub{ORB_ID(sensor_mag)};
 
 	uint32_t		_device_id{0};
 	const enum Rotation	_rotation;
@@ -69,8 +63,4 @@ private:
 	float			_scale{1.f};
 	float			_temperature{NAN};
 	uint32_t		_error_count{0};
-
-	bool _external{false};
-
-	int _class_device_instance{-1};
 };

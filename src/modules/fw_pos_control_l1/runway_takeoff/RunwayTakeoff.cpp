@@ -45,8 +45,8 @@
 #include "RunwayTakeoff.h"
 #include <systemlib/mavlink_log.h>
 #include <mathlib/mathlib.h>
+#include <px4_platform_common/events.h>
 
-using matrix::Vector2f;
 using namespace time_literals;
 
 namespace runwaytakeoff
@@ -69,8 +69,8 @@ void RunwayTakeoff::init(const hrt_abstime &now, float yaw, double current_lat, 
 	_state = RunwayTakeoffState::THROTTLE_RAMP;
 	_initialized_time = now;
 	_climbout = true; // this is true until climbout is finished
-	_start_wp(0) = (float)current_lat;
-	_start_wp(1) = (float)current_lon;
+	_start_wp(0) = current_lat;
+	_start_wp(1) = current_lon;
 }
 
 void RunwayTakeoff::update(const hrt_abstime &now, float airspeed, float alt_agl,
@@ -89,7 +89,9 @@ void RunwayTakeoff::update(const hrt_abstime &now, float airspeed, float alt_agl
 	case RunwayTakeoffState::CLAMPED_TO_RUNWAY:
 		if (airspeed > _param_fw_airspd_min.get() * _param_rwto_airspd_scl.get()) {
 			_state = RunwayTakeoffState::TAKEOFF;
-			mavlink_log_info(mavlink_log_pub, "#Takeoff airspeed reached");
+			mavlink_log_info(mavlink_log_pub, "#Takeoff airspeed reached\t");
+			events::send(events::ID("runway_takeoff_reached_airspeed"), events::Log::Info,
+				     "Takeoff airspeed reached");
 		}
 
 		break;
@@ -103,11 +105,12 @@ void RunwayTakeoff::update(const hrt_abstime &now, float airspeed, float alt_agl
 			 * The navigator will take this as starting point to navigate towards the takeoff WP.
 			 */
 			if (_param_rwto_hdg.get() == 0) {
-				_start_wp(0) = (float)current_lat;
-				_start_wp(1) = (float)current_lon;
+				_start_wp(0) = current_lat;
+				_start_wp(1) = current_lon;
 			}
 
-			mavlink_log_info(mavlink_log_pub, "#Climbout");
+			mavlink_log_info(mavlink_log_pub, "#Climbout\t");
+			events::send(events::ID("runway_takeoff_climbout"), events::Log::Info, "Climbout");
 		}
 
 		break;
@@ -116,7 +119,8 @@ void RunwayTakeoff::update(const hrt_abstime &now, float airspeed, float alt_agl
 		if (alt_agl > _param_fw_clmbout_diff.get()) {
 			_climbout = false;
 			_state = RunwayTakeoffState::FLY;
-			mavlink_log_info(mavlink_log_pub, "#Navigating to waypoint");
+			mavlink_log_info(mavlink_log_pub, "#Navigating to waypoint\t");
+			events::send(events::ID("runway_takeoff_nav_to_wp"), events::Log::Info, "Navigating to waypoint");
 		}
 
 		break;
@@ -221,13 +225,12 @@ bool RunwayTakeoff::resetIntegrators()
  * the climbtout minimum pitch (parameter).
  * Otherwise use the minimum that is enforced generally (parameter).
  */
-float RunwayTakeoff::getMinPitch(float sp_min, float climbout_min, float min)
+float RunwayTakeoff::getMinPitch(float climbout_min, float min)
 {
 	if (_state < RunwayTakeoffState::FLY) {
-		return math::max(sp_min, climbout_min);
-	}
+		return climbout_min;
 
-	else {
+	} else {
 		return min;
 	}
 }
@@ -247,14 +250,6 @@ float RunwayTakeoff::getMaxPitch(float max)
 	else {
 		return max;
 	}
-}
-
-/*
- * Returns the "previous" (start) WP for navigation.
- */
-Vector2f RunwayTakeoff::getStartWP()
-{
-	return _start_wp;
 }
 
 void RunwayTakeoff::reset()

@@ -16,6 +16,16 @@ import process_helper as ph
 from typing import Any, Dict, List, NoReturn, TextIO, Optional
 from types import FrameType
 
+try:
+    import requests
+except ImportError as e:
+    print("Failed to import requests: " + str(e))
+    print("")
+    print("You may need to install it using:")
+    print("    pip3 install --user requests")
+    print("")
+    sys.exit(1)
+
 
 def main() -> NoReturn:
 
@@ -37,9 +47,14 @@ def main() -> NoReturn:
                              "(or multiple cases with wildcard '*')")
     parser.add_argument("--debugger", default="",
                         help="choice from valgrind, callgrind, gdb, lldb")
+    parser.add_argument("--upload", default=False, action='store_true',
+                        help="Upload logs to logs.px4.io")
     parser.add_argument("--verbose", default=False, action='store_true',
                         help="enable more verbose output")
     parser.add_argument("config_file", help="JSON config file to use")
+    parser.add_argument("--build-dir", type=str,
+                        default='build/px4_sitl_default/',
+                        help="relative path where the built files are stored")
     args = parser.parse_args()
 
     with open(args.config_file) as json_file:
@@ -50,7 +65,7 @@ def main() -> NoReturn:
               .format(config["mode"]))
         sys.exit(1)
 
-    if not is_everything_ready(config):
+    if not is_everything_ready(config, args.build_dir):
         sys.exit(1)
 
     if args.verbose:
@@ -67,7 +82,9 @@ def main() -> NoReturn:
         args.debugger,
         args.log_dir,
         args.gui,
-        args.verbose
+        args.verbose,
+        args.upload,
+        args.build_dir
     )
     signal.signal(signal.SIGINT, tester.sigint_handler)
 
@@ -81,7 +98,7 @@ def is_running(process_name: str) -> bool:
     return False
 
 
-def is_everything_ready(config: Dict[str, str]) -> bool:
+def is_everything_ready(config: Dict[str, str], build_dir: str) -> bool:
     result = True
 
     if config['mode'] == 'sitl':
@@ -89,10 +106,11 @@ def is_everything_ready(config: Dict[str, str]) -> bool:
             print("px4 process already running\n"
                   "run `killall px4` and try again")
             result = False
-        if not os.path.isfile('build/px4_sitl_default/bin/px4'):
+        if not os.path.isfile(os.path.join(build_dir, 'bin/px4')):
             print("PX4 SITL is not built\n"
                   "run `DONT_RUN=1 "
-                  "make px4_sitl gazebo mavsdk_tests`")
+                  "make px4_sitl gazebo mavsdk_tests` or "
+                  "`DONT_RUN=1 make px4_sitl_rtps gazebo mavsdk_tests`")
             result = False
         if config['simulator'] == 'gazebo':
             if is_running('gzserver'):
@@ -104,10 +122,12 @@ def is_everything_ready(config: Dict[str, str]) -> bool:
                       "run `killall gzclient` and try again")
                 result = False
 
-    if not os.path.isfile('build/px4_sitl_default/mavsdk_tests/mavsdk_tests'):
+    if not os.path.isfile(os.path.join(build_dir,
+                                       'mavsdk_tests/mavsdk_tests')):
         print("Test runner is not built\n"
               "run `DONT_RUN=1 "
-              "make px4_sitl gazebo mavsdk_tests`")
+              "make px4_sitl gazebo mavsdk_tests` or "
+              "`DONT_RUN=1 make px4_sitl_rtps gazebo mavsdk_tests`")
         result = False
 
     return result
@@ -124,8 +144,11 @@ class Tester:
                  debugger: str,
                  log_dir: str,
                  gui: bool,
-                 verbose: bool):
+                 verbose: bool,
+                 upload: bool,
+                 build_dir: str):
         self.config = config
+        self.build_dir = build_dir
         self.active_runners: List[ph.Runner]
         self.iterations = iterations
         self.abort_early = abort_early
@@ -135,33 +158,24 @@ class Tester:
         self.log_dir = log_dir
         self.gui = gui
         self.verbose = verbose
+        self.upload = upload
         self.start_time = datetime.datetime.now()
         self.log_fd: Any[TextIO] = None
-
-    @classmethod
-    def determine_tests(cls,
-                        tests: List[Dict[str, Any]],
-                        model: str,
-                        case: str) -> List[Dict[str, Any]]:
-        for test in tests:
-            test['selected'] = (model == 'all' or model == test['model'])
-            test['cases'] = dict.fromkeys(
-                cls.query_test_cases(test['test_filter']))
-            for key in test['cases'].keys():
-                test['cases'][key] = {
-                    'selected': (test['selected'] and
-                                 (case == 'all' or
-                                  cls.wildcard_match(case, key)))}
-
-        return tests
 
     @staticmethod
     def wildcard_match(pattern: str, potential_match: str) -> bool:
         return fnmatch.fnmatchcase(potential_match, pattern)
 
     @staticmethod
-    def query_test_cases(filter: str) -> List[str]:
-        cmd = os.getcwd() + "/build/px4_sitl_default/mavsdk_tests/mavsdk_tests"
+    def plural_s(n_items: int) -> str:
+        if n_items > 1:
+            return "s"
+        else:
+            return ""
+
+    @staticmethod
+    def query_test_cases(build_dir: str, filter: str) -> List[str]:
+        cmd = os.path.join(build_dir, 'mavsdk_tests/mavsdk_tests')
         args = ["--list-test-names-only", filter]
         p = subprocess.Popen(
             [cmd] + args,
@@ -172,12 +186,20 @@ class Tester:
         cases = str(p.stdout.read().decode("utf-8")).strip().split('\n')
         return cases
 
-    @staticmethod
-    def plural_s(n_items: int) -> str:
-        if n_items > 1:
-            return "s"
-        else:
-            return ""
+    def determine_tests(self,
+                        tests: List[Dict[str, Any]],
+                        model: str,
+                        case: str) -> List[Dict[str, Any]]:
+        for test in tests:
+            test['selected'] = (model == 'all' or model == test['model'])
+            test['cases'] = dict.fromkeys(
+                self.query_test_cases(self.build_dir, test['test_filter']))
+            for key in test['cases'].keys():
+                test['cases'][key] = {
+                    'selected': (test['selected'] and
+                                 (case == 'all' or
+                                  self.wildcard_match(case, key)))}
+        return tests
 
     def run(self) -> bool:
         self.show_plans()
@@ -325,10 +347,10 @@ class Tester:
     def run_test_case(self, test: Dict[str, Any],
                       case: str, log_dir: str) -> bool:
 
-        self.start_runners(log_dir, test, case)
-
         logfile_path = self.determine_logfile_path(log_dir, 'combined')
         self.start_combined_log(logfile_path)
+
+        self.start_runners(log_dir, test, case)
 
         test_timeout_s = test['timeout_min']*60
         while self.active_runners[-1].time_elapsed_s() < test_timeout_s:
@@ -364,6 +386,12 @@ class Tester:
             print("  - {}".format(logfile_path))
             for runner in self.active_runners:
                 print("  - {}".format(runner.get_log_filename()))
+
+        if self.upload:
+            ulog_file = self.parse_for_ulog_file(
+                self.get_combined_log(logfile_path))
+            self.upload_log(ulog_file, test['model'], case, is_success)
+
         return is_success
 
     def start_runners(self,
@@ -371,6 +399,7 @@ class Tester:
                       test: Dict[str, Any],
                       case: str) -> None:
         self.active_runners = []
+
         if self.config['mode'] == 'sitl':
             px4_runner = ph.Px4Runner(
                 os.getcwd(),
@@ -379,7 +408,8 @@ class Tester:
                 case,
                 self.get_max_speed_factor(test),
                 self.debugger,
-                self.verbose)
+                self.verbose,
+                self.build_dir)
             self.active_runners.append(px4_runner)
 
             if self.config['simulator'] == 'gazebo':
@@ -389,7 +419,8 @@ class Tester:
                     test['vehicle'],
                     case,
                     self.get_max_speed_factor(test),
-                    self.verbose)
+                    self.verbose,
+                    self.build_dir)
                 self.active_runners.append(gzserver_runner)
 
                 gzmodelspawn_runner = ph.GzmodelspawnRunner(
@@ -397,7 +428,8 @@ class Tester:
                     log_dir,
                     test['vehicle'],
                     case,
-                    self.verbose)
+                    self.verbose,
+                    self.build_dir)
                 self.active_runners.append(gzmodelspawn_runner)
 
                 if self.gui:
@@ -415,49 +447,113 @@ class Tester:
             test['model'],
             case,
             self.config['mavlink_connection'],
-            self.verbose)
+            self.speed_factor,
+            self.verbose,
+            self.build_dir)
         self.active_runners.append(mavsdk_tests_runner)
 
         abort = False
         for runner in self.active_runners:
             runner.set_log_filename(
                 self.determine_logfile_path(log_dir, runner.name))
-            try:
-                runner.start()
-            except TimeoutError:
+
+            if not self.try_to_run_several_times(runner):
                 abort = True
-                print("A timeout happened for runner: {}"
-                      .format(runner.name))
                 break
 
-            # Workaround to prevent gz not being able to communicate
-            # with gzserver. In CI it tends to take longer.
-            if os.getenv("GITHUB_WORKFLOW") and runner.name == "gzserver":
-                time.sleep(10)
-            else:
-                time.sleep(2)
-
         if abort:
+            print("Could not start runner: {}".format(runner.name))
+            self.collect_runner_output()
+            self.stop_combined_log()
             self.stop_runners()
             sys.exit(1)
+
+    def try_to_run_several_times(self, runner: ph.Runner) -> bool:
+        for _ in range(3):
+            runner.start()
+
+            if runner.has_started_ok():
+                return True
+
+            else:
+                runner.stop()
+                time.sleep(1)
+
+        return False
 
     def stop_runners(self) -> None:
         for runner in self.active_runners:
             runner.stop()
 
     def collect_runner_output(self) -> None:
-        max_name = max(len(runner.name) for runner in self.active_runners)
-
         for runner in self.active_runners:
             while True:
                 line = runner.get_output_line()
                 if not line:
                     break
 
-                line = self.add_name_prefix(max_name, runner.name, line)
                 self.add_to_combined_log(line)
                 if self.verbose:
                     print(line, end="")
+
+    def parse_for_ulog_file(self, log: str) -> Optional[str]:
+
+        match = "[logger] Opened full log file: ./"
+        for line in log.splitlines():
+            found = line.find(match)
+            if found != -1:
+                return os.path.join(os.getcwd(), self.build_dir,
+                                    "tmp_mavsdk_tests/rootfs",
+                                    line[found+len(match):])
+        return None
+
+    def upload_log(self, ulog_path: Optional[str],
+                   model: str, case: str, success: bool) -> None:
+        if not ulog_path:
+            print("    Could not find ulog log file to upload")
+            return
+
+        if not os.getenv('GITHUB_RUN_ID'):
+            print("    Upload only implemented for GitHub Actions CI")
+            return
+
+        print("    Uploading logfile '{}' ...".format(ulog_path))
+
+        server = "https://logs.px4.io"
+
+        result_str = "passing" if success else "failing"
+
+        payload = {
+            "type": "flightreport",
+            "description": "SITL integration test - {}: '{}' -> {}"
+            .format(model, case, result_str),
+            "feedback":
+                "{}/{}/actions/runs/{}"
+                .format(os.getenv("GITHUB_SERVER_URL"),
+                        os.getenv("GITHUB_REPOSITORY"),
+                        os.getenv("GITHUB_RUN_ID")),
+            "email": "",
+            "source": "CI",
+            "videoUrl": "",
+            "rating": "notset",
+            "windSpeed": -1,
+            "public": "true"
+        }
+
+        with open(ulog_path, 'rb') as f:
+            r = requests.post(server + "/upload",
+                              data=payload,
+                              files={'filearg': f},
+                              allow_redirects=False)
+            if r.status_code == 302:  # redirect
+                if 'Location' in r.headers:
+                    plot_url = r.headers['Location']
+                    if len(plot_url) > 0 and plot_url[0] == '/':
+                        plot_url = server + plot_url
+                    print("    Uploaded to: " + plot_url)
+            else:
+                print("    Upload failed with status_code: {}"
+                      .format(r.status_code))
 
     def start_combined_log(self, filename: str) -> None:
         self.log_fd = open(filename, 'w')
@@ -472,10 +568,6 @@ class Tester:
     def get_combined_log(self, filename: str) -> str:
         with open(filename, 'r') as f:
             return f.read()
-
-    @staticmethod
-    def add_name_prefix(width: int, name: str, text: str) -> str:
-        return colorize("[" + name.ljust(width) + "] " + text, color.RESET)
 
     @staticmethod
     def determine_logfile_path(log_dir: str, desc: str) -> str:
@@ -548,7 +640,7 @@ class Tester:
         else:
             return text_to_format.format(str(n) + " ")
 
-    def sigint_handler(self, sig: signal.Signals, frame: FrameType) \
+    def sigint_handler(self, sig: int, frame: Optional[FrameType]) \
             -> NoReturn:
         print("Received SIGINT")
         print("Stopping all processes ...")

@@ -268,7 +268,7 @@ PX4IO_Uploader::recv_byte_with_timeout(uint8_t *c, unsigned timeout)
 
 	read(_io_fd, c, 1);
 #ifdef UDEBUG
-	log("recv_bytes 0x%02x", c);
+	log("recv_bytes 0x%02x", *c);
 #endif
 	return OK;
 }
@@ -315,7 +315,17 @@ int
 PX4IO_Uploader::send(uint8_t c)
 {
 #ifdef UDEBUG
-	log("send 0x%02x", c);
+	static uint8_t cnt = 0;
+
+	if (c == 0) {
+		if (cnt == 0 || cnt == 32 || cnt == 64 || cnt == 128) { log("send+ 0x%02x", c); }
+
+		cnt++;
+
+	} else {
+		log("send 0x%02x", c);
+	}
+
 #endif
 
 	if (write(_io_fd, &c, 1) != 1) {
@@ -345,9 +355,8 @@ int
 PX4IO_Uploader::get_sync(unsigned timeout)
 {
 	uint8_t c[2];
-	int ret;
 
-	ret = recv_byte_with_timeout(c, timeout);
+	int ret = recv_byte_with_timeout(c, timeout);
 
 	if (ret != OK) {
 		return ret;
@@ -385,13 +394,11 @@ PX4IO_Uploader::sync()
 int
 PX4IO_Uploader::get_info(int param, uint32_t &val)
 {
-	int ret;
-
 	send(PROTO_GET_DEVICE);
 	send(param);
 	send(PROTO_EOC);
 
-	ret = recv_bytes((uint8_t *)&val, sizeof(val));
+	int ret = recv_bytes((uint8_t *)&val, sizeof(val));
 
 	if (ret != OK) {
 		return ret;
@@ -408,7 +415,6 @@ PX4IO_Uploader::erase()
 	send(PROTO_EOC);
 	return get_sync(10000);		/* allow 10s timeout */
 }
-
 
 static int read_with_retry(int fd, void *buf, size_t n)
 {

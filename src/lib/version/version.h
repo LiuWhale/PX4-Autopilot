@@ -57,6 +57,14 @@ static inline const char *px4_board_name(void)
 }
 
 /**
+ * get the board build target variant
+ */
+static inline const char *px4_board_target_label(void)
+{
+	return PX4_BOARD_LABEL;
+}
+
+/**
  * get the board sub type
  */
 static inline const char *px4_board_sub_type(void)
@@ -186,6 +194,11 @@ __EXPORT uint64_t px4_mavlink_lib_version_binary(void);
  * @return this is not available on all OSes and can return 0
  */
 __EXPORT uint64_t px4_os_version_binary(void);
+
+/**
+ * get the git oem version tag (can be empty, no particular format)
+ */
+__EXPORT const char *px4_firmware_oem_version_string(void);
 
 __END_DECLS
 

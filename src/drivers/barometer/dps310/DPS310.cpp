@@ -46,10 +46,8 @@ static void getTwosComplement(T &raw, uint8_t length)
 	}
 }
 
-DPS310::DPS310(I2CSPIBusOption bus_option, int bus, device::Device *interface) :
-	I2CSPIDriver(MODULE_NAME, px4::device_bus_to_wq(interface->get_device_id()), bus_option, bus,
-		     interface->get_device_address()),
-	_px4_barometer(interface->get_device_id()),
+DPS310::DPS310(const I2CSPIDriverConfig &config, device::Device *interface) :
+	I2CSPIDriver(config),
 	_interface(interface),
 	_sample_perf(perf_alloc(PC_ELAPSED, MODULE_NAME": read")),
 	_comms_errors(perf_alloc(PC_COUNT, MODULE_NAME": comm errors"))
@@ -135,7 +133,7 @@ DPS310::reset()
 	getTwosComplement(_calibration.c01, 16);
 
 	// 0x1A c11 [15:8] + 0x1B c11 [7:0]
-	_calibration.c11 = ((uint32_t)coef[8] << 8) | (uint32_t)coef[9];
+	_calibration.c11 = ((uint32_t)coef[10] << 8) | (uint32_t)coef[11];
 	getTwosComplement(_calibration.c11, 16);
 
 	// 0x1C c20 [15:8] + 0x1D c20 [7:0]
@@ -234,9 +232,15 @@ DPS310::RunImpl()
 
 	const float Tcomp = c0 * 0.5f + c1 * Traw_sc;
 
-	_px4_barometer.set_error_count(perf_event_count(_comms_errors));
-	_px4_barometer.set_temperature(Tcomp);
-	_px4_barometer.update(timestamp_sample, Pcomp / 100.0f); // Pascals -> Millibar
+	// publish
+	sensor_baro_s sensor_baro{};
+	sensor_baro.timestamp_sample = timestamp_sample;
+	sensor_baro.device_id = _interface->get_device_id();
+	sensor_baro.pressure = Pcomp;
+	sensor_baro.temperature = Tcomp;
+	sensor_baro.error_count = perf_event_count(_comms_errors);
+	sensor_baro.timestamp = hrt_absolute_time();
+	_sensor_baro_pub.publish(sensor_baro);
 
 	perf_end(_sample_perf);
 }

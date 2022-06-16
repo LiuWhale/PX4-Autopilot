@@ -86,6 +86,17 @@ void LoadMon::start()
 
 void LoadMon::Run()
 {
+#if defined (__PX4_LINUX)
+
+	if (_proc_fd == nullptr) {	// init fd
+		_proc_fd = fopen("/proc/meminfo", "r");
+
+		if (_proc_fd == nullptr) {
+			PX4_ERR("Failed to open /proc/meminfo");
+		}
+	}
+
+#endif
 	perf_begin(_cycle_perf);
 
 	cpuload();
@@ -100,6 +111,9 @@ void LoadMon::Run()
 
 	if (should_exit()) {
 		ScheduleClear();
+#if defined (__PX4_LINUX)
+		fclose(_proc_fd);
+#endif
 		exit_and_cleanup();
 	}
 
@@ -142,17 +156,74 @@ void LoadMon::cpuload()
 	const float interval_idletime = total_runtime - _last_idle_time;
 #endif
 
-	// get ram usage
-	struct mallinfo mem = mallinfo();
-	float ram_usage = (float)mem.uordblks / mem.arena;
-
 	cpuload_s cpuload{};
 #if defined(__PX4_LINUX)
+	/* following calculation is based on free(1)
+	 * https://gitlab.com/procps-ng/procps/-/blob/master/proc/sysinfo.c */
+	char line[256];
+	int32_t kb_main_total = -1;
+	int32_t kb_main_free = -1;
+	int32_t kb_page_cache = -1;
+	int32_t kb_slab_reclaimable = -1;
+	int32_t kb_main_buffers = -1;
+	int parsedCount = 0;
+
+	if (_proc_fd != nullptr) {
+		while (fgets(line, sizeof(line), _proc_fd)) {
+			if (sscanf(line, "MemTotal: %d kB", &kb_main_total) == 1) {
+				++parsedCount;
+				continue;
+			}
+
+			if (sscanf(line, "MemFree: %d kB", &kb_main_free) == 1) {
+				++parsedCount;
+				continue;
+			}
+
+			if (sscanf(line, "Cached: %d kB", &kb_page_cache) == 1) {
+				++parsedCount;
+				continue;
+			}
+
+			if (sscanf(line, "SReclaimable: %d kB", &kb_slab_reclaimable) == 1) {
+				++parsedCount;
+				continue;
+			}
+
+			if (sscanf(line, "Buffers: %d kB", &kb_main_buffers) == 1) {
+				++parsedCount;
+				continue;
+			}
+		}
+
+		fseek(_proc_fd, 0, SEEK_END);
+
+		if (parsedCount == 5) {
+			int32_t kb_main_cached = kb_page_cache + kb_slab_reclaimable;
+			int32_t mem_used = kb_main_total - kb_main_free - kb_main_cached - kb_main_buffers;
+
+			if (mem_used < 0) {
+				mem_used = kb_main_total - kb_main_free;
+			}
+
+			cpuload.ram_usage = (float)mem_used / kb_main_total;
+
+		} else {
+			PX4_ERR("Could not parse /proc/meminfo");
+			cpuload.ram_usage = -1;
+		}
+
+	} else {
+		cpuload.ram_usage = -1;
+	}
+
 	cpuload.load = interval_spent_time / interval;
 #elif defined(__PX4_NUTTX)
+	// get ram usage
+	struct mallinfo mem = mallinfo();
+	cpuload.ram_usage = (float)mem.uordblks / mem.arena;
 	cpuload.load = 1.f - interval_idletime / interval;
 #endif
-	cpuload.ram_usage = ram_usage;
 	cpuload.timestamp = hrt_absolute_time();
 
 	_cpuload_pub.publish(cpuload);
@@ -171,7 +242,6 @@ void LoadMon::cpuload()
 void LoadMon::stack_usage()
 {
 	unsigned stack_free = 0;
-	unsigned fds_free = FDS_LOW_WARNING_THRESHOLD + 1;
 
 	bool checked_task = false;
 
@@ -190,22 +260,19 @@ void LoadMon::stack_usage()
 
 		checked_task = true;
 
-#if CONFIG_NFILE_DESCRIPTORS > 0
-		FAR struct task_group_s *group = system_load.tasks[_stack_task_index].tcb->group;
+#if CONFIG_NFILE_DESCRIPTORS_PER_BLOCK > 0
+		unsigned int tcb_num_used_fds = 0; // number of used file descriptors
+		struct filelist *filelist = &system_load.tasks[_stack_task_index].tcb->group->tg_filelist;
 
-		unsigned tcb_num_used_fds = 0;
-
-		if (group) {
-			for (int fd_index = 0; fd_index < CONFIG_NFILE_DESCRIPTORS; ++fd_index) {
-				if (group->tg_filelist.fl_files[fd_index].f_inode) {
+		for (int fdr = 0; fdr < filelist->fl_rows; fdr++) {
+			for (int fdc = 0; fdc < CONFIG_NFILE_DESCRIPTORS_PER_BLOCK; fdc++) {
+				if (filelist->fl_files[fdr][fdc].f_inode) {
 					++tcb_num_used_fds;
 				}
 			}
-
-			fds_free = CONFIG_NFILE_DESCRIPTORS - tcb_num_used_fds;
 		}
 
-#endif // CONFIG_NFILE_DESCRIPTORS
+#endif // CONFIG_NFILE_DESCRIPTORS_PER_BLOCK
 	}
 
 	sched_unlock();
@@ -220,15 +287,10 @@ void LoadMon::stack_usage()
 		if (stack_free < STACK_LOW_WARNING_THRESHOLD) {
 			PX4_WARN("%s low on stack! (%i bytes left)", task_stack_info.task_name, stack_free);
 		}
-
-		// Found task low on file descriptors, report and exit. Continue here in next cycle.
-		if (fds_free < FDS_LOW_WARNING_THRESHOLD) {
-			PX4_WARN("%s low on FDs! (%i FDs left)", task_stack_info.task_name, fds_free);
-		}
 	}
 
 	// Continue after last checked task next cycle
-	_stack_task_index = (_stack_task_index + 1) % CONFIG_MAX_TASKS;
+	_stack_task_index = (_stack_task_index + 1) % CONFIG_FS_PROCFS_MAX_TASKS;
 }
 #endif
 

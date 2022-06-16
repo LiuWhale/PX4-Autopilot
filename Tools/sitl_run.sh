@@ -43,10 +43,24 @@ else
 fi
 
 # To disable user input
-if [[ -n "$VERBOSE" ]]; then
+if [[ -n "$VERBOSE_SIM" ]]; then
 	verbose="--verbose"
 else
 	verbose=""
+fi
+
+# Disable follow mode
+if [[ "$PX4_NO_FOLLOW_MODE" != "1" ]]; then
+    follow_mode="--gui-client-plugin libgazebo_user_camera_plugin.so"
+else
+    follow_mode=""
+fi
+
+# To use gazebo_ros ROS2 plugins
+if [[ -n "$ROS_VERSION" ]] && [ "$ROS_VERSION" == "2" ]; then
+	ros_args="-s libgazebo_ros_init.so -s libgazebo_ros_factory.so"
+else
+	ros_args=""
 fi
 
 if [ "$program" == "jmavsim" ]; then
@@ -57,10 +71,14 @@ if [ "$program" == "jmavsim" ]; then
 fi
 
 if [ "$model" == "" ] || [ "$model" == "none" ]; then
-	echo "empty model, setting iris as default"
 	if [ "$program" == "jsbsim" ]; then
+		echo "empty model, setting rascal as default for jsbsim"
 		model="rascal"
+	elif [ "$program" == "sihsim" ]; then
+		echo "empty model, setting quadx as default for sihsim"
+		model="quadx"
 	else
+		echo "empty model, setting iris as default"
 		model="iris"
 	fi
 fi
@@ -82,6 +100,8 @@ shift 7
 for file in "$@"; do
 	cp "$file" $rootfs/
 done
+
+export PX4_SIM_MODEL=${model}
 
 SIM_PID=0
 
@@ -112,7 +132,7 @@ elif [ "$program" == "gazebo" ] && [ ! -n "$no_sim" ]; then
 				fi
 			else
 				#Spawn empty world if world with model name doesn't exist
-				world_path= $verbose "${src_path}/Tools/sitl_gazebo/worlds/${world}.world"
+				world_path="${src_path}/Tools/sitl_gazebo/worlds/${world}.world"
 			fi
 		else
 			if [ -f ${src_path}/Tools/sitl_gazebo/worlds/${PX4_SITL_WORLD}.world ]; then
@@ -123,10 +143,33 @@ elif [ "$program" == "gazebo" ] && [ ! -n "$no_sim" ]; then
 				world_path="$PX4_SITL_WORLD"
 			fi
 		fi
-		gzserver $verbose $world_path &
+		gzserver $verbose $world_path $ros_args &
 		SIM_PID=$!
 
-		while gz model --verbose --spawn-file="${src_path}/Tools/sitl_gazebo/models/${model}/${model_name}.sdf" --model-name=${model} -x 1.01 -y 0.98 -z 0.83 2>&1 | grep -q "An instance of Gazebo is not running."; do
+		# Check all paths in ${GAZEBO_MODEL_PATH} for specified model
+		IFS_bak=$IFS
+		IFS=":"
+		for possible_model_path in ${GAZEBO_MODEL_PATH}; do
+			if [ -z $possible_model_path ]; then
+				continue
+			fi
+			# trim \r from path
+			possible_model_path=$(echo $possible_model_path | tr -d '\r')
+			if test -f "${possible_model_path}/${model}/${model}.sdf" ; then
+				modelpath=$possible_model_path
+				break
+			fi
+		done
+		IFS=$IFS_bak
+
+		if [ -z $modelpath ]; then
+			echo "Model ${model} not found in model path: ${GAZEBO_MODEL_PATH}"
+			exit 1
+		else
+			echo "Using: ${modelpath}/${model}/${model}.sdf"
+		fi
+
+		while gz model --verbose --spawn-file="${modelpath}/${model}/${model_name}.sdf" --model-name=${model} -x 1.01 -y 0.98 -z 0.83 2>&1 | grep -q "An instance of Gazebo is not running."; do
 			echo "gzserver not ready yet, trying again!"
 			sleep 1
 		done
@@ -137,13 +180,22 @@ elif [ "$program" == "gazebo" ] && [ ! -n "$no_sim" ]; then
 			# gzserver needs to be running to avoid a race. Since the launch
 			# is putting it into the background we need to avoid it by backing off
 			sleep 3
-			nice -n 20 gzclient --verbose &
+			nice -n 20 gzclient --verbose $follow_mode &
 			GUI_PID=$!
 		fi
 	else
 		echo "You need to have gazebo simulator installed!"
 		exit 1
 	fi
+elif [ "$program" == "ignition" ] && [ -z "$no_sim" ]; then
+	echo "Ignition Gazebo"
+	if [[ -n "$HEADLESS" ]]; then
+		ignition_headless="-s"
+	else
+		ignition_headless=""
+	fi
+	source "$src_path/Tools/setup_ignition.bash" "${src_path}" "${build_path}"
+	ign gazebo --force-version 5 ${verbose} ${ignition_headless} -r "${src_path}/Tools/simulation-ignition/worlds/${model}.world"&
 elif [ "$program" == "flightgear" ] && [ -z "$no_sim" ]; then
 	echo "FG setup"
 	cd "${src_path}/Tools/flightgear_bridge/"
@@ -163,8 +215,14 @@ elif [ "$program" == "jsbsim" ] && [ -z "$no_sim" ]; then
 			--disable-ai-models &> /dev/null &
 		FGFS_PID=$!
 	fi
-	"${build_path}/build_jsbsim_bridge/jsbsim_bridge" "models/${JSBSIM_AIRCRAFT_DIR}" $JSBSIM_AIRCRAFT_MODEL ${model} "${src_path}/Tools/jsbsim_bridge/scene/${world}.xml" $HEADLESS 2> /dev/null &
+	"${build_path}/build_jsbsim_bridge/jsbsim_bridge" ${model} -s "${src_path}/Tools/jsbsim_bridge/scene/${world}.xml" 2> /dev/null &
 	JSBSIM_PID=$!
+elif [ "$program" == "sihsim" ] && [ ! -n "$no_sim" ]; then
+	export SIM_MODE="sihsim"
+	if [ "$model" != "airplane" ] && [ "$model" != "quadx" ] && [ "$model" != "xvert" ]; then
+		echo "Model ${model} not compatible with with sih. sih supports [quadx,airplane,xvert]."
+		exit 1
+	fi
 fi
 
 pushd "$rootfs" >/dev/null
@@ -179,9 +237,6 @@ else
 fi
 
 echo SITL COMMAND: $sitl_command
-
-export PX4_SIM_MODEL=${model}
-
 
 if [ "$debugger" == "lldb" ]; then
 	eval lldb -- $sitl_command

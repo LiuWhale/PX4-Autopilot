@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2020 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2020-2022 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -64,47 +64,50 @@
 #pragma once
 
 #include <matrix/matrix/math.hpp>
-#include <ecl/geo/geo.h>
+#include <geo/geo.h>
 #include <mathlib/mathlib.h>
 
 class ZeroOrderHoverThrustEkf
 {
 public:
-	struct status {
-		float hover_thrust;
-		float hover_thrust_var;
-		float innov;
-		float innov_var;
-		float innov_test_ratio;
-		float accel_noise_var;
-	};
-
 	ZeroOrderHoverThrustEkf() = default;
 	~ZeroOrderHoverThrustEkf() = default;
 
 	void resetAccelNoise() { _acc_var = 5.f; };
 
 	void predict(float _dt);
-	void fuseAccZ(float acc_z, float thrust, status &status_return);
+	void fuseAccZ(float acc_z, float thrust);
 
 	void setHoverThrust(float hover_thrust) { _hover_thr = math::constrain(hover_thrust, 0.1f, 0.9f); }
 	void setProcessNoiseStdDev(float process_noise) { _process_var = process_noise * process_noise; }
-	void setMeasurementNoiseStdDev(float measurement_noise) { _acc_var = measurement_noise * measurement_noise; }
+	void setMeasurementNoiseScale(float scale) { _acc_var_scale = scale * scale; }
 	void setHoverThrustStdDev(float hover_thrust_noise) { _state_var = hover_thrust_noise * hover_thrust_noise; }
 	void setAccelInnovGate(float gate_size) { _gate_size = gate_size; }
+	void setMinHoverThrust(float hover_thrust_min) { _hover_thr_min = hover_thrust_min; }
+	void setMaxHoverThrust(float hover_thrust_max) { _hover_thr_max = hover_thrust_max; }
 
 	float getHoverThrustEstimate() const { return _hover_thr; }
 	float getHoverThrustEstimateVar() const { return _state_var; }
+	float getInnovation() const { return _innov; }
+	float getInnovationVar() const { return _innov_var; }
+	float getInnovationTestRatio() const { return _innov_test_ratio; }
 	float getAccelNoiseVar() const { return _acc_var; }
 
 private:
 	float _hover_thr{0.5f};
+	float _hover_thr_min{0.1f};
+	float _hover_thr_max{0.9f};
 
 	float _gate_size{3.f};
 	float _state_var{0.01f}; ///< Initial hover thrust uncertainty variance (thrust^2)
-	float _process_var{0.25e-6f}; ///< Hover thrust process noise variance (thrust^2/s^2)
+	float _process_var{12.5e-6f}; ///< Hover thrust process noise variance (thrust^2/s^2)
 	float _acc_var{5.f}; ///< Acceleration variance (m^2/s^3)
+	float _acc_var_scale{1.f}; ///< Multiplicator of the measurement variance, used to decrease sensivity
 	float _dt{0.02f};
+
+	float _innov{0.f}; ///< Measurement innovation (m/s^2)
+	float _innov_var{0.f}; ///< Measurement innovation variance (m^2/s^3)
+	float _innov_test_ratio{0.f}; ///< Noramlized Innovation Squared test ratio
 
 	float _residual_lpf{}; ///< used to remove the constant bias of the residual
 	float _signed_innov_test_ratio_lpf{}; ///< used as a delay to trigger the recovery logic
@@ -130,8 +133,6 @@ private:
 	void bumpStateVariance();
 	void updateLpf(float residual, float signed_innov_test_ratio);
 	void updateMeasurementNoise(float residual, float H);
-
-	status packStatus(float innov, float innov_var, float innov_test_ratio) const;
 
 	static constexpr float _noise_learning_time_constant = 2.f; ///< in seconds
 	static constexpr float _lpf_time_constant = 1.f; ///< in seconds

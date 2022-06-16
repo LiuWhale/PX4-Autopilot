@@ -32,17 +32,18 @@
 ############################################################################
 
 if("${PX4_BOARD_LABEL}" STREQUAL  "canbootloader")
+
 	add_library(drivers_board
-		boot_config.h
 		boot.c
-		led.c
-		led.h
+		led.cpp
 	)
+
 	target_link_libraries(drivers_board
 		PRIVATE
 			nuttx_arch
 			nuttx_drivers
 			canbootloader
+			platform_srgbled
 	)
 	target_include_directories(drivers_board PRIVATE ${PX4_SOURCE_DIR}/platforms/nuttx/src/canbootloader)
 
@@ -60,6 +61,5 @@ else()
 			nuttx_arch
 			nuttx_drivers
 			px4_layer
-			arch_io_pins
 	)
 endif()

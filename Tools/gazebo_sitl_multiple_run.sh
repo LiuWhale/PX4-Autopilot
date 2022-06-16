@@ -15,9 +15,13 @@ function cleanup() {
 function spawn_model() {
 	MODEL=$1
 	N=$2 #Instance Number
+	X=$3
+	Y=$4
+	X=${X:=0.0}
+	Y=${Y:=$((3*${N}))}
 
-	SUPPORTED_MODELS=("iris" "iris_rtps" "plane" "standard_vtol")
-	if [[ " ${SUPPORTED_MODELS[*]} " != *"$MODEL "* ]];
+	SUPPORTED_MODELS=("iris" "plane" "standard_vtol" "rover" "r1_rover" "typhoon_h480")
+	if [[ " ${SUPPORTED_MODELS[*]} " != *"$MODEL"* ]];
 	then
 		echo "ERROR: Currently only vehicle model $MODEL is not supported!"
 		echo "       Supported Models: [${SUPPORTED_MODELS[@]}]"
@@ -29,16 +33,13 @@ function spawn_model() {
 	[ ! -d "$working_dir" ] && mkdir -p "$working_dir"
 
 	pushd "$working_dir" &>/dev/null
-	echo "starting instance $n in $(pwd)"
-	../bin/px4 -i $n -d "$build_path/etc" -w sitl_${MODEL}_${n} -s etc/init.d-posix/rcS >out.log 2>err.log &
-	python3 ${src_path}/Tools/sitl_gazebo/scripts/xacro.py ${src_path}/Tools/sitl_gazebo/models/rotors_description/urdf/${MODEL}_base.xacro \
-		rotors_description_dir:=${src_path}/Tools/sitl_gazebo/models/rotors_description mavlink_udp_port:=$(($mavlink_udp_port+$N)) \
-		mavlink_tcp_port:=$(($mavlink_tcp_port+$N))  -o /tmp/${MODEL}_${N}.urdf
+	echo "starting instance $N in $(pwd)"
+	../bin/px4 -i $N -d "$build_path/etc" -w sitl_${MODEL}_${N} -s etc/init.d-posix/rcS >out.log 2>err.log &
+	python3 ${src_path}/Tools/sitl_gazebo/scripts/jinja_gen.py ${src_path}/Tools/sitl_gazebo/models/${MODEL}/${MODEL}.sdf.jinja ${src_path}/Tools/sitl_gazebo --mavlink_tcp_port $((4560+${N})) --mavlink_udp_port $((14560+${N})) --mavlink_id $((1+${N})) --gst_udp_port $((5600+${N})) --video_uri $((5600+${N})) --mavlink_cam_udp_port $((14530+${N})) --output-file /tmp/${MODEL}_${N}.sdf
 
-	gz sdf -p  /tmp/${MODEL}_${N}.urdf > /tmp/${MODEL}_${n}.sdf
-	echo "Spawning ${MODEL}_${N}"
+	echo "Spawning ${MODEL}_${N} at ${X} ${Y}"
 
-	gz model --spawn-file=/tmp/${MODEL}_${N}.sdf --model-name=${MODEL}_${N} -x 0.0 -y $((3*${N})) -z 0.0
+	gz model --spawn-file=/tmp/${MODEL}_${N}.sdf --model-name=${MODEL}_${N} -x ${X} -y ${Y} -z 0.83
 
 	popd &>/dev/null
 
@@ -51,7 +52,7 @@ then
 	exit 1
 fi
 
-while getopts n:m:w:s:t: option
+while getopts n:m:w:s:t:l: option
 do
 	case "${option}"
 	in
@@ -60,13 +61,15 @@ do
 		w) WORLD=${OPTARG};;
 		s) SCRIPT=${OPTARG};;
 		t) TARGET=${OPTARG};;
+		l) LABEL=_${OPTARG};;
 	esac
 done
 
 num_vehicles=${NUM_VEHICLES:=3}
 world=${WORLD:=empty}
 target=${TARGET:=px4_sitl_default}
-export PX4_SIM_MODEL=${VEHICLE_MODEL:=iris}
+vehicle_model=${VEHICLE_MODEL:="iris"}
+export PX4_SIM_MODEL=${vehicle_model}
 
 echo ${SCRIPT}
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -83,8 +86,15 @@ sleep 1
 
 source ${src_path}/Tools/setup_gazebo.bash ${src_path} ${src_path}/build/${target}
 
+# To use gazebo_ros ROS2 plugins
+if [[ -n "$ROS_VERSION" ]] && [ "$ROS_VERSION" == "2" ]; then
+	ros_args="-s libgazebo_ros_init.so -s libgazebo_ros_factory.so"
+else
+	ros_args=""
+fi
+
 echo "Starting gazebo"
-gzserver ${src_path}/Tools/sitl_gazebo/worlds/${world}.world --verbose &
+gzserver ${src_path}/Tools/sitl_gazebo/worlds/${world}.world --verbose $ros_args &
 sleep 5
 
 n=0
@@ -96,15 +106,17 @@ if [ -z ${SCRIPT} ]; then
 	fi
 
 	while [ $n -lt $num_vehicles ]; do
-		spawn_model ${PX4_SIM_MODEL} $n
+		spawn_model ${vehicle_model} $n
 		n=$(($n + 1))
 	done
 else
 	IFS=,
 	for target in ${SCRIPT}; do
 		target="$(echo "$target" | tr -d ' ')" #Remove spaces
-		target_vehicle="${target%:*}"
-		target_number="${target#*:}"
+		target_vehicle=$(echo $target | cut -f1 -d:)
+		target_number=$(echo $target | cut -f2 -d:)
+		target_x=$(echo $target | cut -f3 -d:)
+		target_y=$(echo $target | cut -f4 -d:)
 
 		if [ $n -gt 255 ]
 		then
@@ -114,7 +126,8 @@ else
 
 		m=0
 		while [ $m -lt ${target_number} ]; do
-			spawn_model ${target_vehicle} $n
+			export PX4_SIM_MODEL=${target_vehicle}
+			spawn_model ${target_vehicle}${LABEL} $n $target_x $target_y
 			m=$(($m + 1))
 			n=$(($n + 1))
 		done

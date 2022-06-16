@@ -210,20 +210,45 @@ __EXPORT size_t		param_size(param_t param);
  *
  * @param param		A handle returned by param_find or passed by param_foreach.
  * @param val		Where to return the value, assumed to point to suitable storage for the parameter type.
- *			For structures, a bitwise copy of the structure is performed to this address.
  * @return		Zero if the parameter's value could be returned, nonzero otherwise.
  */
 __EXPORT int		param_get(param_t param, void *val);
+
+/**
+ * Copy the (airframe-specific) default value of a parameter.
+ *
+ * @param param		A handle returned by param_find or passed by param_foreach.
+ * @param default_val		Where to return the value, assumed to point to suitable storage for the parameter type.
+ * @return		Zero if the parameter's deafult value could be returned, nonzero otherwise.
+ */
+__EXPORT int		param_get_default_value(param_t param, void *default_val);
+
+/**
+ * Copy the system-wide default value of a parameter.
+ *
+ * @param param		A handle returned by param_find or passed by param_foreach.
+ * @param default_val		Where to return the value, assumed to point to suitable storage for the parameter type.
+ * @return		Zero if the parameter's deafult value could be returned, nonzero otherwise.
+ */
+__EXPORT int		param_get_system_default_value(param_t param, void *default_val);
 
 /**
  * Set the value of a parameter.
  *
  * @param param		A handle returned by param_find or passed by param_foreach.
  * @param val		The value to set; assumed to point to a variable of the parameter type.
- *			For structures, the pointer is assumed to point to a structure to be copied.
  * @return		Zero if the parameter's value could be set from a scalar, nonzero otherwise.
  */
 __EXPORT int		param_set(param_t param, const void *val);
+
+/**
+ * Set the default value of a parameter.
+ *
+ * @param param		A handle returned by param_find or passed by param_foreach.
+ * @param val		The default value to set; assumed to point to a variable of the parameter type.
+ * @return		Zero if the parameter's default value could be set from a scalar, nonzero otherwise.
+ */
+__EXPORT int		param_set_default_value(param_t param, const void *val);
 
 /**
  * Mark a parameter as used. Only marked parameters will be sent to a GCS.
@@ -238,7 +263,6 @@ __EXPORT void		param_set_used(param_t param);
  *
  * @param param		A handle returned by param_find or passed by param_foreach.
  * @param val		The value to set; assumed to point to a variable of the parameter type.
- *			For structures, the pointer is assumed to point to a structure to be copied.
  * @return		Zero if the parameter's value could be set from a scalar, nonzero otherwise.
  */
 __EXPORT int		param_set_no_notification(param_t param, const void *val);
@@ -252,25 +276,26 @@ __EXPORT void		param_notify_changes(void);
 /**
  * Reset a parameter to its default value.
  *
- * This function frees any storage used by struct parameters, and returns the parameter
- * to its default value.
- *
  * @param param		A handle returned by param_find or passed by param_foreach.
  * @return		Zero on success, nonzero on failure
  */
 __EXPORT int		param_reset(param_t param);
 
 /**
- * Reset all parameters to their default values.
+ * Reset a parameter to its default value, but do not notify the system about the change.
  *
- * This function also releases the storage used by struct parameters.
+ * @param param		A handle returned by param_find or passed by param_foreach.
+ * @return		Zero on success, nonzero on failure
+ */
+__EXPORT int		param_reset_no_notification(param_t param);
+
+/**
+ * Reset all parameters to their default values.
  */
 __EXPORT void		param_reset_all(void);
 
 /**
  * Reset all parameters to their default values except for excluded parameters.
- *
- * This function also releases the storage used by struct parameters.
  *
  * @param excludes			Array of param names to exclude from resetting. Use a wildcard
  *							at the end to exclude parameters with a certain prefix.
@@ -278,10 +303,10 @@ __EXPORT void		param_reset_all(void);
  */
 __EXPORT void		param_reset_excludes(const char *excludes[], int num_excludes);
 
+typedef bool(*param_filter_func)(param_t handle);
+
 /**
  * Reset only specific parameters to their default values.
- *
- * This function also releases the storage used by struct parameters.
  *
  * @param resets Array of param names to reset. Use a wildcard at the end to reset parameters with a certain prefix.
  * @param num_resets The number of passed reset conditions in the resets array.
@@ -292,11 +317,12 @@ __EXPORT void		param_reset_specific(const char *resets[], int num_resets);
  * Export changed parameters to a file.
  * Note: this method requires a large amount of stack size!
  *
- * @param fd		File descriptor to export to (-1 selects the FLASH storage).
- * @param only_unsaved	Only export changed parameters that have not yet been exported.
+ * @param filename	Path to the default parameter file.
+ * @param filter	Filter parameters to be exported. The method should return true if
+ * 			the parameter should be exported. No filtering if nullptr is passed.
  * @return		Zero on success, nonzero on failure.
  */
-__EXPORT int		param_export(int fd, bool only_unsaved);
+__EXPORT int		param_export(const char *filename, param_filter_func filter);
 
 /**
  * Import parameters from a file, discarding any unrecognized parameters.
@@ -320,6 +346,17 @@ __EXPORT int		param_import(int fd);
  *			Note that in the failure case, parameters may be inconsistent.
  */
 __EXPORT int		param_load(int fd);
+
+/**
+ * Read saved parameters from file and dump to console.
+ *
+ * This function reads the file and dumps all contents to console
+ * values from a file.
+ *
+ * @param fd		File descriptor to read from.
+ * @return		Zero on success, nonzero if an error occurred during import.
+ */
+__EXPORT int		param_dump(int fd);
 
 /**
  * Apply a function to each parameter.
@@ -355,6 +392,22 @@ __EXPORT int 		param_set_default_file(const char *filename);
  *			built-in default.
  */
 __EXPORT const char	*param_get_default_file(void);
+
+/**
+ * Set the backup parameter file name.
+ *
+ * @param filename	Path to the backup parameter file. The file is not required to
+ *			exist.
+ * @return		Zero on success.
+ */
+__EXPORT int 		param_set_backup_file(const char *filename);
+
+/**
+ * Get the backup parameter file name.
+ *
+ * @return		The path to the backup parameter file
+ */
+__EXPORT const char	*param_get_backup_file(void);
 
 /**
  * Save parameters to the default file.
@@ -409,25 +462,7 @@ union param_value_u {
  * instead.
  */
 struct param_info_s {
-	const char	*name
-
-// GCC 4.8 and higher don't implement proper alignment of static data on
-// 64-bit. This means that the 24-byte param_info_s variables are
-// 16 byte aligned by GCC and that messes up the assumption that
-// sequential items in the __param segment can be addressed as an array.
-// The assumption is that the address of the second parameter is at
-// &param[0]+sizeof(param[0]). When compiled with clang it is
-// true, with gcc is is not true.
-// See https://llvm.org/bugs/show_bug.cgi?format=multiple&id=18006
-// The following hack is for GCC >=4.8 only. Clang works fine without
-// this.
-#ifdef __PX4_POSIX
-	__attribute__((aligned(16)));
-#else
-	;
-#endif
-	param_type_t	type;
-	uint16_t		volatile_param: 1;
+	const char *name;
 	union param_value_u val;
 };
 
@@ -436,12 +471,18 @@ __END_DECLS
 
 
 #if defined(__cplusplus) && !defined(PARAM_IMPLEMENTATION)
-#if 0 // set to 1 to debug param type mismatches
+#if defined(CONFIG_ARCH_BOARD_PX4_SITL) || 0 // set to 1 to debug param type mismatches
 #include <cstdio>
+#include <px4_platform_common/log.h>
+
+#ifndef MODULE_NAME
+#define MODULE_NAME "px4"
+#endif
+
 #define CHECK_PARAM_TYPE(param, type) \
 	if (param_type(param) != type) { \
 		/* use printf() to avoid having to use more includes */ \
-		printf("wrong type passed to param_get() for param %s\n", param_name(param)); \
+		PX4_ERR("wrong type passed to param_get() for param %s", param_name(param)); \
 	}
 #else
 #define CHECK_PARAM_TYPE(param, type)

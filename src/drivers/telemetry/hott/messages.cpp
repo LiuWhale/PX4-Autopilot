@@ -42,12 +42,13 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
-#include <lib/ecl/geo/geo.h>
+#include <lib/geo/geo.h>
 #include <unistd.h>
 #include <px4_platform_common/defines.h>
 #include <uORB/topics/airspeed.h>
 #include <uORB/topics/battery_status.h>
 #include <uORB/topics/esc_status.h>
+#include <uORB/topics/actuator_motors.h>
 #include <uORB/topics/home_position.h>
 #include <uORB/topics/vehicle_air_data.h>
 #include <uORB/topics/vehicle_gps_position.h>
@@ -114,8 +115,9 @@ publish_gam_message(const uint8_t *buffer)
 	esc.esc_count = 1;
 	esc.esc_connectiontype = esc_status_s::ESC_CONNECTION_TYPE_PPM;
 
+	esc.esc[0].actuator_function = actuator_motors_s::ACTUATOR_FUNCTION_MOTOR1;
 	esc.esc[0].esc_rpm = (uint16_t)((msg.rpm_H << 8) | (msg.rpm_L & 0xff)) * 10;
-	esc.esc[0].esc_temperature = msg.temperature1 - 20;
+	esc.esc[0].esc_temperature = static_cast<float>(msg.temperature1 - 20);
 	esc.esc[0].esc_voltage = static_cast<float>((msg.main_voltage_H << 8) | (msg.main_voltage_L & 0xff)) * 0.1F;
 	esc.esc[0].esc_current = static_cast<float>((msg.current_H << 8) | (msg.current_L & 0xff)) * 0.1F;
 
@@ -186,7 +188,9 @@ build_gam_response(uint8_t *buffer, size_t *size)
 	msg.gam_sensor_id = GAM_SENSOR_ID;
 	msg.sensor_text_id = GAM_SENSOR_TEXT_ID;
 
-	msg.temperature1 = esc.esc[0].esc_temperature + 20;
+	const int16_t esc_temp_offset_degC = (esc.esc[0].esc_temperature + 20) > UINT8_MAX ? UINT8_MAX :
+					     (esc.esc[0].esc_temperature + 20);
+	msg.temperature1 = (esc_temp_offset_degC < 0) ? 0 : esc_temp_offset_degC;
 	msg.temperature2 = 20;  // 0 deg. C.
 
 	const uint16_t voltage = (uint16_t)(esc.esc[0].esc_voltage * 10.0F);
@@ -295,9 +299,11 @@ build_gps_response(uint8_t *buffer, size_t *size)
 			memset(&home, 0, sizeof(home));
 			orb_copy(ORB_ID(home_position), _home_sub, &home);
 
-			_home_lat = home.lat;
-			_home_lon = home.lon;
-			_home_position_set = true;
+			if (home.valid_hpos) {
+				_home_lat = home.lat;
+				_home_lon = home.lon;
+				_home_position_set = true;
+			}
 		}
 
 		/* Distance from home */

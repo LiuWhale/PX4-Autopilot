@@ -39,6 +39,8 @@ px4_add_romfs_files(
 	1001_rc_quad_x.hil
 	1002_standard_vtol.hil
 	1100_rc_quad_x_sih.hil
+	1101_rc_plane_sih.hil
+	1102_tailsitter_duo_sih.hil
 
 	# [2000, 2999] Standard planes"
 	2100_standard_plane
@@ -50,26 +52,21 @@ px4_add_romfs_files(
 
 	# [3000, 3999] Flying wing"
 	3000_generic_wing
-	3030_io_camflyer
 	3031_phantom
 	3032_skywalker_x5
 	3033_wingwing
-	3034_fx79
-	3035_viper
 	3036_pigeon
-	3037_parrot_disco_mod
 	3100_tbs_caipirinha
 
 	# [4000, 4999] Quadrotor x"
 	4001_quad_x
 	4003_qavr5
 	4009_qav250
-	4010_dji_f330
-	4011_dji_f450
 	4014_s500
 	4015_holybro_s500
 	4016_holybro_px4vision
-	4020_hk_micro_pcb
+	4017_nxp_hovergames
+	4019_x500_v2
 	4030_3dr_solo
 	4031_3dr_quad
 	4040_reaper
@@ -78,17 +75,16 @@ px4_add_romfs_files(
 	4051_s250aq
 	4052_holybro_qav250
 	4053_holybro_kopis2
-	4060_dji_matrice_100
-	4070_aerofc
+	4061_atl_mantis_edu
 	4071_ifo
 	4072_draco
 	4073_ifo-s
 	4080_zmr250
 	4090_nanomind
 	4100_tiltquadrotor
-	4250_teal
 	4500_clover4
 	4900_crazyflie
+	4901_crazyflie21
 
 	# [5000, 5999] Quadrotor +"
 	5001_quad_+
@@ -109,7 +105,6 @@ px4_add_romfs_files(
 	# [10000, 10999] Quadrotor Wide arm / H frame"
 	10015_tbs_discovery
 	10016_3dr_iris
-	10017_steadidrone_qu4d
 	10018_tbs_endurance
 
 	# [11000, 11999] Hexa Cox
@@ -117,7 +112,6 @@ px4_add_romfs_files(
 
 	# [12000, 12999] Octo Cox
 	12001_octo_cox
-	12002_steadidrone_mavrik
 
 	# [13000, 13999] VTOL
 	13000_generic_vtol_standard
@@ -130,10 +124,10 @@ px4_add_romfs_files(
 	13007_vtol_AAVVT_quad
 	13008_QuadRanger
 	13009_vtol_spt_ranger
-	13010_claire
 	13012_convergence
 	13013_deltaquad
 	13014_vtol_babyshark
+	13030_generic_vtol_quad_tiltrotor
 	13050_generic_vtol_octo
 	13200_generic_vtol_tailsitter
 
@@ -145,17 +139,23 @@ px4_add_romfs_files(
 
 	16001_helicopter
 
+	# [17000, 17999] Autogyro
 	17002_TF-AutoG2
+	17003_TF-G2
+
+	# [18000, 18999] High-altitude balloons
+	18001_TF-B1
+
+	# [22000, 22999] Reserve for custom models
 
 	24001_dodeca_cox
 
 	50000_generic_ground_vehicle
-	50001_axialracing_ax10
-	50002_traxxas_stampede_2wd
 	50003_aion_robotics_r1_rover
 	50004_nxpcup_car_dfrobot_gpx
 
 	# [60000, 61000] (Unmanned) Underwater Robots
 	60000_uuv_generic
 	60001_uuv_hippocampus
+	60002_uuv_bluerov2_heavy
 )

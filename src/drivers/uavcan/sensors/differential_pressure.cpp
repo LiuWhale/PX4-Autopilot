@@ -37,34 +37,22 @@
 
 #include "differential_pressure.hpp"
 
-#include <drivers/drv_airspeed.h>
 #include <drivers/drv_hrt.h>
-#include <lib/ecl/geo/geo.h>
+#include <lib/geo/geo.h>
 #include <parameters/param.h>
 #include <systemlib/err.h>
 
 const char *const UavcanDifferentialPressureBridge::NAME = "differential_pressure";
 
 UavcanDifferentialPressureBridge::UavcanDifferentialPressureBridge(uavcan::INode &node) :
-	UavcanCDevSensorBridgeBase("uavcan_differential_pressure", "/dev/uavcan/differential_pressure",
-				   AIRSPEED_BASE_DEVICE_PATH,
-				   ORB_ID(differential_pressure)),
+	UavcanSensorBridgeBase("uavcan_differential_pressure", ORB_ID(differential_pressure)),
 	_sub_air(node)
 {
 }
 
 int UavcanDifferentialPressureBridge::init()
 {
-	int res = device::CDev::init();
-
-	if (res < 0) {
-		return res;
-	}
-
-	// Initialize the calibration offset
-	param_get(param_find("SENS_DPRES_OFF"), &_diff_pres_offset);
-
-	res = _sub_air.start(AirCbBinder(this, &UavcanDifferentialPressureBridge::air_sub_cb));
+	int res = _sub_air.start(AirCbBinder(this, &UavcanDifferentialPressureBridge::air_sub_cb));
 
 	if (res < 0) {
 		DEVICE_LOG("failed to start uavcan sub: %d", res);
@@ -74,40 +62,23 @@ int UavcanDifferentialPressureBridge::init()
 	return 0;
 }
 
-int UavcanDifferentialPressureBridge::ioctl(struct file *filp, int cmd, unsigned long arg)
-{
-	switch (cmd) {
-
-	case AIRSPEEDIOCSSCALE: {
-			struct airspeed_scale *s = (struct airspeed_scale *)arg;
-			_diff_pres_offset = s->offset_pa;
-			return PX4_OK;
-		}
-
-	default: {
-			return CDev::ioctl(filp, cmd, arg);
-		}
-	}
-}
-
 void UavcanDifferentialPressureBridge::air_sub_cb(const
-		uavcan::ReceivedDataStructure<uavcan::equipment::air_data::RawAirData>
-		&msg)
+		uavcan::ReceivedDataStructure<uavcan::equipment::air_data::RawAirData> &msg)
 {
+	const hrt_abstime timestamp_sample = hrt_absolute_time();
+
 	_device_id.devid_s.devtype = DRV_DIFF_PRESS_DEVTYPE_UAVCAN;
 	_device_id.devid_s.address = msg.getSrcNodeID().get() & 0xFF;
 
 	float diff_press_pa = msg.differential_pressure;
 	float temperature_c = msg.static_air_temperature + CONSTANTS_ABSOLUTE_NULL_CELSIUS;
 
-	differential_pressure_s report = {
-		.timestamp = hrt_absolute_time(),
-		.error_count = 0,
-		.differential_pressure_raw_pa = diff_press_pa - _diff_pres_offset,
-		.differential_pressure_filtered_pa = _filter.apply(diff_press_pa) - _diff_pres_offset, /// TODO: Create filter
-		.temperature = temperature_c,
-		.device_id = _device_id.devid
-	};
+	differential_pressure_s report{};
+	report.timestamp_sample = timestamp_sample;
+	report.device_id = _device_id.devid;
+	report.differential_pressure_pa = diff_press_pa;
+	report.temperature = temperature_c;
+	report.timestamp = hrt_absolute_time();
 
 	publish(msg.getSrcNodeID().get(), &report);
 }

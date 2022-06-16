@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (C) 2015 PX4 Development Team. All rights reserved.
+ *   Copyright (C) 2015, 2021 PX4 Development Team. All rights reserved.
  *   Author: @author David Sidrane <david_s5@nscdg.com>
  *
  * Redistribution and use in source and binary forms, with or without
@@ -44,6 +44,7 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -59,6 +60,14 @@
 #include <systemlib/hardfault_log.h>
 #include <lib/version/version.h>
 
+#include "chip.h"
+
+#if defined(CONSTRAINED_FLASH_NO_HELP)
+#  define hfsyslog(l,format, ...) \
+	do { if (0) syslog(LOG_ERR, format, ##__VA_ARGS__); } while (0)
+#else
+#define hfsyslog(l,format, ...) syslog((l), (format), ##__VA_ARGS__)
+#endif
 
 /****************************************************************************
  * Public Function Prototypes
@@ -69,6 +78,7 @@ __EXPORT int hardfault_log_main(int argc, char *argv[]);
  * Pre-processor Definitions
  ****************************************************************************/
 #define OUT_BUFFER_LEN  200
+
 /****************************************************************************
  * Private Types
  ****************************************************************************/
@@ -130,6 +140,17 @@ static int genfault(int fault)
 	return OK;
 }
 
+/****************************************************************************
+ * verify ram address
+ ****************************************************************************/
+bool verify_ram_address(uint32_t bot, uint32_t size)
+{
+	bool ret = true;
+#if defined STM32_IS_SRAM
+	ret =  STM32_IS_SRAM(bot) && STM32_IS_SRAM(bot +  size);
+#endif
+	return ret;
+}
 
 /****************************************************************************
  * format_fault_time
@@ -211,7 +232,7 @@ static int hardfault_get_desc(char *caller, struct bbsramd_s *desc, bool silent)
 	if (fd < 0) {
 		if (!silent) {
 			identify(caller);
-			syslog(LOG_INFO, "Failed to open Fault Log file [%s] (%d)\n", HARDFAULT_PATH, fd);
+			hfsyslog(LOG_INFO, "Failed to open Fault Log file [%s] (%d)\n", HARDFAULT_PATH, fd);
 		}
 
 	} else {
@@ -223,7 +244,7 @@ static int hardfault_get_desc(char *caller, struct bbsramd_s *desc, bool silent)
 
 		} else {
 			identify(caller);
-			syslog(LOG_INFO, "Failed to get Fault Log descriptor (%d)\n", rv);
+			hfsyslog(LOG_INFO, "Failed to get Fault Log descriptor (%d)\n", rv);
 		}
 	}
 
@@ -240,16 +261,16 @@ static int write_stack_detail(bool inValid, _stack_s *si, char *sp_name,
 	int n = 0;
 	uint32_t sbot = si->top - si->size;
 	n =   snprintf(&buffer[n], max - n, " %s stack: \n", sp_name);
-	n +=  snprintf(&buffer[n], max - n, "  top:    0x%08x\n", si->top);
-	n +=  snprintf(&buffer[n], max - n, "  sp:     0x%08x %s\n", si->sp, (inValid ? "Invalid" : "Valid"));
+	n +=  snprintf(&buffer[n], max - n, "  top:    0x%08" PRIx32 "\n", si->top);
+	n +=  snprintf(&buffer[n], max - n, "  sp:     0x%08" PRIx32 " %s\n", si->sp, (inValid ? "Invalid" : "Valid"));
 
 	if (n != write(fd, buffer, n)) {
 		return -EIO;
 	}
 
 	n = 0;
-	n +=  snprintf(&buffer[n], max - n, "  bottom: 0x%08x\n", sbot);
-	n +=  snprintf(&buffer[n], max - n, "  size:   0x%08x\n",  si->size);
+	n +=  snprintf(&buffer[n], max - n, "  bottom: 0x%08" PRIx32 "\n", sbot);
+	n +=  snprintf(&buffer[n], max - n, "  size:   0x%08" PRIx32 "\n",  si->size);
 
 	if (n != write(fd, buffer, n)) {
 		return -EIO;
@@ -257,9 +278,18 @@ static int write_stack_detail(bool inValid, _stack_s *si, char *sp_name,
 
 #ifdef CONFIG_STACK_COLORATION
 	FAR struct tcb_s tcb;
-	tcb.stack_alloc_ptr = (void *) sbot;
+	tcb.stack_base_ptr = (void *) sbot;
 	tcb.adj_stack_size = si->size;
-	n = snprintf(buffer, max,         "  used:   %08x\n", up_check_tcbstack(&tcb));
+
+	if (verify_ram_address(sbot, si->size)) {
+		n = snprintf(buffer, max,         "  used:   0x%08zx\n", up_check_tcbstack(&tcb));
+
+	} else {
+		n = snprintf(buffer, max,         "Invalid Stack! (Corrupted TCB)  Stack base:  0x%08" PRIx32 " Stack size:  0x%08"
+			     PRIx32
+			     "\n", sbot,
+			     si->size);
+	}
 
 	if (n != write(fd, buffer, n)) {
 		return -EIO;
@@ -327,7 +357,7 @@ static int  write_stack(bool inValid, int winsize, uint32_t wtopaddr,
 						marker[0] = '\0';
 					}
 
-					n = snprintf(buffer, max, "0x%08x 0x%08x%s\n", wtopaddr, stack[i], marker);
+					n = snprintf(buffer, max, "0x%08" PRIx32 " 0x%08" PRIx32 "%s\n", wtopaddr, stack[i], marker);
 
 					if (n != write(outfd, buffer, n)) {
 						ret = -EIO;
@@ -347,7 +377,9 @@ static int  write_stack(bool inValid, int winsize, uint32_t wtopaddr,
  ****************************************************************************/
 static int write_registers(uint32_t regs[], char *buffer, int max, int fd)
 {
-	int n = snprintf(buffer, max, " r0:0x%08x r1:0x%08x  r2:0x%08x  r3:0x%08x  r4:0x%08x  r5:0x%08x r6:0x%08x r7:0x%08x\n",
+	int n = snprintf(buffer, max,
+			 " r0:0x%08" PRIx32 " r1:0x%08" PRIx32 "  r2:0x%08" PRIx32 "  r3:0x%08" PRIx32 "  r4:0x%08" PRIx32 "  r5:0x%08" PRIx32
+			 " r6:0x%08" PRIx32 " r7:0x%08" PRIx32 "\n",
 			 regs[REG_R0],  regs[REG_R1],
 			 regs[REG_R2],  regs[REG_R3],
 			 regs[REG_R4],  regs[REG_R5],
@@ -357,7 +389,9 @@ static int write_registers(uint32_t regs[], char *buffer, int max, int fd)
 		return -EIO;
 	}
 
-	n  = snprintf(buffer, max, " r8:0x%08x r9:0x%08x r10:0x%08x r11:0x%08x r12:0x%08x  sp:0x%08x lr:0x%08x pc:0x%08x\n",
+	n  = snprintf(buffer, max,
+		      " r8:0x%08" PRIx32 " r9:0x%08" PRIx32 " r10:0x%08" PRIx32 " r11:0x%08" PRIx32 " r12:0x%08" PRIx32 "  sp:0x%08" PRIx32
+		      " lr:0x%08" PRIx32 " pc:0x%08" PRIx32 "\n",
 		      regs[REG_R8],  regs[REG_R9],
 		      regs[REG_R10], regs[REG_R11],
 		      regs[REG_R12], regs[REG_R13],
@@ -368,11 +402,11 @@ static int write_registers(uint32_t regs[], char *buffer, int max, int fd)
 	}
 
 #ifdef CONFIG_ARMV7M_USEBASEPRI
-	n = snprintf(buffer, max, " xpsr:0x%08x basepri:0x%08x control:0x%08x\n",
+	n = snprintf(buffer, max, " xpsr:0x%08" PRIx32 " basepri:0x%08" PRIx32 " control:0x%08" PRIx32 "\n",
 		     regs[REG_XPSR],  regs[REG_BASEPRI],
 		     getcontrol());
 #else
-	n = snprintf(buffer, max, " xpsr:0x%08x primask:0x%08x control:0x%08x\n",
+	n = snprintf(buffer, max, " xpsr:0x%08" PRIx32 " primask:0x%08" PRIx32 " control:0x%08" PRIx32 "\n",
 		     regs[REG_XPSR],  regs[REG_PRIMASK],
 		     getcontrol());
 #endif
@@ -382,7 +416,7 @@ static int write_registers(uint32_t regs[], char *buffer, int max, int fd)
 	}
 
 #ifdef REG_EXC_RETURN
-	n = snprintf(buffer, max, " exe return:0x%08x\n", regs[REG_EXC_RETURN]);
+	n = snprintf(buffer, max, " exe return:0x%08" PRIx32 "\n", regs[REG_EXC_RETURN]);
 
 	if (n != write(fd, buffer, n)) {
 		return -EIO;
@@ -398,9 +432,12 @@ static int write_registers(uint32_t regs[], char *buffer, int max, int fd)
 static int write_fault_registers(fault_regs_s *fault_regs, char *buffer, int max, int fd)
 {
 #if defined(CONFIG_ARCH_CORTEXM7)
-	const char fmt[] =  " cfsr:0x%08x hfsr:0x%08x  dfsr:0x%08x  mmfsr:0x%08x  bfsr:0x%08x afsr:0x%08x abfsr:0x%08x \n";
+	const char fmt[] =
+		" cfsr:0x%08" PRIx32 " hfsr:0x%08" PRIx32 "  dfsr:0x%08" PRIx32 "  mmfsr:0x%08" PRIx32 "  bfsr:0x%08" PRIx32
+		" afsr:0x%08" PRIx32 " abfsr:0x%08" PRIx32 " \n";
 #else
-	const char fmt[] =  " cfsr:0x%08x hfsr:0x%08x  dfsr:0x%08x  mmfsr:0x%08x  bfsr:0x%08x afsr:0x%08x\n";
+	const char fmt[] =  " cfsr:0x%08" PRIx32 " hfsr:0x%08" PRIx32 "  dfsr:0x%08" PRIx32 "  mmfsr:0x%08" PRIx32
+			    "  bfsr:0x%08" PRIx32 " afsr:0x%08" PRIx32 "\n";
 #endif
 	int n = snprintf(buffer, max, fmt,
 			 fault_regs->cfsr, fault_regs->hfsr, fault_regs->dfsr,
@@ -688,7 +725,7 @@ static int hardfault_append_to_ulog(const char *caller, int fdin)
 
 	if (read(ulog_fd, chunk, 8) != 8) {
 		identify(caller);
-		syslog(LOG_INFO, "Reading ULog header failed\n");
+		hfsyslog(LOG_INFO, "Reading ULog header failed\n");
 		return -EINVAL;
 	}
 
@@ -743,7 +780,7 @@ static int hardfault_append_to_ulog(const char *caller, int fdin)
 
 	if (!found) {
 		identify(caller);
-		syslog(LOG_ERR, "Cannot append more data to ULog (no offsets left)\n");
+		hfsyslog(LOG_ERR, "Cannot append more data to ULog (no offsets left)\n");
 		ret = -EINVAL;
 		goto out;
 	}
@@ -789,7 +826,7 @@ static int hardfault_append_to_ulog(const char *caller, int fdin)
 
 			if (num_read <= 0) {
 				identify(caller);
-				syslog(LOG_ERR, "read() failed: %i, %i\n", num_read, errno);
+				hfsyslog(LOG_ERR, "read() failed: %i, %i\n", num_read, errno);
 				ret = -1;
 				goto out;
 			}
@@ -834,13 +871,13 @@ static int hardfault_commit(char *caller)
 
 		if (rv < 0) {
 			identify(caller);
-			syslog(LOG_INFO, "Failed to Close Fault Log (%d)\n", rv);
+			hfsyslog(LOG_INFO, "Failed to Close Fault Log (%d)\n", rv);
 
 		} else {
 
 			if (state != OK) {
 				identify(caller);
-				syslog(LOG_INFO, "Nothing to save\n", path);
+				hfsyslog(LOG_INFO, "Nothing to save\n");
 				ret = -ENOENT;
 
 			} else {
@@ -854,7 +891,7 @@ static int hardfault_commit(char *caller)
 						syslog(LOG_INFO, "Saving Fault Log file %s\n", path);
 						ret = hardfault_write(caller, fdout, HARDFAULT_FILE_FORMAT, true);
 						identify(caller);
-						syslog(LOG_INFO, "Done saving Fault Log file\n");
+						hfsyslog(LOG_INFO, "Done saving Fault Log file\n");
 
 						// now save the same data to the last ulog file by copying from the txt file
 						// (not the fastest, but a simple way to do it). We also want to keep a separate
@@ -865,16 +902,16 @@ static int hardfault_commit(char *caller)
 
 							switch (ret) {
 							case OK:
-								syslog(LOG_INFO, "Successfully appended to ULog\n");
+								hfsyslog(LOG_INFO, "Successfully appended to ULog\n");
 								break;
 
 							case -ENOENT:
-								syslog(LOG_INFO, "No ULog to append to\n");
+								hfsyslog(LOG_INFO, "No ULog to append to\n");
 								ret = OK;
 								break;
 
 							default:
-								syslog(LOG_INFO, "Failed to append to ULog (%i)\n", ret);
+								hfsyslog(LOG_INFO, "Failed to append to ULog (%i)\n", ret);
 								break;
 							}
 						}
@@ -908,7 +945,7 @@ static int hardfault_dowrite(char *caller, int infd, int outfd,
 
 			if (ret < 0) {
 				identify(caller);
-				syslog(LOG_INFO, "Failed to read Fault Log file [%s] (%d)\n", HARDFAULT_PATH, ret);
+				hfsyslog(LOG_INFO, "Failed to read Fault Log file [%s] (%d)\n", HARDFAULT_PATH, ret);
 				ret = -EIO;
 
 			} else {
@@ -1002,7 +1039,7 @@ __EXPORT int hardfault_rearm(char *caller)
 
 	if (rv < 0) {
 		identify(caller);
-		syslog(LOG_INFO, "Failed to re arming Fault Log (%d)\n", rv);
+		hfsyslog(LOG_INFO, "Failed to re arming Fault Log (%d)\n", rv);
 		ret = -EIO;
 
 	} else {
@@ -1026,10 +1063,10 @@ __EXPORT int hardfault_check_status(char *caller)
 		identify(caller);
 
 		if (ret == -ENOENT) {
-			syslog(LOG_INFO, "Fault Log is Armed\n");
+			hfsyslog(LOG_INFO, "Fault Log is Armed\n");
 
 		} else {
-			syslog(LOG_INFO, "Failed to open Fault Log file [%s] (%d)\n", HARDFAULT_PATH, ret);
+			hfsyslog(LOG_INFO, "Failed to open Fault Log file [%s] (%d)\n", HARDFAULT_PATH, ret);
 		}
 
 	} else {
@@ -1039,19 +1076,19 @@ __EXPORT int hardfault_check_status(char *caller)
 
 		if (rv < 0) {
 			identify(caller);
-			syslog(LOG_INFO, "Failed to Close Fault Log (%d)\n", rv);
+			hfsyslog(LOG_INFO, "Failed to Close Fault Log (%d)\n", rv);
 
 		} else {
 			ret = state;
 			identify(caller);
-			syslog(LOG_INFO, "Fault Log info File No %d Length %d flags:0x%02x state:%d\n",
-			       (unsigned int)desc.fileno, (unsigned int) desc.len, (unsigned int)desc.flags, state);
+			hfsyslog(LOG_INFO, "Fault Log info File No %" PRIu8 " Length %" PRIu16 " flags:0x%02" PRIx16 " state:%d\n",
+				 desc.fileno, desc.len, desc.flags, state);
 
 			if (state == OK) {
 				char buf[TIME_FMT_LEN + 1];
 				format_fault_time(HEADER_TIME_FMT, &desc.lastwrite, buf, arraySize(buf));
 				identify(caller);
-				syslog(LOG_INFO, "Fault Logged on %s - Valid\n", buf);
+				hfsyslog(LOG_INFO, "Fault Logged on %s - Valid\n", buf);
 
 			} else {
 				rv = hardfault_rearm(caller);
@@ -1077,7 +1114,7 @@ __EXPORT int hardfault_increment_reboot(char *caller, bool reset)
 
 	if (fd < 0) {
 		identify(caller);
-		syslog(LOG_INFO, "Failed to open Fault reboot count file [%s] (%d)\n", HARDFAULT_REBOOT_PATH, ret);
+		hfsyslog(LOG_INFO, "Failed to open Fault reboot count file [%s] (%d)\n", HARDFAULT_REBOOT_PATH, ret);
 
 	} else {
 
@@ -1142,7 +1179,7 @@ __EXPORT int hardfault_write(char *caller, int fd, int format, bool rearm)
 
 		if (ret < 0) {
 			identify(caller);
-			syslog(LOG_INFO, "Failed to Close Fault Log (%d)\n", ret);
+			hfsyslog(LOG_INFO, "Failed to Close Fault Log (%d)\n", ret);
 
 		}
 
@@ -1151,7 +1188,7 @@ __EXPORT int hardfault_write(char *caller, int fd, int format, bool rearm)
 
 			if (ret < 0) {
 				identify(caller);
-				syslog(LOG_INFO, "Failed to re-arm Fault Log (%d)\n", ret);
+				hfsyslog(LOG_INFO, "Failed to re-arm Fault Log (%d)\n", ret);
 			}
 		}
 
@@ -1161,7 +1198,7 @@ __EXPORT int hardfault_write(char *caller, int fd, int format, bool rearm)
 
 		if (ret != OK) {
 			identify(caller);
-			syslog(LOG_INFO, "Failed to Write Fault Log (%d)\n", ret);
+			hfsyslog(LOG_INFO, "Failed to Write Fault Log (%d)\n", ret);
 		}
 	}
 

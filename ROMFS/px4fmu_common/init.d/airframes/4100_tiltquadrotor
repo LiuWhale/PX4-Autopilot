@@ -19,21 +19,11 @@
 # @maintainer Ricardo Marques <marques.ricardo17@gmail.com>
 #
 # @board px4_fmu-v2 exclude
-# @board intel_aerofc-v1 exclude
 # @board bitcraze_crazyflie exclude
 #
 
-. /etc/init.d/rc.mc_defaults
-
-#Parameters here:
-param set LED_RGB_MAXBRT 8
-
-
-# Configure this as Quadrotor
-# set MAV_TYPE 14
+. ${R}etc/init.d/rc.mc_defaults
 
 # Set mixer
 set MIXER tilt_quad
 set MIXER_AUX tilt_quad
-
-set PWM_OUT 1234

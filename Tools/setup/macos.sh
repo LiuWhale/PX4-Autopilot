@@ -33,6 +33,7 @@ if [[ $REINSTALL_FORMULAS == "--reinstall" ]]; then
 
 	brew tap PX4/px4
 	brew reinstall px4-dev
+	brew install ncurses
 else
 	if brew ls --versions px4-dev > /dev/null; then
 		echo "px4-dev already installed"
@@ -40,12 +41,13 @@ else
 		echo "Installing PX4 general dependencies (homebrew px4-dev)"
 		brew tap PX4/px4
 		brew install px4-dev
+		brew install ncurses
 	fi
 fi
 
 # Python dependencies
 echo "Installing PX4 Python3 dependencies"
-pip3 install --user -r ${DIR}/requirements.txt
+python3 -m pip install --user -r ${DIR}/requirements.txt
 
 # Optional, but recommended additional simulation tools:
 if [[ $INSTALL_SIM == "--sim-tools" ]]; then

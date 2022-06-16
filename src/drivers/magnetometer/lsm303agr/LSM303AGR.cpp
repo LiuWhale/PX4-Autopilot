@@ -41,7 +41,7 @@
 
 #include <px4_platform_common/px4_config.h>
 #include <px4_platform_common/defines.h>
-#include <ecl/geo/geo.h>
+#include <geo/geo.h>
 
 /* SPI protocol address bits */
 #define DIR_READ				(1<<7)
@@ -61,17 +61,14 @@ static constexpr uint8_t LSM303AGR_WHO_AM_I_M = 0x40;
  */
 #define LSM303AGR_TIMER_REDUCTION				200
 
-LSM303AGR::LSM303AGR(I2CSPIBusOption bus_option, int bus, int device, enum Rotation rotation, int bus_frequency,
-		     spi_mode_e spi_mode) :
-	SPI(DRV_MAG_DEVTYPE_LSM303AGR, MODULE_NAME, bus, device, spi_mode, bus_frequency),
-	I2CSPIDriver(MODULE_NAME, px4::device_bus_to_wq(get_device_id()), bus_option, bus),
-	_px4_mag(get_device_id(), rotation),
+LSM303AGR::LSM303AGR(const I2CSPIDriverConfig &config) :
+	SPI(config),
+	I2CSPIDriver(config),
+	_px4_mag(get_device_id(), config.rotation),
 	_mag_sample_perf(perf_alloc(PC_ELAPSED, MODULE_NAME": mag_read")),
 	_bad_registers(perf_alloc(PC_COUNT, MODULE_NAME": bad_reg")),
 	_bad_values(perf_alloc(PC_COUNT, MODULE_NAME": bad_val"))
 {
-	_px4_mag.set_external(external());
-
 	_px4_mag.set_scale(1.5f / 1000.f); // 1.5 milligauss/LSB
 }
 
@@ -315,9 +312,9 @@ int LSM303AGR::collect()
 		const hrt_abstime timestamp_sample = hrt_absolute_time();
 
 		// switch to right hand coordinate system in place
-		float x_raw = read_reg(OUTX_L_REG_M) + (read_reg(OUTX_H_REG_M) << 8);
-		float y_raw = read_reg(OUTY_L_REG_M) + (read_reg(OUTY_H_REG_M) << 8);
-		float z_raw = -(read_reg(OUTZ_L_REG_M) + (read_reg(OUTZ_H_REG_M) << 8));
+		int16_t x_raw = read_reg(OUTX_L_REG_M) + (read_reg(OUTX_H_REG_M) << 8);
+		int16_t y_raw = read_reg(OUTY_L_REG_M) + (read_reg(OUTY_H_REG_M) << 8);
+		int16_t z_raw = -(read_reg(OUTZ_L_REG_M) + (read_reg(OUTZ_H_REG_M) << 8));
 
 		_px4_mag.update(timestamp_sample, x_raw, y_raw, z_raw);
 

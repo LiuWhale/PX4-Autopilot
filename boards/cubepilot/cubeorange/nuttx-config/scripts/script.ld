@@ -168,14 +168,6 @@ SECTIONS
 		_einit = ABSOLUTE(.);
 	} > FLASH
 
-	/*
-	 * Construction data for parameters.
-	 */
-	__param ALIGN(4): {
-		__param_start = ABSOLUTE(.);
-		KEEP(*(__param*))
-		__param_end = ABSOLUTE(.);
-	} > FLASH
 
 	.ARM.extab : {
 		*(.ARM.extab*)
@@ -195,7 +187,12 @@ SECTIONS
 		*(.gnu.linkonce.d.*)
 		CONSTRUCTORS
 		_edata = ABSOLUTE(.);
-	} > AXI_SRAM AT > FLASH
+
+		/* Pad out last section as the STM32H7 Flash write size is 256 bits. 32 bytes */
+		. = ALIGN(16);
+		FILL(0xffff)
+		. += 16;
+	} > AXI_SRAM AT > FLASH  = 0xffff
 
 	.bss : {
 		_sbss = ABSOLUTE(.);
@@ -205,6 +202,15 @@ SECTIONS
 		. = ALIGN(4);
 		_ebss = ABSOLUTE(.);
 	} > AXI_SRAM
+
+	/* Emit the the D3 power domain section for locating BDMA data */
+
+	.sram4_reserve (NOLOAD) :
+	{
+		*(.sram4)
+		. = ALIGN(4);
+		_sram4_heap_start = ABSOLUTE(.);
+	} > SRAM4
 
 	/* Stabs debugging sections. */
 	.stab 0 : { *(.stab) }

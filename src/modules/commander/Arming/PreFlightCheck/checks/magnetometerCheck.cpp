@@ -39,54 +39,92 @@
 #include <lib/sensor_calibration/Utilities.hpp>
 #include <lib/systemlib/mavlink_log.h>
 #include <uORB/Subscription.hpp>
+#include <uORB/topics/estimator_status.h>
 #include <uORB/topics/sensor_mag.h>
-#include <uORB/topics/subsystem_info.h>
 
 using namespace time_literals;
 
+bool PreFlightCheck::isMagRequired(const uint8_t instance)
+{
+	uORB::SubscriptionData<sensor_mag_s> magnetometer{ORB_ID(sensor_mag), instance};
+	const uint32_t device_id = static_cast<uint32_t>(magnetometer.get().device_id);
+
+	bool is_used_by_nav = false;
+
+	for (uint8_t i = 0; i < ORB_MULTI_MAX_INSTANCES; i++) {
+		uORB::SubscriptionData<estimator_status_s> estimator_status_sub{ORB_ID(estimator_status), i};
+
+		if (device_id > 0 && estimator_status_sub.get().mag_device_id == device_id) {
+			is_used_by_nav = true;;
+			break;
+		}
+	}
+
+	return is_used_by_nav;
+}
+
 bool PreFlightCheck::magnetometerCheck(orb_advert_t *mavlink_log_pub, vehicle_status_s &status, const uint8_t instance,
-				       const bool optional, int32_t &device_id, const bool report_fail)
+				       const bool is_mandatory, bool &report_fail)
 {
 	const bool exists = (orb_exists(ORB_ID(sensor_mag), instance) == PX4_OK);
-	bool calibration_valid = false;
-	bool mag_valid = false;
+	const bool is_required = is_mandatory || isMagRequired(instance);
+
+	bool is_valid = false;
+	bool is_calibration_valid = false;
+	bool is_mag_fault = false;
 
 	if (exists) {
-
 		uORB::SubscriptionData<sensor_mag_s> magnetometer{ORB_ID(sensor_mag), instance};
 
-		mag_valid = (hrt_elapsed_time(&magnetometer.get().timestamp) < 1_s);
+		const sensor_mag_s &mag_data = magnetometer.get();
+		is_valid = (mag_data.device_id != 0) && (mag_data.timestamp != 0) && (hrt_elapsed_time(&mag_data.timestamp) < 1_s);
 
-		if (!mag_valid) {
-			if (report_fail) {
-				mavlink_log_critical(mavlink_log_pub, "Preflight Fail: no valid data from Compass #%u", instance);
-			}
+		if (status.hil_state == vehicle_status_s::HIL_STATE_ON) {
+			is_calibration_valid = true;
+
+		} else {
+			is_calibration_valid = (calibration::FindCurrentCalibrationIndex("MAG", mag_data.device_id) >= 0);
 		}
 
-		device_id = magnetometer.get().device_id;
+		for (uint8_t i = 0; i < ORB_MULTI_MAX_INSTANCES; i++) {
+			uORB::SubscriptionData<estimator_status_s> estimator_status_sub{ORB_ID(estimator_status), i};
 
-		calibration_valid = (calibration::FindCalibrationIndex("MAG", device_id) >= 0);
-
-		if (!calibration_valid) {
-			if (report_fail) {
-				mavlink_log_critical(mavlink_log_pub, "Preflight Fail: Compass #%u %u uncalibrated", instance, device_id);
+			if (estimator_status_sub.get().mag_device_id == static_cast<uint32_t>(mag_data.device_id)) {
+				if (estimator_status_sub.get().control_mode_flags & (1 << estimator_status_s::CS_MAG_FAULT)) {
+					is_mag_fault = true;
+					break;
+				}
 			}
-		}
-
-	} else {
-		if (!optional && report_fail) {
-			mavlink_log_critical(mavlink_log_pub, "Preflight Fail: Compass Sensor #%u missing", instance);
 		}
 	}
 
-	const bool success = calibration_valid && mag_valid;
+	const bool is_sensor_ok = is_valid && is_calibration_valid && !is_mag_fault;
 
 	if (instance == 0) {
-		set_health_flags(subsystem_info_s::SUBSYSTEM_TYPE_MAG, exists, !optional, success, status);
+		set_health_flags(subsystem_info_s::SUBSYSTEM_TYPE_MAG, exists, is_required, is_sensor_ok, status);
 
 	} else if (instance == 1) {
-		set_health_flags(subsystem_info_s::SUBSYSTEM_TYPE_MAG2, exists, !optional, success, status);
+		set_health_flags(subsystem_info_s::SUBSYSTEM_TYPE_MAG2, exists, is_required, is_sensor_ok, status);
 	}
 
-	return success;
+	if (report_fail && is_required) {
+		if (!exists) {
+			mavlink_log_critical(mavlink_log_pub, "Preflight Fail: Compass Sensor %u missing", instance);
+			report_fail = false;
+
+		} else if (!is_valid) {
+			mavlink_log_critical(mavlink_log_pub, "Preflight Fail: no valid data from Compass %u", instance);
+			report_fail = false;
+
+		} else if (!is_calibration_valid) {
+			mavlink_log_critical(mavlink_log_pub, "Preflight Fail: Compass %u uncalibrated", instance);
+			report_fail = false;
+
+		} else if (is_mag_fault) {
+			mavlink_log_critical(mavlink_log_pub, "Preflight Fail: Compass #%u fault", instance);
+			report_fail = false;
+		}
+	}
+
+	return is_sensor_ok || !is_required;
 }

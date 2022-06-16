@@ -50,8 +50,8 @@
  * LIS2MDL internal constants and data structures.
  */
 
-/* Max measurement rate is 50Hz */
-#define LIS2MDL_CONVERSION_INTERVAL     (1000000 / 50)
+/* Max measurement rate is 20Hz */
+#define LIS2MDL_CONVERSION_INTERVAL     (1000000 / 20)
 
 #define ADDR_WHO_AM_I                   0x4f
 #define ID_WHO_AM_I                     0x40
@@ -72,7 +72,7 @@
 #define ADDR_OUT_T_H                    0x6f
 
 #define CFG_REG_A_TEMP_COMP_EN          (1 << 7)
-#define CFG_REG_A_ODR                   (2 << 2) /* 50Hz (100Hz creates spikes randomly) */
+#define CFG_REG_A_ODR                   (1 << 2) /* 20Hz (100Hz or 50Hz creates spikes randomly) */
 #define CFG_REG_A_MD                    (0 << 0) /* continuous mode */
 
 #define CFG_REG_B_LPF                   (1 << 0) /* LPF */
@@ -83,15 +83,15 @@
 extern device::Device *LIS2MDL_SPI_interface(int bus, uint32_t devid, int bus_frequency, spi_mode_e spi_mode);
 extern device::Device *LIS2MDL_I2C_interface(int bus, int bus_frequency);
 
+#define LIS2MDLL_ADDRESS        0x1e
 
 class LIS2MDL : public I2CSPIDriver<LIS2MDL>
 {
 public:
-	LIS2MDL(device::Device *interface, enum Rotation rotation, I2CSPIBusOption bus_option, int bus);
+	LIS2MDL(device::Device *interface, const I2CSPIDriverConfig &config);
 	virtual ~LIS2MDL();
 
-	static I2CSPIDriverBase *instantiate(const BusCLIArguments &cli, const BusInstanceIterator &iterator,
-					     int runtime_instance);
+	static I2CSPIDriverBase *instantiate(const I2CSPIDriverConfig &config, int runtime_instance);
 	static void print_usage();
 
 	virtual int init();

@@ -49,7 +49,7 @@ WorkQueue::WorkQueue(const wq_config_t &config) :
 	// set the threads name
 #ifdef __PX4_DARWIN
 	pthread_setname_np(_config.name);
-#elif !defined(__PX4_QURT)
+#else
 	pthread_setname_np(pthread_self(), _config.name);
 #endif
 
@@ -59,11 +59,20 @@ WorkQueue::WorkQueue(const wq_config_t &config) :
 
 	px4_sem_init(&_process_lock, 0, 0);
 	px4_sem_setprotocol(&_process_lock, SEM_PRIO_NONE);
+
+	px4_sem_init(&_exit_lock, 0, 1);
+	px4_sem_setprotocol(&_exit_lock, SEM_PRIO_NONE);
 }
 
 WorkQueue::~WorkQueue()
 {
+
 	work_lock();
+
+	// Synchronize with ::Detach
+	px4_sem_wait(&_exit_lock);
+	px4_sem_destroy(&_exit_lock);
+
 	px4_sem_destroy(&_process_lock);
 	work_unlock();
 
@@ -83,11 +92,14 @@ bool WorkQueue::Attach(WorkItem *item)
 	}
 
 	work_unlock();
+
 	return false;
 }
 
 void WorkQueue::Detach(WorkItem *item)
 {
+	bool exiting = false;
+
 	work_lock();
 
 	_work_items.remove(item);
@@ -96,16 +108,35 @@ void WorkQueue::Detach(WorkItem *item)
 		// shutdown, no active WorkItems
 		PX4_DEBUG("stopping: %s, last active WorkItem closing", _config.name);
 
+		// Deletion of this work queue might happen right after request_stop or
+		// SignalWorkerThread. Use a separate lock to prevent premature deletion
+		px4_sem_wait(&_exit_lock);
+		exiting = true;
 		request_stop();
 		SignalWorkerThread();
 	}
 
 	work_unlock();
+
+	// In case someone is deleting this wq already, signal
+	// that it is now allowed
+	if (exiting) {
+		px4_sem_post(&_exit_lock);
+	}
 }
 
 void WorkQueue::Add(WorkItem *item)
 {
 	work_lock();
+
+#if defined(ENABLE_LOCKSTEP_SCHEDULER)
+
+	if (_lockstep_component == -1) {
+		_lockstep_component = px4_lockstep_register_component();
+	}
+
+#endif // ENABLE_LOCKSTEP_SCHEDULER
+
 	_q.push(item);
 	work_unlock();
 
@@ -157,6 +188,15 @@ void WorkQueue::Run()
 			// Note: after Run() we cannot access work anymore, as it might have been deleted
 			work_lock(); // re-lock
 		}
+
+#if defined(ENABLE_LOCKSTEP_SCHEDULER)
+
+		if (_q.empty()) {
+			px4_lockstep_unregister_component(_lockstep_component);
+			_lockstep_component = -1;
+		}
+
+#endif // ENABLE_LOCKSTEP_SCHEDULER
 
 		work_unlock();
 	}

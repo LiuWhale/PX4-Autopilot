@@ -46,7 +46,7 @@
 #ifndef MAVLINK_FTP_UNIT_TEST
 #include "mavlink_bridge_header.h"
 #else
-#include <v2.0/standard/mavlink.h>
+#include <mavlink.h>
 #endif
 
 class MavlinkFtpTest;
@@ -63,7 +63,7 @@ public:
 	 * Handle sending of messages. Call this regularly at a fixed frequency.
 	 * @param t current time
 	 */
-	void send(const hrt_abstime t);
+	void send();
 
 	/// Handle possible FTP message
 	void handle_message(const mavlink_message_t *msg);
@@ -155,6 +155,8 @@ private:
 	uint8_t _getServerComponentId(void);
 	uint8_t _getServerChannel(void);
 
+	bool _validatePathIsWritable(const char *path);
+
 	/**
 	 * make sure that the working buffers _work_buffer* are allocated
 	 * @return true if buffers exist, false if allocation failed
@@ -211,4 +213,6 @@ private:
 
 	// Mavlink test needs to be able to call send
 	friend class MavlinkFtpTest;
+
+	int _our_errno {0};
 };

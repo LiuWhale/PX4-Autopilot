@@ -43,12 +43,10 @@
  * @author Tim Hansen <t.hansen@tuhh.de>
  */
 
-
-
 #include <float.h>
 
 #include <drivers/drv_hrt.h>
-#include <lib/ecl/geo/geo.h>
+#include <lib/geo/geo.h>
 #include <lib/mathlib/mathlib.h>
 #include <lib/perf/perf_counter.h>
 #include <lib/pid/pid.h>
@@ -71,7 +69,8 @@
 #include <uORB/topics/vehicle_rates_setpoint.h>
 #include <uORB/topics/vehicle_control_mode.h>
 #include <uORB/topics/actuator_controls.h>
-#include <uORB/topics/ekf2_timestamps.h>
+#include <uORB/topics/vehicle_thrust_setpoint.h>
+#include <uORB/topics/vehicle_torque_setpoint.h>
 #include <uORB/uORB.h>
 
 using matrix::Eulerf;
@@ -82,15 +81,13 @@ using matrix::Dcmf;
 
 using uORB::SubscriptionData;
 
+using namespace time_literals;
+
 class UUVAttitudeControl: public ModuleBase<UUVAttitudeControl>, public ModuleParams, public px4::WorkItem
 {
 public:
 	UUVAttitudeControl();
 	~UUVAttitudeControl();
-
-	UUVAttitudeControl(const UUVAttitudeControl &) = delete;
-	UUVAttitudeControl operator=(const UUVAttitudeControl &other) = delete;
-
 
 	/** @see ModuleBase */
 	static int task_spawn(int argc, char *argv[]);
@@ -103,9 +100,14 @@ public:
 	bool init();
 
 private:
-	uORB::Publication<actuator_controls_s> _actuator_controls_pub{ORB_ID(actuator_controls_0)};
+	void publishTorqueSetpoint(const hrt_abstime &timestamp_sample);
+	void publishThrustSetpoint(const hrt_abstime &timestamp_sample);
 
-	uORB::Subscription _parameter_update_sub{ORB_ID(parameter_update)};
+	uORB::Publication<actuator_controls_s> _actuator_controls_pub{ORB_ID(actuator_controls_0)};
+	uORB::Publication<vehicle_thrust_setpoint_s>	_vehicle_thrust_setpoint_pub{ORB_ID(vehicle_thrust_setpoint)};
+	uORB::Publication<vehicle_torque_setpoint_s>	_vehicle_torque_setpoint_pub{ORB_ID(vehicle_torque_setpoint)};
+
+	uORB::SubscriptionInterval _parameter_update_sub{ORB_ID(parameter_update), 1_s};
 
 	uORB::Subscription _vehicle_attitude_setpoint_sub{ORB_ID(vehicle_attitude_setpoint)};	/**< vehicle attitude setpoint */
 	uORB::Subscription _vehicle_rates_setpoint_sub{ORB_ID(vehicle_rates_setpoint)}; /**< vehicle bodyrates setpoint subscriber */
@@ -132,6 +134,7 @@ private:
 		(ParamFloat<px4::params::UUV_YAW_D>) _param_yaw_d,
 		// control/input modes
 		(ParamInt<px4::params::UUV_INPUT_MODE>) _param_input_mode,
+		(ParamInt<px4::params::UUV_SKIP_CTRL>) _param_skip_ctrl,
 		// direct access to inputs
 		(ParamFloat<px4::params::UUV_DIRCT_ROLL>) _param_direct_roll,
 		(ParamFloat<px4::params::UUV_DIRCT_PITCH>) _param_direct_pitch,
@@ -150,5 +153,6 @@ private:
 	 */
 	void control_attitude_geo(const vehicle_attitude_s &attitude, const vehicle_attitude_setpoint_s &attitude_setpoint,
 				  const vehicle_angular_velocity_s &angular_velocity, const vehicle_rates_setpoint_s &rates_setpoint);
-	void constrain_actuator_commands(float roll_u, float pitch_u, float yaw_u, float thrust_u);
+	void constrain_actuator_commands(float roll_u, float pitch_u, float yaw_u,
+					 float thrust_x, float thrust_y, float thrust_z);
 };

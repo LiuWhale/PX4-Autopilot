@@ -33,8 +33,14 @@
 
 px4_add_romfs_files(
 	10016_iris
+	10017_iris_ctrlalloc
+	10018_iris_foggy_lidar
+	10019_omnicopter
 	10020_if750a
 	10030_px4vision
+	10040_quadx
+	10041_airplane
+	10042_xvert
 	1010_iris_opt_flow
 	1010_iris_opt_flow.post
 	1011_iris_irlock
@@ -44,22 +50,27 @@ px4_add_romfs_files(
 	1014_solo
 	1015_iris_obs_avoid
 	1015_iris_obs_avoid.post
-	1016_iris_rtps
-	1016_iris_rtps.post
 	1017_iris_opt_flow_mockup
 	1018_iris_vision_velocity
 	1019_iris_dual_gps
 	1020_uuv_generic
 	1021_uuv_hippocampus
+	1022_uuv_bluerov2_heavy
 	1030_plane
 	1031_plane_cam
 	1032_plane_catapult
 	1033_plane_lidar
 	1033_rascal
 	1034_rascal-electric
+	1035_techpod
+	1036_malolo
+	1037_believer
+	1038_glider
 	1040_standard_vtol
 	1041_tailsitter
 	1042_tiltrotor
+	1043_standard_vtol_drop
+	1043_standard_vtol_drop.post
 	1060_rover
 	1061_r1_rover
 	1062_tf-r1
@@ -70,4 +81,6 @@ px4_add_romfs_files(
 	2507_cloudship
 	6011_typhoon_h480
 	6011_typhoon_h480.post
+	6012_typhoon_h480_ctrlalloc
+	6012_typhoon_h480_ctrlalloc.post
 )

@@ -20,11 +20,13 @@
 #
 # @maintainer Lorenz Meier <lorenz@px4.io>
 #
-# @board intel_aerofc-v1 exclude
 # @board bitcraze_crazyflie exclude
 #
 
-. /etc/init.d/rc.mc_defaults
+. ${R}etc/init.d/rc.mc_defaults
+
+# MAV_TYPE_OCTOROTOR 14
+param set-default MAV_TYPE 14
 
 set MIXER octo_+
 

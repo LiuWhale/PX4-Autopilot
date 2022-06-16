@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2019 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2020-2021 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -49,7 +49,8 @@ static constexpr uint8_t Bit7 = (1 << 7);
 static constexpr uint32_t SPI_SPEED = 10 * 1000 * 1000; // 10MHz SPI serial interface
 static constexpr uint8_t DIR_READ = 0x80;
 
-static constexpr uint8_t ID = 0x1E;
+static constexpr uint8_t ID_088 = 0x1E;
+static constexpr uint8_t ID_090L = 0x1A;
 
 enum class Register : uint8_t {
 	ACC_CHIP_ID        = 0x00,

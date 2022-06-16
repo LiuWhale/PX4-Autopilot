@@ -40,7 +40,7 @@
 #include <float.h>
 #include <mathlib/mathlib.h>
 #include <px4_platform_common/defines.h>
-#include <ecl/geo/geo.h>
+#include <geo/geo.h>
 
 using namespace matrix;
 
@@ -65,10 +65,24 @@ void PositionControl::setThrustLimits(const float min, const float max)
 	_lim_thr_max = max;
 }
 
+void PositionControl::setHorizontalThrustMargin(const float margin)
+{
+	_lim_thr_xy_margin = margin;
+}
+
 void PositionControl::updateHoverThrust(const float hover_thrust_new)
 {
-	_vel_int(2) += (hover_thrust_new - _hover_thrust) * (CONSTANTS_ONE_G / hover_thrust_new);
-	setHoverThrust(hover_thrust_new);
+	// Given that the equation for thrust is T = a_sp * Th / g - Th
+	// with a_sp = desired acceleration, Th = hover thrust and g = gravity constant,
+	// we want to find the acceleration that needs to be added to the integrator in order obtain
+	// the same thrust after replacing the current hover thrust by the new one.
+	// T' = T => a_sp' * Th' / g - Th' = a_sp * Th / g - Th
+	// so a_sp' = (a_sp - g) * Th / Th' + g
+	// we can then add a_sp' - a_sp to the current integrator to absorb the effect of changing Th by Th'
+	if (hover_thrust_new > FLT_EPSILON) {
+		_vel_int(2) += (_acc_sp(2) - CONSTANTS_ONE_G) * _hover_thrust / hover_thrust_new + CONSTANTS_ONE_G - _acc_sp(2);
+		setHoverThrust(hover_thrust_new);
+	}
 }
 
 void PositionControl::setState(const PositionControlStates &states)
@@ -88,41 +102,23 @@ void PositionControl::setInputSetpoint(const vehicle_local_position_setpoint_s &
 	_yawspeed_sp = setpoint.yawspeed;
 }
 
-void PositionControl::setConstraints(const vehicle_constraints_s &constraints)
-{
-	_constraints = constraints;
-
-	// For safety check if adjustable constraints are below global constraints. If they are not stricter than global
-	// constraints, then just use global constraints for the limits.
-	if (!PX4_ISFINITE(constraints.tilt) || (constraints.tilt > _lim_tilt)) {
-		_constraints.tilt = _lim_tilt;
-	}
-
-	if (!PX4_ISFINITE(constraints.speed_up) || (constraints.speed_up > _lim_vel_up)) {
-		_constraints.speed_up = _lim_vel_up;
-	}
-
-	if (!PX4_ISFINITE(constraints.speed_down) || (constraints.speed_down > _lim_vel_down)) {
-		_constraints.speed_down = _lim_vel_down;
-	}
-
-	// ignore _constraints.speed_xy TODO: remove it completely as soon as no task uses it anymore to avoid confusion
-}
-
 bool PositionControl::update(const float dt)
 {
-	// x and y input setpoints always have to come in pairs
-	const bool valid = (PX4_ISFINITE(_pos_sp(0)) == PX4_ISFINITE(_pos_sp(1)))
-			   && (PX4_ISFINITE(_vel_sp(0)) == PX4_ISFINITE(_vel_sp(1)))
-			   && (PX4_ISFINITE(_acc_sp(0)) == PX4_ISFINITE(_acc_sp(1)));
+	bool valid = _inputValid();
 
-	_positionControl();
-	_velocityControl(dt);
+	if (valid) {
+		_positionControl();
+		_velocityControl(dt);
 
-	_yawspeed_sp = PX4_ISFINITE(_yawspeed_sp) ? _yawspeed_sp : 0.f;
-	_yaw_sp = PX4_ISFINITE(_yaw_sp) ? _yaw_sp : _yaw; // TODO: better way to disable yaw control
+		_yawspeed_sp = PX4_ISFINITE(_yawspeed_sp) ? _yawspeed_sp : 0.f;
+		_yaw_sp = PX4_ISFINITE(_yaw_sp) ? _yaw_sp : _yaw; // TODO: better way to disable yaw control
+	}
 
-	return valid && _updateSuccessful();
+	// There has to be a valid output acceleration and thrust setpoint otherwise something went wrong
+	valid = valid && PX4_ISFINITE(_acc_sp(0)) && PX4_ISFINITE(_acc_sp(1)) && PX4_ISFINITE(_acc_sp(2));
+	valid = valid && PX4_ISFINITE(_thr_sp(0)) && PX4_ISFINITE(_thr_sp(1)) && PX4_ISFINITE(_thr_sp(2));
+
+	return valid;
 }
 
 void PositionControl::_positionControl()
@@ -138,7 +134,7 @@ void PositionControl::_positionControl()
 	// the desired position setpoint over the feed-forward term.
 	_vel_sp.xy() = ControlMath::constrainXY(vel_sp_position.xy(), (_vel_sp - vel_sp_position).xy(), _lim_vel_horizontal);
 	// Constrain velocity in z-direction.
-	_vel_sp(2) = math::constrain(_vel_sp(2), -_constraints.speed_up, _constraints.speed_down);
+	_vel_sp(2) = math::constrain(_vel_sp(2), -_lim_vel_up, _lim_vel_down);
 }
 
 void PositionControl::_velocityControl(const float dt)
@@ -158,18 +154,27 @@ void PositionControl::_velocityControl(const float dt)
 		vel_error(2) = 0.f;
 	}
 
-	// Saturate maximal vertical thrust
-	_thr_sp(2) = math::max(_thr_sp(2), -_lim_thr_max);
-
-	// Get allowed horizontal thrust after prioritizing vertical control
-	const float thrust_max_squared = _lim_thr_max * _lim_thr_max;
-	const float thrust_z_squared = _thr_sp(2) * _thr_sp(2);
-	float thrust_max_xy = sqrtf(thrust_max_squared - thrust_z_squared);
-
-	// Saturate thrust in horizontal direction
+	// Prioritize vertical control while keeping a horizontal margin
 	const Vector2f thrust_sp_xy(_thr_sp);
 	const float thrust_sp_xy_norm = thrust_sp_xy.norm();
+	const float thrust_max_squared = math::sq(_lim_thr_max);
 
+	// Determine how much vertical thrust is left keeping horizontal margin
+	const float allocated_horizontal_thrust = math::min(thrust_sp_xy_norm, _lim_thr_xy_margin);
+	const float thrust_z_max_squared = thrust_max_squared - math::sq(allocated_horizontal_thrust);
+
+	// Saturate maximal vertical thrust
+	_thr_sp(2) = math::max(_thr_sp(2), -sqrtf(thrust_z_max_squared));
+
+	// Determine how much horizontal thrust is left after prioritizing vertical control
+	const float thrust_max_xy_squared = thrust_max_squared - math::sq(_thr_sp(2));
+	float thrust_max_xy = 0;
+
+	if (thrust_max_xy_squared > 0) {
+		thrust_max_xy = sqrtf(thrust_max_xy_squared);
+	}
+
+	// Saturate thrust in horizontal direction
 	if (thrust_sp_xy_norm > thrust_max_xy) {
 		_thr_sp.xy() = thrust_sp_xy / thrust_sp_xy_norm * thrust_max_xy;
 	}
@@ -193,7 +198,7 @@ void PositionControl::_accelerationControl()
 {
 	// Assume standard acceleration due to gravity in vertical direction for attitude generation
 	Vector3f body_z = Vector3f(-_acc_sp(0), -_acc_sp(1), CONSTANTS_ONE_G).normalized();
-	ControlMath::limitTilt(body_z, Vector3f(0, 0, 1), _constraints.tilt);
+	ControlMath::limitTilt(body_z, Vector3f(0, 0, 1), _lim_tilt);
 	// Scale thrust assuming hover thrust produces standard gravity
 	float collective_thrust = _acc_sp(2) * (_hover_thrust / CONSTANTS_ONE_G) - _hover_thrust;
 	// Project thrust to planned body attitude
@@ -202,9 +207,19 @@ void PositionControl::_accelerationControl()
 	_thr_sp = body_z * collective_thrust;
 }
 
-bool PositionControl::_updateSuccessful()
+bool PositionControl::_inputValid()
 {
 	bool valid = true;
+
+	// Every axis x, y, z needs to have some setpoint
+	for (int i = 0; i <= 2; i++) {
+		valid = valid && (PX4_ISFINITE(_pos_sp(i)) || PX4_ISFINITE(_vel_sp(i)) || PX4_ISFINITE(_acc_sp(i)));
+	}
+
+	// x and y input setpoints always have to come in pairs
+	valid = valid && (PX4_ISFINITE(_pos_sp(0)) == PX4_ISFINITE(_pos_sp(1)));
+	valid = valid && (PX4_ISFINITE(_vel_sp(0)) == PX4_ISFINITE(_vel_sp(1)));
+	valid = valid && (PX4_ISFINITE(_acc_sp(0)) == PX4_ISFINITE(_acc_sp(1)));
 
 	// For each controlled state the estimate has to be valid
 	for (int i = 0; i <= 2; i++) {
@@ -217,10 +232,6 @@ bool PositionControl::_updateSuccessful()
 		}
 	}
 
-	// There has to be a valid output accleration and thrust setpoint otherwise there was no
-	// setpoint-state pair for each axis that can get controlled
-	valid = valid && PX4_ISFINITE(_acc_sp(0)) && PX4_ISFINITE(_acc_sp(1)) && PX4_ISFINITE(_acc_sp(2));
-	valid = valid && PX4_ISFINITE(_thr_sp(0)) && PX4_ISFINITE(_thr_sp(1)) && PX4_ISFINITE(_thr_sp(2));
 	return valid;
 }
 

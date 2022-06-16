@@ -39,9 +39,9 @@
 
 #pragma once
 
+#include <lib/mathlib/mathlib.h>
 #include <matrix/matrix/math.hpp>
 #include <uORB/topics/vehicle_attitude_setpoint.h>
-#include <uORB/topics/vehicle_constraints.h>
 #include <uORB/topics/vehicle_local_position_setpoint.h>
 
 struct PositionControlStates {
@@ -108,6 +108,12 @@ public:
 	void setThrustLimits(const float min, const float max);
 
 	/**
+	 * Set margin that is kept for horizontal control when prioritizing vertical thrust
+	 * @param margin of normalized thrust that is kept for horizontal control e.g. 0.3
+	 */
+	void setHorizontalThrustMargin(const float margin);
+
+	/**
 	 * Set the maximum tilt angle in radians the output attitude is allowed to have
 	 * @param tilt angle in radians from level orientation
 	 */
@@ -115,9 +121,9 @@ public:
 
 	/**
 	 * Set the normalized hover thrust
-	 * @param thrust [0,1] with which the vehicle hovers not acelerating down or up with level orientation
+	 * @param thrust [0.1, 0.9] with which the vehicle hovers not acelerating down or up with level orientation
 	 */
-	void setHoverThrust(const float hover_thrust) { _hover_thrust = hover_thrust; }
+	void setHoverThrust(const float hover_thrust) { _hover_thrust = math::constrain(hover_thrust, 0.1f, 0.9f); }
 
 	/**
 	 * Update the hover thrust without immediately affecting the output
@@ -138,13 +144,6 @@ public:
 	 * @param setpoint a vehicle_local_position_setpoint_s structure
 	 */
 	void setInputSetpoint(const vehicle_local_position_setpoint_s &setpoint);
-
-	/**
-	 * Pass constraints that are stricter than the global limits
-	 * Note: NAN value means no constraint, take maximum limit of controller.
-	 * @param constraints a PositionControl structure with supported constraints
-	 */
-	void setConstraints(const vehicle_constraints_s &constraints);
 
 	/**
 	 * Apply P-position and PID-velocity controller that updates the member
@@ -180,7 +179,7 @@ public:
 	void getAttitudeSetpoint(vehicle_attitude_setpoint_s &attitude_setpoint) const;
 
 private:
-	bool _updateSuccessful();
+	bool _inputValid();
 
 	void _positionControl(); ///< Position proportional control
 	void _velocityControl(const float dt); ///< Velocity PID control
@@ -198,9 +197,10 @@ private:
 	float _lim_vel_down{}; ///< Downwards velocity limit with feed forward and position control
 	float _lim_thr_min{}; ///< Minimum collective thrust allowed as output [-1,0] e.g. -0.9
 	float _lim_thr_max{}; ///< Maximum collective thrust allowed as output [-1,0] e.g. -0.1
+	float _lim_thr_xy_margin{}; ///< Margin to keep for horizontal control when saturating prioritized vertical thrust
 	float _lim_tilt{}; ///< Maximum tilt from level the output attitude is allowed to have
 
-	float _hover_thrust{}; ///< Thrust [0,1] with which the vehicle hovers not accelerating down or up with level orientation
+	float _hover_thrust{}; ///< Thrust [0.1, 0.9] with which the vehicle hovers not accelerating down or up with level orientation
 
 	// States
 	matrix::Vector3f _pos; /**< current position */
@@ -208,8 +208,6 @@ private:
 	matrix::Vector3f _vel_dot; /**< velocity derivative (replacement for acceleration estimate) */
 	matrix::Vector3f _vel_int; /**< integral term of the velocity controller */
 	float _yaw{}; /**< current heading */
-
-	vehicle_constraints_s _constraints{}; /**< variable constraints */
 
 	// Setpoints
 	matrix::Vector3f _pos_sp; /**< desired position */

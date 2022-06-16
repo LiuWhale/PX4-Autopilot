@@ -80,6 +80,7 @@ private:
 	bool ResetAllExcludesTwo();
 	bool ResetAllExcludesBoundaryCheck();
 	bool ResetAllExcludesWildcard();
+	bool CustomDefaults();
 	bool exportImport();
 
 	// tests on system parameters
@@ -223,6 +224,50 @@ bool ParameterTest::ResetAllExcludesWildcard()
 	return ret;
 }
 
+bool ParameterTest::CustomDefaults()
+{
+	int32_t value = 0;
+	param_t param_test_1 = param_find("TEST_1");
+	param_reset(param_test_1);
+	param_get(param_test_1, &value);
+	ut_compare("value for param doesn't match default value", value, 2); // TEST_1 default value 2
+
+	// verify underlying default value
+	int32_t default_value = 0;
+	param_get_default_value(param_test_1, &default_value);
+	ut_compare("value for param default doesn't match default value", default_value, 2);
+
+	// change default value
+	int32_t new_default_value = 123456789;
+	param_set_default_value(param_test_1, &new_default_value);
+	ut_compare("value for param default doesn't match default value", new_default_value, 123456789);
+
+	// verify new default value
+	default_value = 0;
+	param_get_default_value(param_test_1, &default_value);
+	ut_compare("value for param default doesn't match custom default value", default_value, 123456789);
+
+	// verify new value
+	value = 0;
+	param_get(param_test_1, &value);
+	ut_compare("param value not custom default", value, 123456789);
+
+	// set to new value and verify
+	value = 987654321;
+	param_set(param_test_1, &value);
+	value = 0;
+	param_get(param_test_1, &value);
+	ut_compare("param value not saved", value, 987654321);
+
+	// reset (to custom default)
+	param_reset(param_test_1);
+	value = 0;
+	param_get(param_test_1, &value);
+	ut_compare("param value not reset to custom default", value, 123456789);
+
+	return true;
+}
+
 bool ParameterTest::exportImport()
 {
 	static constexpr float MAGIC_FLOAT_VAL = 0.314159f;
@@ -356,22 +401,13 @@ bool ParameterTest::exportImportAll()
 
 	// backup current parameters
 	const char *param_file_name = PX4_STORAGEDIR "/param_backup";
-	int fd = open(param_file_name, O_WRONLY | O_CREAT, PX4_O_MODE_666);
 
-	if (fd < 0) {
-		PX4_ERR("open '%s' failed (%i)", param_file_name, errno);
-		return false;
-	}
-
-	int result = param_export(fd, false);
+	int result = param_export(param_file_name, nullptr);
 
 	if (result != PX4_OK) {
 		PX4_ERR("param_export failed");
-		close(fd);
 		return false;
 	}
-
-	close(fd);
 
 	bool ret = true;
 
@@ -509,7 +545,7 @@ bool ParameterTest::exportImportAll()
 	param_reset_all();
 
 	// restore original params
-	fd = open(param_file_name, O_RDONLY);
+	int fd = open(param_file_name, O_RDONLY);
 
 	if (fd < 0) {
 		PX4_ERR("open '%s' failed (%i)", param_file_name, errno);
@@ -544,6 +580,7 @@ bool ParameterTest::run_tests()
 	ut_run_test(ResetAllExcludesTwo);
 	ut_run_test(ResetAllExcludesBoundaryCheck);
 	ut_run_test(ResetAllExcludesWildcard);
+	ut_run_test(CustomDefaults);
 	ut_run_test(exportImport);
 
 	// WARNING, can potentially trash your system

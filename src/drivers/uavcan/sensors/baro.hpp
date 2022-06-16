@@ -38,12 +38,11 @@
 #pragma once
 
 #include "sensor_bridge.hpp"
-#include <drivers/drv_baro.h>
 
 #include <uavcan/equipment/air_data/StaticPressure.hpp>
 #include <uavcan/equipment/air_data/StaticTemperature.hpp>
 
-class UavcanBarometerBridge : public UavcanCDevSensorBridgeBase
+class UavcanBarometerBridge : public UavcanSensorBridgeBase
 {
 public:
 	static const char *const NAME;
@@ -74,6 +73,6 @@ private:
 	uavcan::Subscriber<uavcan::equipment::air_data::StaticPressure, AirPressureCbBinder> _sub_air_pressure_data;
 	uavcan::Subscriber<uavcan::equipment::air_data::StaticTemperature, AirTemperatureCbBinder> _sub_air_temperature_data;
 
-	float last_temperature_kelvin{0.0f};
+	float _last_temperature_kelvin{NAN};
 
 };

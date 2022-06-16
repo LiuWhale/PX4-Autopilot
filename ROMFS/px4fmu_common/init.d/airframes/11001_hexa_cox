@@ -18,11 +18,11 @@
 #
 # @maintainer Lorenz Meier <lorenz@px4.io>
 #
-# @board intel_aerofc-v1 exclude
 # @board bitcraze_crazyflie exclude
+# @board px4_fmu-v2 exclude
 #
 
-. /etc/init.d/rc.mc_defaults
+. ${R}etc/init.d/rc.mc_defaults
 
 set MIXER hexa_cox
 

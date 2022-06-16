@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2015 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2015-2022 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -59,25 +59,9 @@ public:
 	void update_fw_state() override;
 	void waiting_on_tecs() override;
 	float thrust_compensation_for_tilt();
+	void blendThrottleAfterFrontTransition(float scale) override;
 
 private:
-
-	struct {
-		float tilt_mc;				/**< actuator value corresponding to mc tilt */
-		float tilt_transition;			/**< actuator value corresponding to transition tilt (e.g 45 degrees) */
-		float tilt_fw;				/**< actuator value corresponding to fw tilt */
-		float tilt_spinup;			/**< actuator value corresponding to spinup tilt */
-		float front_trans_dur_p2;
-	} _params_tiltrotor;
-
-	struct {
-		param_t tilt_mc;
-		param_t tilt_transition;
-		param_t tilt_fw;
-		param_t tilt_spinup;
-		param_t front_trans_dur_p2;
-	} _params_handles_tiltrotor;
-
 	enum class vtol_mode {
 		MC_MODE = 0,			/**< vtol is in multicopter mode */
 		TRANSITION_FRONT_P1,	/**< vtol is in front transition part 1 mode */
@@ -101,8 +85,22 @@ private:
 	float _tilt_control{0.0f};		/**< actuator value for the tilt servo */
 
 	void parameters_update() override;
+	float timeUntilMotorsAreUp();
+	float moveLinear(float start, float stop, float progress);
+
+	void blendThrottleDuringBacktransition(const float scale, const float target_throttle);
+
+
 	hrt_abstime _last_timestamp_disarmed{0}; /**< used for calculating time since arming */
 	bool _tilt_motors_for_startup{false};
+
+	DEFINE_PARAMETERS_CUSTOM_PARENT(VtolType,
+					(ParamFloat<px4::params::VT_TILT_MC>) _param_vt_tilt_mc,
+					(ParamFloat<px4::params::VT_TILT_TRANS>) _param_vt_tilt_trans,
+					(ParamFloat<px4::params::VT_TILT_FW>) _param_vt_tilt_fw,
+					(ParamFloat<px4::params::VT_TILT_SPINUP>) _param_vt_tilt_spinup,
+					(ParamFloat<px4::params::VT_TRANS_P2_DUR>) _param_vt_trans_p2_dur
+				       )
 
 };
 #endif

@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2020 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2020-2022 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -59,8 +59,8 @@ MulticopterHoverThrustEstimator::~MulticopterHoverThrustEstimator()
 
 bool MulticopterHoverThrustEstimator::init()
 {
-	if (!_vehicle_local_position_setpoint_sub.registerCallback()) {
-		PX4_ERR("vehicle_local_position_setpoint callback registration failed!");
+	if (!_vehicle_local_position_sub.registerCallback()) {
+		PX4_ERR("callback registration failed");
 		return false;
 	}
 
@@ -86,18 +86,56 @@ void MulticopterHoverThrustEstimator::updateParams()
 	}
 
 	_hover_thrust_ekf.setAccelInnovGate(_param_hte_acc_gate.get());
+
+	_hover_thrust_ekf.setMinHoverThrust(math::constrain(_param_mpc_thr_hover.get() - _param_hte_thr_range.get(), 0.f,
+					    0.8f));
+	_hover_thrust_ekf.setMaxHoverThrust(math::constrain(_param_mpc_thr_hover.get() + _param_hte_thr_range.get(), 0.2f,
+					    0.9f));
 }
 
 void MulticopterHoverThrustEstimator::Run()
 {
 	if (should_exit()) {
-		_vehicle_local_position_setpoint_sub.unregisterCallback();
+		_vehicle_local_position_sub.unregisterCallback();
 		exit_and_cleanup();
 		return;
 	}
 
-	// new local position estimate and setpoint needed every iteration
-	if (!_vehicle_local_pos_sub.updated() || !_vehicle_local_position_setpoint_sub.updated()) {
+	if (_vehicle_land_detected_sub.updated()) {
+		vehicle_land_detected_s vehicle_land_detected;
+
+		if (_vehicle_land_detected_sub.copy(&vehicle_land_detected)) {
+			_landed = vehicle_land_detected.landed;
+
+			if (_landed) {
+				_in_air = false;
+			}
+		}
+	}
+
+	if (!_vehicle_local_position_sub.updated()) {
+		return;
+	}
+
+	vehicle_local_position_s local_pos{};
+
+	if (_vehicle_local_position_sub.copy(&local_pos)) {
+		// This is only necessary because the landed
+		// flag of the land detector does not guarantee that
+		// the vehicle does not touch the ground anymore.
+		// There is no check for the dist_bottom validity as
+		// this value is always good enough after takeoff for
+		// this use case.
+		// TODO: improve the landed flag
+		if (!_landed) {
+			if (local_pos.dist_bottom > 1.f) {
+				_in_air = true;
+			}
+		}
+	}
+
+	// new local position setpoint needed every iteration
+	if (!_vehicle_local_position_setpoint_sub.updated()) {
 		return;
 	}
 
@@ -113,14 +151,6 @@ void MulticopterHoverThrustEstimator::Run()
 
 	perf_begin(_cycle_perf);
 
-	if (_vehicle_land_detected_sub.updated()) {
-		vehicle_land_detected_s vehicle_land_detected;
-
-		if (_vehicle_land_detected_sub.copy(&vehicle_land_detected)) {
-			_landed = vehicle_land_detected.landed;
-		}
-	}
-
 	if (_vehicle_status_sub.updated()) {
 		vehicle_status_s vehicle_status;
 
@@ -129,40 +159,39 @@ void MulticopterHoverThrustEstimator::Run()
 		}
 	}
 
-	// always copy latest position estimate
-	vehicle_local_position_s local_pos{};
-
-	if (_vehicle_local_pos_sub.copy(&local_pos)) {
-		// This is only necessary because the landed
-		// flag of the land detector does not guarantee that
-		// the vehicle does not touch the ground anymore
-		// TODO: improve the landed flag
-		if (local_pos.dist_bottom_valid) {
-			_in_air = local_pos.dist_bottom > 1.f;
-		}
-	}
-
 	const float dt = (local_pos.timestamp - _timestamp_last) * 1e-6f;
 	_timestamp_last = local_pos.timestamp;
 
-	if (_armed && !_landed && (dt > 0.001f) && (dt < 1.f) && PX4_ISFINITE(local_pos.az)) {
+	if (_armed && _in_air && (dt > 0.001f) && (dt < 1.f) && PX4_ISFINITE(local_pos.az)) {
 
 		_hover_thrust_ekf.predict(dt);
 
 		vehicle_local_position_setpoint_s local_pos_sp;
 
-		if (_vehicle_local_position_setpoint_sub.update(&local_pos_sp)) {
+		if (_vehicle_local_position_setpoint_sub.copy(&local_pos_sp)) {
 			if (PX4_ISFINITE(local_pos_sp.thrust[2])) {
 				// Inform the hover thrust estimator about the measured vertical
 				// acceleration (positive acceleration is up) and the current thrust (positive thrust is up)
-				ZeroOrderHoverThrustEkf::status status;
-				_hover_thrust_ekf.fuseAccZ(-local_pos.az, -local_pos_sp.thrust[2], status);
+				// Guard against fast up and down motions biasing the estimator due to large drag and prop wash effects
+				const float meas_noise_coeff_z = fmaxf((fabsf(local_pos.vz) - _param_hte_vz_thr.get()) + 1.f, 1.f);
+				const float meas_noise_coeff_xy = fmaxf((matrix::Vector2f(local_pos.vx,
+									local_pos.vy).norm() - _param_hte_vxy_thr.get()) + 1.f,
+									1.f);
 
-				const bool valid = _in_air && (status.hover_thrust_var < 0.001f) && (status.innov_test_ratio < 1.f);
+				_hover_thrust_ekf.setMeasurementNoiseScale(fmaxf(meas_noise_coeff_xy, meas_noise_coeff_z));
+				_hover_thrust_ekf.fuseAccZ(-local_pos.az, -local_pos_sp.thrust[2]);
+
+				bool valid = (_hover_thrust_ekf.getHoverThrustEstimateVar() < 0.001f);
+
+				// The test ratio does not need to pass all the time to have a valid estimate
+				if (!_valid) {
+					valid = valid && (_hover_thrust_ekf.getInnovationTestRatio() < 1.f);
+				}
+
 				_valid_hysteresis.set_state_and_update(valid, local_pos.timestamp);
 				_valid = _valid_hysteresis.get_state();
 
-				publishStatus(local_pos.timestamp, status);
+				publishStatus(local_pos.timestamp);
 			}
 		}
 
@@ -184,20 +213,19 @@ void MulticopterHoverThrustEstimator::Run()
 	perf_end(_cycle_perf);
 }
 
-void MulticopterHoverThrustEstimator::publishStatus(const hrt_abstime &timestamp_sample,
-		const ZeroOrderHoverThrustEkf::status &status)
+void MulticopterHoverThrustEstimator::publishStatus(const hrt_abstime &timestamp_sample)
 {
-	hover_thrust_estimate_s status_msg;
+	hover_thrust_estimate_s status_msg{};
 
 	status_msg.timestamp_sample = timestamp_sample;
 
-	status_msg.hover_thrust = status.hover_thrust;
-	status_msg.hover_thrust_var = status.hover_thrust_var;
+	status_msg.hover_thrust = _hover_thrust_ekf.getHoverThrustEstimate();
+	status_msg.hover_thrust_var = _hover_thrust_ekf.getHoverThrustEstimateVar();
 
-	status_msg.accel_innov = status.innov;
-	status_msg.accel_innov_var = status.innov_var;
-	status_msg.accel_innov_test_ratio = status.innov_test_ratio;
-	status_msg.accel_noise_var = status.accel_noise_var;
+	status_msg.accel_innov = _hover_thrust_ekf.getInnovation();
+	status_msg.accel_innov_var = _hover_thrust_ekf.getInnovationVar();
+	status_msg.accel_innov_test_ratio = _hover_thrust_ekf.getInnovationTestRatio();
+	status_msg.accel_noise_var = _hover_thrust_ekf.getAccelNoiseVar();
 
 	status_msg.valid = _valid;
 

@@ -53,7 +53,7 @@
 
 #include <parameters/param.h>
 
-#include "systemlib/uthash/utarray.h"
+#include "../uthash/utarray.h"
 #include <parameters/tinybson/tinybson.h>
 #include "flashparams.h"
 #include "flashfs.h"
@@ -72,14 +72,13 @@
 struct param_wbuf_s {
 	union param_value_u     val;
 	param_t                 param;
-	bool                    unsaved;
 };
 
 static int
-param_export_internal(bool only_unsaved)
+param_export_internal(param_filter_func filter)
 {
 	struct param_wbuf_s *s = nullptr;
-	struct bson_encoder_s encoder;
+	bson_encoder_s encoder{};
 	int     result = -1;
 
 	/* Use realloc */
@@ -97,15 +96,9 @@ param_export_internal(bool only_unsaved)
 		int32_t i;
 		float   f;
 
-		/*
-		 * If we are only saving values changed since last save, and this
-		 * one hasn't, then skip it
-		 */
-		if (only_unsaved && !s->unsaved) {
+		if (filter && !filter(s->param)) {
 			continue;
 		}
-
-		s->unsaved = false;
 
 		/* append the appropriate BSON type object */
 
@@ -113,7 +106,7 @@ param_export_internal(bool only_unsaved)
 		case PARAM_TYPE_INT32:
 			i = s->val.i;
 
-			if (bson_encoder_append_int(&encoder, param_name(s->param), i)) {
+			if (bson_encoder_append_int32(&encoder, param_name(s->param), i)) {
 				debug("BSON append failed for '%s'", param_name(s->param));
 				goto out;
 			}
@@ -150,12 +143,6 @@ out:
 
 		size_t buf_size = bson_encoder_buf_size(&encoder);
 
-		int shutdown_lock_ret = px4_shutdown_lock();
-
-		if (shutdown_lock_ret) {
-			PX4_ERR("px4_shutdown_lock() failed (%i)", shutdown_lock_ret);
-		}
-
 		/* Get a buffer from the flash driver with enough space */
 
 		uint8_t *buffer;
@@ -184,28 +171,19 @@ out:
 			free(enc_buff);
 			parameter_flashfs_free();
 		}
-
-		if (shutdown_lock_ret == 0) {
-			px4_shutdown_unlock();
-		}
-
 	}
 
 	return result;
 }
 
-struct param_import_state {
-	bool mark_saved;
-};
 
 static int
-param_import_callback(bson_decoder_t decoder, void *priv, bson_node_t node)
+param_import_callback(bson_decoder_t decoder, bson_node_t node)
 {
 	float f;
 	int32_t i;
-	void *v, *tmp = nullptr;
+	void *v = nullptr;
 	int result = -1;
-	struct param_import_state *state = (struct param_import_state *)priv;
 
 	/*
 	 * EOO means the end of the parameter object. (Currently not supporting
@@ -241,7 +219,7 @@ param_import_callback(bson_decoder_t decoder, void *priv, bson_node_t node)
 			goto out;
 		}
 
-		i = node->i;
+		i = node->i32;
 		v = &i;
 		break;
 
@@ -256,80 +234,38 @@ param_import_callback(bson_decoder_t decoder, void *priv, bson_node_t node)
 		v = &f;
 		break;
 
-	case BSON_BINDATA:
-		if (node->subtype != BSON_BIN_BINARY) {
-			PX4_WARN("unexpected type for %s", node->name);
-			result = 1; // just skip this entry
-			goto out;
-		}
-
-		if (bson_decoder_data_pending(decoder) != param_size(param)) {
-			PX4_WARN("bad size for '%s'", node->name);
-			result = 1; // just skip this entry
-			goto out;
-		}
-
-		/* XXX check actual file data size? */
-		tmp = malloc(param_size(param));
-
-		if (tmp == nullptr) {
-			debug("failed allocating for '%s'", node->name);
-			goto out;
-		}
-
-		if (bson_decoder_copy_data(decoder, tmp)) {
-			debug("failed copying data for '%s'", node->name);
-			goto out;
-		}
-
-		v = tmp;
-		break;
-
 	default:
-		debug("unrecognised node type");
+		PX4_ERR("%s unrecognised node type %d", node->name, node->type);
+		result = 1; // just skip this entry
 		goto out;
 	}
 
-	if (param_set_external(param, v, state->mark_saved, true)) {
-
+	if (param_set_external(param, v, true, true)) {
 		debug("error setting value for '%s'", node->name);
 		goto out;
-	}
-
-	if (tmp != nullptr) {
-		free(tmp);
-		tmp = nullptr;
 	}
 
 	/* don't return zero, that means EOF */
 	result = 1;
 
 out:
-
-	if (tmp != nullptr) {
-		free(tmp);
-	}
-
 	return result;
 }
 
 static int
-param_import_internal(bool mark_saved)
+param_import_internal()
 {
-	struct bson_decoder_s decoder;
+	bson_decoder_s decoder{};
 	int result = -1;
-	struct param_import_state state;
 
 	uint8_t *buffer = 0;
 	size_t buf_size;
 	parameter_flashfs_read(parameters_token, &buffer, &buf_size);
 
-	if (bson_decoder_init_buf(&decoder, buffer, buf_size, param_import_callback, &state)) {
+	if (bson_decoder_init_buf(&decoder, buffer, buf_size, param_import_callback)) {
 		debug("decoder init failed");
 		goto out;
 	}
-
-	state.mark_saved = mark_saved;
 
 	do {
 		result = bson_decoder_next(&decoder);
@@ -345,18 +281,18 @@ out:
 	return result;
 }
 
-int flash_param_save(bool only_unsaved)
+int flash_param_save(param_filter_func filter)
 {
-	return param_export_internal(only_unsaved);
+	return param_export_internal(filter);
 }
 
 int flash_param_load()
 {
 	param_reset_all();
-	return param_import_internal(true);
+	return param_import_internal();
 }
 
 int flash_param_import()
 {
-	return param_import_internal(false);
+	return param_import_internal();
 }

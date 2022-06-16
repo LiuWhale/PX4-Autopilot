@@ -62,7 +62,7 @@
 #define GPIO_nLED_AMBER        /* PE12 */  (GPIO_OUTPUT|GPIO_OPENDRAIN|GPIO_SPEED_50MHz|GPIO_OUTPUT_SET|GPIO_PORTE|GPIO_PIN12)
 
 #define BOARD_HAS_CONTROL_STATUS_LEDS      1
-#define BOARD_ARMED_STATE_LED  LED_AMBER
+#define BOARD_ARMED_LED  LED_AMBER
 
 /* ADC channels */
 #define PX4_ADC_GPIO  \
@@ -115,6 +115,11 @@
 #define GPIO_TONE_ALARM_IDLE    GPIO_BUZZER_1
 #define GPIO_TONE_ALARM         GPIO_TIM2_CH1OUT_2
 
+/* PWM input driver. Use FMU AUX5 pins attached to timer4 channel 2 */
+#define PWMIN_TIMER                       4
+#define PWMIN_TIMER_CHANNEL    /* T4C2 */ 2
+#define GPIO_PWM_IN            /* PD13 */ GPIO_TIM4_CH2IN_2
+
 /* USB
  *  OTG FS: PA9  OTG_FS_VBUS VBUS sensing
  */
@@ -143,9 +148,7 @@
 
 #define BOARD_HAS_STATIC_MANIFEST 1
 
-#define BOARD_HAS_PWM  DIRECT_PWM_OUTPUT_CHANNELS
 
-#define BOARD_DSHOT_MOTOR_ASSIGNMENT {3, 2, 1, 0, 4};
 
 #define BOARD_ENABLE_CONSOLE_BUFFER
 

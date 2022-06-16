@@ -3,15 +3,12 @@
 # (px4-alias.sh is expected to be in the PATH)
 . px4-alias.sh
 
-uorb start
-
 param load
 
-param set BAT_N_CELLS 3
+param set BAT1_N_CELLS 3
 param set CBRK_SUPPLY_CHK 894281
 param set MAV_TYPE 22
 param set VT_TYPE 2
-param set SYS_RESTART_TYPE 0
 
 dataman start
 
@@ -28,6 +25,7 @@ navigator start
 ekf2 start
 vtol_att_control start
 mc_hover_thrust_estimator start
+flight_mode_manager start
 mc_pos_control start vtol
 mc_att_control start vtol
 mc_rate_control start vtol
@@ -57,6 +55,7 @@ rc_update stop
 land_detector status
 navigator status
 ekf2 status
+flight_mode_manager status
 mc_pos_control status
 mc_att_control status
 mc_rate_control status
@@ -73,6 +72,7 @@ pwm_out_sim stop
 mc_rate_control stop
 mc_att_control stop
 fw_att_control stop
+flight_mode_manager stop
 mc_pos_control stop
 fw_pos_control_l1 stop
 navigator stop

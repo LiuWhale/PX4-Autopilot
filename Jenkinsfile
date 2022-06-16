@@ -15,7 +15,7 @@ pipeline {
         // stage('Catkin build on ROS workspace') {
         //   agent {
         //     docker {
-        //       image 'px4io/px4-dev-ros-melodic:2020-08-20'
+        //       image 'px4io/px4-dev-ros-melodic:2021-08-18'
         //       args '-e CCACHE_BASEDIR=$WORKSPACE -v ${CCACHE_DIR}:${CCACHE_DIR}:rw -e HOME=$WORKSPACE'
         //     }
         //   }
@@ -56,7 +56,7 @@ pipeline {
         stage('Colcon build on ROS2 workspace') {
           agent {
             docker {
-              image 'px4io/px4-dev-ros2-foxy:2020-08-20'
+              image 'px4io/px4-dev-ros2-foxy:2021-08-18'
               args '-e CCACHE_BASEDIR=$WORKSPACE -v ${CCACHE_DIR}:${CCACHE_DIR}:rw -e HOME=$WORKSPACE'
             }
           }
@@ -67,11 +67,9 @@ pipeline {
               unset ROS_DISTRO;
               mkdir -p colcon_ws/src;
               cd colcon_ws;
-              git -C ${WORKSPACE}/colcon_ws/src/Firmware submodule update --init --recursive --force Tools/sitl_gazebo
-              git clone --recursive ${WORKSPACE}/colcon_ws/src/Firmware/Tools/sitl_gazebo src/mavlink_sitl_gazebo;
+              git -C ${WORKSPACE}/colcon_ws/src/Firmware submodule update --init --recursive --force Tools/sitl_gazebo;
               git -C ${WORKSPACE}/colcon_ws/src/Firmware fetch --tags;
-              source /opt/ros/bouncy/setup.sh;
-              source /opt/ros/melodic/setup.sh;
+              source /opt/ros/foxy/setup.sh;
               colcon build --event-handlers console_direct+ --symlink-install;
             '''
           }
@@ -87,10 +85,11 @@ pipeline {
 
         stage('Airframe') {
           agent {
-            docker { image 'px4io/px4-dev-base-focal:2020-09-14' }
+            docker { image 'px4io/px4-dev-base-focal:2021-08-18' }
           }
           steps {
-            sh 'make distclean'
+            sh 'make distclean; git clean -ff -x -d .'
+            sh 'git fetch --all --tags'
             sh 'make airframe_metadata'
             dir('build/px4_sitl_default/docs') {
               archiveArtifacts(artifacts: 'airframes.md, airframes.xml')
@@ -99,36 +98,38 @@ pipeline {
           }
           post {
             always {
-              sh 'make distclean'
+              sh 'make distclean; git clean -ff -x -d .'
             }
           }
         }
 
         stage('Parameter') {
           agent {
-            docker { image 'px4io/px4-dev-base-focal:2020-09-14' }
+            docker { image 'px4io/px4-dev-base-focal:2021-08-18' }
           }
           steps {
-            sh 'make distclean'
+            sh 'make distclean; git clean -ff -x -d .'
+            sh 'git fetch --all --tags'
             sh 'make parameters_metadata'
             dir('build/px4_sitl_default/docs') {
-              archiveArtifacts(artifacts: 'parameters.md, parameters.xml')
-              stash includes: 'parameters.md, parameters.xml', name: 'metadata_parameters'
+              archiveArtifacts(artifacts: 'parameters.md, parameters.xml, parameters.json.xz')
+              stash includes: 'parameters.md, parameters.xml, parameters.json.xz', name: 'metadata_parameters'
             }
           }
           post {
             always {
-              sh 'make distclean'
+              sh 'make distclean; git clean -ff -x -d .'
             }
           }
         }
 
         stage('Module') {
           agent {
-            docker { image 'px4io/px4-dev-base-focal:2020-09-14' }
+            docker { image 'px4io/px4-dev-base-focal:2021-08-18' }
           }
           steps {
-            sh 'make distclean'
+            sh 'make distclean; git clean -ff -x -d .'
+            sh 'git fetch --all --tags'
             sh 'make module_documentation'
             dir('build/px4_sitl_default/docs') {
               archiveArtifacts(artifacts: 'modules/*.md')
@@ -137,7 +138,25 @@ pipeline {
           }
           post {
             always {
-              sh 'make distclean'
+              sh 'make distclean; git clean -ff -x -d .'
+            }
+          }
+        }
+
+        stage('msg file docs') {
+          agent {
+            docker { image 'px4io/px4-dev-base-focal:2021-08-18' }
+          }
+          steps {
+            sh 'mkdir -p build/msg_docs; ./msg/tools/generate_msg_docs.py -d build/msg_docs'
+            dir('build') {
+              archiveArtifacts(artifacts: 'msg_docs/*.md')
+              stash includes: 'msg_docs/*.md', name: 'msg_documentation'
+            }
+          }
+          post {
+            always {
+              sh 'make distclean; git clean -ff -x -d .'
             }
           }
         }
@@ -145,22 +164,23 @@ pipeline {
         stage('uORB graphs') {
           agent {
             docker {
-              image 'px4io/px4-dev-nuttx-focal:2020-09-14'
+              image 'px4io/px4-dev-nuttx-focal:2021-08-18'
               args '-e CCACHE_BASEDIR=$WORKSPACE -v ${CCACHE_DIR}:${CCACHE_DIR}:rw'
             }
           }
           steps {
             sh 'export'
-            sh 'make distclean'
+            sh 'make distclean; git clean -ff -x -d .'
+            sh 'git fetch --all --tags'
             sh 'make uorb_graphs'
             dir('Tools/uorb_graph') {
-              archiveArtifacts(artifacts: 'graph_px4_sitl.json')
-              stash includes: 'graph_px4_sitl.json', name: 'uorb_graph'
+              archiveArtifacts(artifacts: 'graph_*.json')
+              stash includes: 'graph_*.json', name: 'uorb_graph'
             }
           }
           post {
             always {
-              sh 'make distclean'
+              sh 'make distclean; git clean -ff -x -d .'
             }
           }
         }
@@ -172,48 +192,24 @@ pipeline {
 
       parallel {
 
-        stage('Devguide') {
+        stage('Userguide') {
           agent {
-            docker { image 'px4io/px4-dev-base-focal:2020-09-14' }
+            docker { image 'px4io/px4-dev-base-focal:2021-08-18' }
           }
           steps {
             sh('export')
             unstash 'metadata_airframes'
             unstash 'metadata_parameters'
             unstash 'metadata_module_documentation'
-            withCredentials([usernamePassword(credentialsId: 'px4buildbot_github_personal_token', passwordVariable: 'GIT_PASS', usernameVariable: 'GIT_USER')]) {
-              sh('git clone https://${GIT_USER}:${GIT_PASS}@github.com/PX4/Devguide.git')
-              sh('cp airframes.md Devguide/en/airframes/airframe_reference.md')
-              sh('cp parameters.md Devguide/en/advanced/parameter_reference.md')
-              sh('cp -R modules/*.md Devguide/en/middleware/')
-              sh('cd Devguide; git status; git add .; git commit -a -m "Update PX4 Firmware metadata `date`" || true')
-              sh('cd Devguide; git push origin master || true')
-              sh('rm -rf Devguide')
-            }
-          }
-          when {
-            anyOf {
-              branch 'master'
-              branch 'pr-jenkins' // for testing
-            }
-          }
-          options {
-            skipDefaultCheckout()
-          }
-        }
-
-        stage('Userguide') {
-          agent {
-            docker { image 'px4io/px4-dev-base-focal:2020-09-14' }
-          }
-          steps {
-            sh('export')
-            unstash 'metadata_airframes'
-            unstash 'metadata_parameters'
+            unstash 'msg_documentation'
+            unstash 'uorb_graph'
             withCredentials([usernamePassword(credentialsId: 'px4buildbot_github_personal_token', passwordVariable: 'GIT_PASS', usernameVariable: 'GIT_USER')]) {
               sh('git clone https://${GIT_USER}:${GIT_PASS}@github.com/PX4/px4_user_guide.git')
               sh('cp airframes.md px4_user_guide/en/airframes/airframe_reference.md')
               sh('cp parameters.md px4_user_guide/en/advanced_config/parameter_reference.md')
+              sh('cp -R modules/*.md px4_user_guide/en/modules/')
+              sh('cp -R graph_*.json px4_user_guide/.vuepress/public/en/middleware/')
+              sh('cp -R msg_docs/*.md px4_user_guide/en/msg_docs/')
               sh('cd px4_user_guide; git status; git add .; git commit -a -m "Update PX4 Firmware metadata `date`" || true')
               sh('cd px4_user_guide; git push origin master || true')
               sh('rm -rf px4_user_guide')
@@ -232,7 +228,7 @@ pipeline {
 
         stage('QGroundControl') {
           agent {
-            docker { image 'px4io/px4-dev-base-focal:2020-09-14' }
+            docker { image 'px4io/px4-dev-base-focal:2021-08-18' }
           }
           steps {
             sh('export')
@@ -260,12 +256,12 @@ pipeline {
 
         stage('microRTPS agent') {
           agent {
-            docker { image 'px4io/px4-dev-base-focal:2020-09-14' }
+            docker { image 'px4io/px4-dev-base-focal:2021-08-18' }
           }
           steps {
             sh('export')
             sh('git fetch --all --tags')
-            sh('make distclean')
+            sh('make distclean; git clean -ff -x -d .')
             sh('make px4_sitl_rtps')
             withCredentials([usernamePassword(credentialsId: 'px4buildbot_github_personal_token', passwordVariable: 'GIT_PASS', usernameVariable: 'GIT_USER')]) {
               sh("git clone https://${GIT_USER}:${GIT_PASS}@github.com/PX4/micrortps_agent.git -b ${BRANCH_NAME}")
@@ -290,11 +286,11 @@ pipeline {
 
         stage('PX4 ROS msgs') {
           agent {
-            docker { image 'px4io/px4-dev-base-focal:2020-09-14' }
+            docker { image 'px4io/px4-dev-base-focal:2021-08-18' }
           }
           steps {
             sh('export')
-            sh('make distclean')
+            sh('make distclean; git clean -ff -x -d .')
             withCredentials([usernamePassword(credentialsId: 'px4buildbot_github_personal_token', passwordVariable: 'GIT_PASS', usernameVariable: 'GIT_USER')]) {
               sh("git clone https://${GIT_USER}:${GIT_PASS}@github.com/PX4/px4_msgs.git")
               // 'master' branch
@@ -319,15 +315,15 @@ pipeline {
 
         stage('PX4 ROS2 bridge') {
           agent {
-            docker { image 'px4io/px4-dev-base-focal:2020-09-14' }
+            docker { image 'px4io/px4-dev-base-focal:2021-08-18' }
           }
           steps {
             sh('export')
-            sh('make distclean')
+            sh('make distclean; git clean -ff -x -d .')
             withCredentials([usernamePassword(credentialsId: 'px4buildbot_github_personal_token', passwordVariable: 'GIT_PASS', usernameVariable: 'GIT_USER')]) {
               sh("git clone https://${GIT_USER}:${GIT_PASS}@github.com/PX4/px4_ros_com.git -b ${BRANCH_NAME}")
               // deploy uORB RTPS ID map
-              sh('./msg/tools/uorb_to_ros_rtps_ids.py -i msg/tools/uorb_rtps_message_ids.yaml -o px4_ros_com/templates/uorb_rtps_message_ids.yaml')
+              sh('./msg/tools/uorb_to_ros_urtps_topics.py -i msg/tools/urtps_bridge_topics.yaml -o px4_ros_com/templates/urtps_bridge_topics.yaml')
               sh('cd px4_ros_com; git status; git add .; git commit -a -m "Update uORB RTPS ID map `date`" || true')
               sh('cd px4_ros_com; git push origin ${BRANCH_NAME} || true')
               // deploy uORB RTPS required tools
@@ -362,7 +358,7 @@ pipeline {
 
         stage('S3') {
           agent {
-            docker { image 'px4io/px4-dev-base-focal:2020-09-14' }
+            docker { image 'px4io/px4-dev-base-focal:2021-08-18' }
           }
           steps {
             sh('export')
@@ -372,6 +368,7 @@ pipeline {
             withAWS(credentials: 'px4_aws_s3_key', region: 'us-east-1') {
               s3Upload(acl: 'PublicRead', bucket: 'px4-travis', file: 'airframes.xml', path: 'Firmware/master/')
               s3Upload(acl: 'PublicRead', bucket: 'px4-travis', file: 'parameters.xml', path: 'Firmware/master/')
+              s3Upload(acl: 'PublicRead', bucket: 'px4-travis', file: 'parameters.json.xz', path: 'Firmware/master/')
             }
           }
           when {
@@ -399,7 +396,7 @@ pipeline {
     GIT_COMMITTER_NAME = "PX4BuildBot"
   }
   options {
-    buildDiscarder(logRotator(numToKeepStr: '10', artifactDaysToKeepStr: '20'))
-    timeout(time: 60, unit: 'MINUTES')
+    buildDiscarder(logRotator(numToKeepStr: '20', artifactDaysToKeepStr: '30'))
+    timeout(time: 90, unit: 'MINUTES')
   }
 }

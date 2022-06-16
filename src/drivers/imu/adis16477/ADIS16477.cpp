@@ -53,15 +53,14 @@ static constexpr uint32_t ADIS16477_DEFAULT_RATE = 1000;
 
 using namespace time_literals;
 
-ADIS16477::ADIS16477(I2CSPIBusOption bus_option, int bus, int32_t device, enum Rotation rotation, int bus_frequency,
-		     spi_mode_e spi_mode, spi_drdy_gpio_t drdy_gpio) :
-	SPI(DRV_IMU_DEVTYPE_ADIS16477, MODULE_NAME, bus, device, spi_mode, bus_frequency),
-	I2CSPIDriver(MODULE_NAME, px4::device_bus_to_wq(get_device_id()), bus_option, bus),
-	_px4_accel(get_device_id(), rotation),
-	_px4_gyro(get_device_id(), rotation),
+ADIS16477::ADIS16477(const I2CSPIDriverConfig &config) :
+	SPI(config),
+	I2CSPIDriver(config),
+	_px4_accel(get_device_id(), config.rotation),
+	_px4_gyro(get_device_id(), config.rotation),
 	_sample_perf(perf_alloc(PC_ELAPSED, MODULE_NAME": read")),
 	_bad_transfers(perf_alloc(PC_COUNT, MODULE_NAME": bad transfers")),
-	_drdy_gpio(drdy_gpio)
+	_drdy_gpio(config.drdy_gpio)
 {
 #ifdef GPIO_SPI1_RESET_ADIS16477
 	// Configure hardware reset line
@@ -237,9 +236,9 @@ ADIS16477::read_reg16(uint8_t reg)
 
 	cmd[0] = ((reg | DIR_READ) << 8) & 0xff00;
 	transferhword(cmd, nullptr, 1);
-	up_udelay(T_STALL);
+	px4_udelay(T_STALL);
 	transferhword(nullptr, cmd, 1);
-	up_udelay(T_STALL);
+	px4_udelay(T_STALL);
 
 	return cmd[0];
 }
@@ -262,9 +261,9 @@ ADIS16477::write_reg16(uint8_t reg, uint16_t value)
 	cmd[1] = (((reg + 0x1) | DIR_WRITE) << 8) | ((0xff00 & value) >> 8);
 
 	transferhword(cmd, nullptr, 1);
-	up_udelay(T_STALL);
+	px4_udelay(T_STALL);
 	transferhword(cmd + 1, nullptr, 1);
-	up_udelay(T_STALL);
+	px4_udelay(T_STALL);
 }
 
 void

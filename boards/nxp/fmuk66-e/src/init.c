@@ -53,6 +53,7 @@
 #include <string.h>
 #include <debug.h>
 #include <errno.h>
+#include <syslog.h>
 
 #include <nuttx/board.h>
 #include <nuttx/spi/spi.h>
@@ -63,8 +64,7 @@
 
 #include <kinetis.h>
 #include <kinetis_uart.h>
-#include <hardware/kinetis_uart.h>
-#include <hardware/kinetis_sim.h>
+#include <kinetis_lpuart.h>
 #include "board_config.h"
 
 #include "arm_arch.h"
@@ -119,9 +119,6 @@ void board_on_reset(int status)
 	for (int i = 0; i < 6; ++i) {
 		px4_arch_configgpio(PX4_MAKE_GPIO_INPUT(io_timer_channel_get_as_pwm_input(i)));
 	}
-
-	px4_arch_configgpio(io_timer_channel_get_gpio_output(6)); // Echo trigger pin
-	px4_arch_configgpio(PX4_MAKE_GPIO_INPUT(io_timer_channel_get_as_pwm_input(7)));
 
 	if (status >= 0) {
 		up_mdelay(6);
@@ -191,6 +188,26 @@ kinetis_boardinitialize(void)
 
 	VDD_3V3_SPEKTRUM_POWER_EN(true);
 }
+/****************************************************************************
+ * Name: kinetis_serial_dma_poll_all
+ *
+ * Description:
+ *   Checks receive DMA buffers for received bytes that have not accumulated
+ *   to the point where the DMA half/full interrupt has triggered.
+ *
+ *   This function should be called from a timer or other periodic context.
+ *
+ ****************************************************************************/
+
+void kinetis_lpserial_dma_poll_all(void)
+{
+#if defined(LPSERIAL_HAVE_DMA)
+	kinetis_lpserial_dma_poll();
+#endif
+#if defined(SERIAL_HAVE_DMA)
+	kinetis_serial_dma_poll();
+#endif
+}
 
 /****************************************************************************
  * Name: board_app_initialize
@@ -237,24 +254,11 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 		syslog(LOG_ERR, "DMA alloc FAILED\n");
 	}
 
-	/* set up the serial DMA polling */
-#ifdef SERIAL_HAVE_DMA
+#if defined(SERIAL_HAVE_DMA) || defined(LPSERIAL_HAVE_DMA)
+	// set up the serial DMA polling at 1ms intervals for received bytes that have not triggered a DMA event.
 	static struct hrt_call serial_dma_call;
-	struct timespec ts;
-
-	/*
-	 * Poll at 1ms intervals for received bytes that have not triggered
-	 * a DMA event.
-	 */
-	ts.tv_sec = 0;
-	ts.tv_nsec = 1000000;
-
-	hrt_call_every(&serial_dma_call,
-		       ts_to_abstime(&ts),
-		       ts_to_abstime(&ts),
-		       (hrt_callout)kinetis_serial_dma_poll,
-		       NULL);
-#endif
+	hrt_call_every(&serial_dma_call, 1000, 1000, (hrt_callout)kinetis_lpserial_dma_poll_all, NULL);
+#endif /* SERIAL_HAVE_DMA || LPSERIAL_HAVE_DMA */
 
 	/* initial LED state */
 	drv_led_start();
@@ -266,7 +270,6 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 	if (ret != OK) {
 		board_autoled_on(LED_RED);
-		return ret;
 	}
 
 #ifdef HAVE_AUTOMOUNTER
@@ -282,7 +285,6 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 	if (ret != OK) {
 		board_autoled_on(LED_RED);
-		return ret;
 	}
 
 #endif
@@ -302,6 +304,10 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 # endif
 
 #endif
+
+	/* Configure the HW based on the manifest */
+
+	px4_platform_configure();
 
 	return OK;
 }

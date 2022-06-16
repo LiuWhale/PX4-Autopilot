@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2020 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2020-2022 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -61,6 +61,8 @@
 
 #include "zero_order_hover_thrust_ekf.hpp"
 
+using namespace time_literals;
+
 class MulticopterHoverThrustEstimator : public ModuleBase<MulticopterHoverThrustEstimator>, public ModuleParams,
 	public px4::WorkItem
 {
@@ -88,19 +90,20 @@ private:
 
 	void reset();
 
-	void publishStatus(const hrt_abstime &timestamp_sample, const ZeroOrderHoverThrustEkf::status &status);
+	void publishStatus(const hrt_abstime &timestamp_sample);
 	void publishInvalidStatus();
 
 	ZeroOrderHoverThrustEkf _hover_thrust_ekf{};
 
 	uORB::Publication<hover_thrust_estimate_s> _hover_thrust_ekf_pub{ORB_ID(hover_thrust_estimate)};
 
-	uORB::SubscriptionCallbackWorkItem _vehicle_local_position_setpoint_sub{this, ORB_ID(vehicle_local_position_setpoint)};
+	uORB::SubscriptionCallbackWorkItem _vehicle_local_position_sub{this, ORB_ID(vehicle_local_position)};
 
-	uORB::Subscription _parameter_update_sub{ORB_ID(parameter_update)};
+	uORB::SubscriptionInterval _parameter_update_sub{ORB_ID(parameter_update), 1_s};
+
 	uORB::Subscription _vehicle_land_detected_sub{ORB_ID(vehicle_land_detected)};
 	uORB::Subscription _vehicle_status_sub{ORB_ID(vehicle_status)};
-	uORB::Subscription _vehicle_local_pos_sub{ORB_ID(vehicle_local_position)};
+	uORB::Subscription _vehicle_local_position_setpoint_sub{ORB_ID(vehicle_local_position_setpoint)};
 
 	hrt_abstime _timestamp_last{0};
 
@@ -118,6 +121,9 @@ private:
 		(ParamFloat<px4::params::HTE_HT_NOISE>) _param_hte_ht_noise,
 		(ParamFloat<px4::params::HTE_ACC_GATE>) _param_hte_acc_gate,
 		(ParamFloat<px4::params::HTE_HT_ERR_INIT>) _param_hte_ht_err_init,
+		(ParamFloat<px4::params::HTE_THR_RANGE>) _param_hte_thr_range,
+		(ParamFloat<px4::params::HTE_VXY_THR>) _param_hte_vxy_thr,
+		(ParamFloat<px4::params::HTE_VZ_THR>) _param_hte_vz_thr,
 		(ParamFloat<px4::params::MPC_THR_HOVER>) _param_mpc_thr_hover
 	)
 };

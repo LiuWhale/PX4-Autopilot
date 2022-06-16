@@ -31,14 +31,15 @@
 #
 ############################################################################
 px4_add_module(
-	MODULE drivers__pca9685
+	MODULE drivers__pca9685_pwm_out
 	MAIN pca9685_pwm_out
 	COMPILE_FLAGS
 	SRCS
 		main.cpp
 		PCA9685.cpp
+	MODULE_CONFIG
+		module.yaml
 	DEPENDS
 		mixer
 		mixer_module
-		output_limit
 	)

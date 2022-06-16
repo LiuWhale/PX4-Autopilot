@@ -95,21 +95,17 @@ function(px4_add_common_flags)
 	# compiler specific flags
 	if (("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang") OR ("${CMAKE_CXX_COMPILER_ID}" MATCHES "AppleClang"))
 
-		# force color for clang (needed for clang + ccache)
-		add_compile_options(-fcolor-diagnostics)
-		# force absolute paths
-		add_compile_options(-fdiagnostics-absolute-paths)
+		add_compile_options(
+			-fcolor-diagnostics # force color for clang (needed for clang + ccache)
+			-fdiagnostics-absolute-paths # force absolute paths
 
-		# QuRT 6.4.X compiler identifies as Clang but does not support this option
-		if (NOT "${PX4_PLATFORM}" STREQUAL "qurt")
-			add_compile_options(
-				-Qunused-arguments
+			-Qunused-arguments
 
-				-Wno-unknown-warning-option
-				-Wno-unused-const-variable
-				-Wno-varargs
-			)
-		endif()
+			-Wno-c99-designator
+			-Wno-unknown-warning-option
+			-Wno-unused-const-variable
+			-Wno-varargs
+		)
 
 	elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
 
@@ -161,7 +157,6 @@ function(px4_add_common_flags)
 	set(cxx_flags)
 	list(APPEND cxx_flags
 		-fno-exceptions
-		-fno-rtti
 		-fno-threadsafe-statics
 
 		-Wreorder
@@ -169,6 +164,13 @@ function(px4_add_common_flags)
 		# disabled warnings
 		-Wno-overloaded-virtual # TODO: fix and remove
 	)
+
+	if(NOT CMAKE_BUILD_TYPE STREQUAL FuzzTesting)
+		list(APPEND cxx_flags
+			-fno-rtti
+		)
+	endif()
+
 	foreach(flag ${cxx_flags})
 		add_compile_options($<$<COMPILE_LANGUAGE:CXX>:${flag}>)
 	endforeach()
@@ -180,7 +182,9 @@ function(px4_add_common_flags)
 
 		${PX4_SOURCE_DIR}/platforms/${PX4_PLATFORM}/src/px4/${PX4_CHIP_MANUFACTURER}/${PX4_CHIP}/include
 		${PX4_SOURCE_DIR}/platforms/${PX4_PLATFORM}/src/px4/common/include
+		${PX4_SOURCE_DIR}/platforms/common
 		${PX4_SOURCE_DIR}/platforms/common/include
+
 		${PX4_SOURCE_DIR}/src
 		${PX4_SOURCE_DIR}/src/include
 		${PX4_SOURCE_DIR}/src/lib

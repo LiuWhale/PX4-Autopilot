@@ -37,16 +37,16 @@
 
 #include "Takeoff.hpp"
 #include <mathlib/mathlib.h>
-#include <lib/ecl/geo/geo.h>
+#include <lib/geo/geo.h>
 
-void Takeoff::generateInitialRampValue(float velocity_p_gain)
+void TakeoffHandling::generateInitialRampValue(float velocity_p_gain)
 {
 	velocity_p_gain = math::max(velocity_p_gain, 0.01f);
 	_takeoff_ramp_vz_init = -CONSTANTS_ONE_G / velocity_p_gain;
 }
 
-void Takeoff::updateTakeoffState(const bool armed, const bool landed, const bool want_takeoff,
-				 const float takeoff_desired_vz, const bool skip_takeoff, const hrt_abstime &now_us)
+void TakeoffHandling::updateTakeoffState(const bool armed, const bool landed, const bool want_takeoff,
+		const float takeoff_desired_vz, const bool skip_takeoff, const hrt_abstime &now_us)
 {
 	_spoolup_time_hysteresis.set_state_and_update(armed, now_us);
 
@@ -72,7 +72,7 @@ void Takeoff::updateTakeoffState(const bool armed, const bool landed, const bool
 	case TakeoffState::ready_for_takeoff:
 		if (want_takeoff) {
 			_takeoff_state = TakeoffState::rampup;
-			_takeoff_ramp_vz = _takeoff_ramp_vz_init;
+			_takeoff_ramp_progress = 0.f;
 
 		} else {
 			break;
@@ -80,7 +80,7 @@ void Takeoff::updateTakeoffState(const bool armed, const bool landed, const bool
 
 	// FALLTHROUGH
 	case TakeoffState::rampup:
-		if (_takeoff_ramp_vz >= takeoff_desired_vz) {
+		if (_takeoff_ramp_progress >= 1.f) {
 			_takeoff_state = TakeoffState::flight;
 
 		} else {
@@ -109,24 +109,26 @@ void Takeoff::updateTakeoffState(const bool armed, const bool landed, const bool
 	}
 }
 
-float Takeoff::updateRamp(const float dt, const float takeoff_desired_vz)
+float TakeoffHandling::updateRamp(const float dt, const float takeoff_desired_vz)
 {
+	float upwards_velocity_limit = takeoff_desired_vz;
+
 	if (_takeoff_state < TakeoffState::rampup) {
-		return _takeoff_ramp_vz_init;
+		upwards_velocity_limit = _takeoff_ramp_vz_init;
 	}
 
 	if (_takeoff_state == TakeoffState::rampup) {
 		if (_takeoff_ramp_time > dt) {
-			_takeoff_ramp_vz += (takeoff_desired_vz - _takeoff_ramp_vz_init) * dt / _takeoff_ramp_time;
+			_takeoff_ramp_progress += dt / _takeoff_ramp_time;
 
 		} else {
-			_takeoff_ramp_vz = takeoff_desired_vz;
+			_takeoff_ramp_progress = 1.f;
 		}
 
-		if (_takeoff_ramp_vz < takeoff_desired_vz) {
-			return _takeoff_ramp_vz;
+		if (_takeoff_ramp_progress < 1.f) {
+			upwards_velocity_limit = _takeoff_ramp_vz_init + _takeoff_ramp_progress * (takeoff_desired_vz - _takeoff_ramp_vz_init);
 		}
 	}
 
-	return takeoff_desired_vz;
+	return upwards_velocity_limit;
 }

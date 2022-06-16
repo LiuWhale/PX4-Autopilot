@@ -84,8 +84,6 @@ private:
 
 	uORB::Publication<camera_capture_s>	_capture_pub{ORB_ID(camera_capture)};
 
-	DEFINE_PARAMETERS(
-		(ParamBool<px4::params::CAM_CAP_FBACK>) _param_camera_capture_feedback
-	)
-
+	param_t _p_cam_cap_fback;
+	int32_t _cam_cap_fback{0};
 };

@@ -38,6 +38,7 @@
  */
 
 #include "CollisionPrevention.hpp"
+#include <px4_platform_common/events.h>
 
 using namespace matrix;
 using namespace time_literals;
@@ -157,8 +158,10 @@ CollisionPrevention::_addObstacleSensorData(const obstacle_distance_s &obstacle,
 		}
 
 	} else {
-		mavlink_log_critical(&_mavlink_log_pub, "Obstacle message received in unsupported frame %.0f\n",
-				     (double)obstacle.frame);
+		mavlink_log_critical(&_mavlink_log_pub, "Obstacle message received in unsupported frame %i\t",
+				     obstacle.frame);
+		events::send<uint8_t>(events::ID("col_prev_unsup_frame"), events::Log::Error,
+				      "Obstacle message received in unsupported frame {1}", obstacle.frame);
 	}
 }
 
@@ -389,7 +392,7 @@ CollisionPrevention::_calculateConstrainedSetpoint(Vector2f &setpoint, const Vec
 	// read parameters
 	const float col_prev_d = _param_cp_dist.get();
 	const float col_prev_dly = _param_cp_delay.get();
-	const bool move_no_data = _param_cp_go_nodata.get() > 0;
+	const bool move_no_data = _param_cp_go_nodata.get();
 	const float xy_p = _param_mpc_xy_p.get();
 	const float max_jerk = _param_mpc_jerk_max.get();
 	const float max_accel = _param_mpc_acc_hor.get();

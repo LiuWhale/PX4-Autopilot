@@ -52,6 +52,7 @@
 #include <string.h>
 #include <debug.h>
 #include <errno.h>
+#include <syslog.h>
 
 #include <nuttx/config.h>
 #include <nuttx/board.h>
@@ -211,14 +212,16 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	VDD_5V_PERIPH_EN(true);
 	VDD_5V_HIPOWER_EN(true);
 	board_control_spi_sensors_power(true, 0xffff);
-	VDD_3V3_SPEKTRUM_POWER_EN(true);
+#ifdef SPEKTRUM_POWER_PASSIVE
+	// Turn power controls to passive
+	SPEKTRUM_POWER_PASSIVE();
+#endif
 	VDD_5V_RC_EN(true);
 	VDD_5V_WIFI_EN(true);
 
 	/* Need hrt running before using the ADC */
 
 	px4_platform_init();
-
 
 	if (OK == board_determine_hw_info()) {
 		syslog(LOG_INFO, "[boot] Rev 0x%1x : Ver 0x%1x %s\n", board_get_hw_revision(), board_get_hw_version(),
@@ -231,6 +234,7 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	/* configure SPI interfaces (after we determined the HW version) */
 
 	stm32_spiinitialize();
+
 
 	/* Does this board have CAN 2 or CAN 3 if not decouple the RX
 	 * from IP block Leave TX connected
@@ -251,22 +255,9 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	}
 
 #if defined(SERIAL_HAVE_RXDMA)
-	/* set up the serial DMA polling */
+	// set up the serial DMA polling at 1ms intervals for received bytes that have not triggered a DMA event.
 	static struct hrt_call serial_dma_call;
-
-	/*
-	 * Poll at 1ms intervals for received bytes that have not triggered
-	 * a DMA event.
-	 */
-	struct timespec ts;
-	ts.tv_sec = 0;
-	ts.tv_nsec = 1000000;
-
-	hrt_call_every(&serial_dma_call,
-		       ts_to_abstime(&ts),
-		       ts_to_abstime(&ts),
-		       (hrt_callout)stm32_serial_dma_poll,
-		       NULL);
+	hrt_call_every(&serial_dma_call, 1000, 1000, (hrt_callout)stm32_serial_dma_poll, NULL);
 #endif
 
 	/* initial LED state */
@@ -284,10 +275,13 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 	if (ret != OK) {
 		led_on(LED_RED);
-		return ret;
 	}
 
 #endif /* CONFIG_MMCSD */
+
+	/* Configure the HW based on the manifest */
+
+	px4_platform_configure();
 
 	return OK;
 }

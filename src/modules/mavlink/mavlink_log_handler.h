@@ -41,8 +41,9 @@
 #include <time.h>
 #include <stdio.h>
 #include <cstdbool>
-#include <v2.0/mavlink_types.h>
 #include <drivers/drv_hrt.h>
+
+#include "mavlink_bridge_header.h"
 
 class Mavlink;
 
@@ -60,7 +61,7 @@ public:
 	 * Handle sending of messages. Call this regularly at a fixed frequency.
 	 * @param t current time
 	 */
-	void send(const hrt_abstime t);
+	void send();
 
 	unsigned get_size();
 

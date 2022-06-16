@@ -263,7 +263,11 @@ int CanIface::computeTimings(const uavcan::uint32_t target_bitrate, Timings &out
 	/*
 	 * Hardware configuration
 	 */
+#ifdef STM32_FDCANCLK
 	const uavcan::uint32_t pclk = STM32_FDCANCLK;
+#else
+	const uavcan::uint32_t pclk = STM32_HSE_FREQUENCY;
+#endif
 
 	static const int MaxBS1 = 16;
 	static const int MaxBS2 = 8;
@@ -405,24 +409,24 @@ uavcan::int16_t CanIface::send(const uavcan::CanFrame &frame, uavcan::MonotonicT
 	 *  - Frames do not timeout on a properly functioning bus. Since frames do not timeout, the new
 	 *    frame can only have higher priority, which doesn't break the logic.
 	 *
-	 *  - If high-priority frames are timing out in the TX queue, there's probably a lot of other
+	 *  - If high-priority frames are timing out in the TX FIFO, there's probably a lot of other
 	 *    issues to take care of before this one becomes relevant.
 	 *
 	 *  - It takes CPU time. Not just CPU time, but critical section time, which is expensive.
 	 */
 	CriticalSectionLocker lock;
 
-	// First, check if there are any slots available in the queue
+	// First, check if there are any slots available in the FIFO
 	if ((can_->TXFQS & FDCAN_TXFQS_TFQF) > 0) {
-		// Tx FIFO / Queue is full
+		// Tx FIFO is full
 		return 0;
 	}
 
-	// Next, get the next available queue index from the controller
+	// Next, get the next available FIFO index from the controller
 	const uint8_t index = (can_->TXFQS & FDCAN_TXFQS_TFQPI) >> FDCAN_TXFQS_TFQPI_Pos;
 
-	// Now, we can copy the CAN frame to the queue (in message RAM)
-	uint32_t *txbuf  = (uint32_t *)(message_ram_.TxQueueSA + (index * FIFO_ELEMENT_SIZE * WORD_LENGTH));
+	// Now, we can copy the CAN frame to the FIFO (in message RAM)
+	uint32_t *txbuf  = (uint32_t *)(message_ram_.TxFIFOSA + (index * FIFO_ELEMENT_SIZE * WORD_LENGTH));
 
 	// Copy the ID; special case for standard ID frames
 	if (frame.isExtended()) {
@@ -522,6 +526,29 @@ uavcan::int16_t CanIface::configureFilters(const uavcan::CanFilterConfig *filter
 	return 0;
 }
 
+bool CanIface::waitCCCRBitStateChange(uint32_t mask, bool target_state)
+{
+#if UAVCAN_STM32_NUTTX
+	const unsigned Timeout = 1000;
+#else
+	const unsigned Timeout = 2000000;
+#endif
+
+	for (unsigned wait_ack = 0; wait_ack < Timeout; wait_ack++) {
+		const bool state = (can_->CCCR & mask) != 0;
+
+		if (state == target_state) {
+			return true;
+		}
+
+#if UAVCAN_STM32_NUTTX
+		::usleep(1000);
+#endif
+	}
+
+	return false;
+}
+
 int CanIface::init(const uavcan::uint32_t bitrate, const OperatingMode mode)
 {
 	/*
@@ -533,13 +560,20 @@ int CanIface::init(const uavcan::uint32_t bitrate, const OperatingMode mode)
 		// Exit Power-down / Sleep mode, then wait for acknowledgement
 		can_->CCCR &= ~FDCAN_CCCR_CSR;
 
-		// TODO: add timeout
-		while ((can_->CCCR & FDCAN_CCCR_CSA) == FDCAN_CCCR_CSA) {}
+		if (!waitCCCRBitStateChange(FDCAN_CCCR_CSA, false)) {
+			UAVCAN_STM32H7_LOG("CCCR CCCR_CSA not cleared");
+			can_->CCCR |= FDCAN_CCCR_INIT;
+			return -ErrCCCrCSANotCleared;
+		}
+
 
 		// Request Init mode, then wait for completion
 		can_->CCCR |= FDCAN_CCCR_INIT;
 
-		while ((can_->CCCR & FDCAN_CCCR_INIT) == 0) {}
+		if (!waitCCCRBitStateChange(FDCAN_CCCR_INIT, true)) {
+			UAVCAN_STM32H7_LOG("CCCR FDCAN_CCCR_INIT not set");
+			return -ErrCCCrINITNotSet;
+		}
 
 		// Configuration Changes Enable.  Can only be set during Init mode;
 		// cleared when INIT bit is cleared.
@@ -547,7 +581,8 @@ int CanIface::init(const uavcan::uint32_t bitrate, const OperatingMode mode)
 
 		// Disable interrupts while we configure the hardware
 		can_->IE = 0;
-	}
+
+	} // End Critcal section
 
 	/*
 	 * Object state - interrupts are disabled, so it's safe to modify it now
@@ -677,10 +712,10 @@ int CanIface::init(const uavcan::uint32_t bitrate, const OperatingMode mode)
 	can_->RXF0C |= n_fifo0 << FDCAN_RXF0C_F0S_Pos;
 	ram_offset += n_fifo0 * FIFO_ELEMENT_SIZE;
 
-	// Set Tx queue size (32 elements max)
-	message_ram_.TxQueueSA = gl_ram_base + ram_offset * WORD_LENGTH;
+	// Set Tx FIFO size (32 elements max)
+	message_ram_.TxFIFOSA = gl_ram_base + ram_offset * WORD_LENGTH;
 	can_->TXBC = 32U << FDCAN_TXBC_TFQS_Pos;
-	can_->TXBC |= FDCAN_TXBC_TFQM; // Queue mode (vs. FIFO)
+	can_->TXBC &= ~FDCAN_TXBC_TFQM; // Use FIFO
 	can_->TXBC |= ram_offset << FDCAN_TXBC_TBSA_Pos;
 
 	/*
@@ -851,11 +886,11 @@ bool CanIface::canAcceptNewTxFrame(const uavcan::CanFrame &frame) const
 {
 	// Check that we even _have_ a Tx FIFO allocated
 	if ((can_->TXBC & FDCAN_TXBC_TFQS) == 0) {
-		// Your queue size is 0, you did something wrong
+		// Your FIFO size is 0, you did something wrong
 		return false;
 	}
 
-	// Check if the Tx queue is full
+	// Check if the Tx FIFO is full
 	if ((can_->TXFQS & FDCAN_TXFQS_TFQF) == FDCAN_TXFQS_TFQF) {
 		// Sorry, out of room, try back later
 		return false;
@@ -997,6 +1032,8 @@ int CanDriver::init(const uavcan::uint32_t bitrate, const CanIface::OperatingMod
 {
 	int res = 0;
 
+	enabledInterfaces_ = enabledInterfaces;
+
 	UAVCAN_STM32H7_LOG("Bitrate %lu mode %d", static_cast<unsigned long>(bitrate), static_cast<int>(mode));
 
 	static bool initialized_once = false;
@@ -1010,7 +1047,8 @@ int CanDriver::init(const uavcan::uint32_t bitrate, const CanIface::OperatingMod
 	/*
 	 * FDCAN1
 	 */
-	if (enabledInterfaces & 1) {
+	if (enabledInterfaces_ & 1) {
+		num_ifaces_ = 1;
 		UAVCAN_STM32H7_LOG("Initing iface 0...");
 		ifaces[0] = &if0_;                          // This link must be initialized first,
 		res = if0_.init(bitrate, mode);             // otherwise an IRQ may fire while the interface is not linked yet;
@@ -1027,7 +1065,8 @@ int CanDriver::init(const uavcan::uint32_t bitrate, const CanIface::OperatingMod
 	 */
 #if UAVCAN_STM32H7_NUM_IFACES > 1
 
-	if (enabledInterfaces & 2) {
+	if (enabledInterfaces_ & 2) {
+		num_ifaces_ = 2;
 		UAVCAN_STM32H7_LOG("Initing iface 1...");
 		ifaces[1] = &if1_;                          // Same thing here.
 		res = if1_.init(bitrate, mode);
