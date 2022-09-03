@@ -44,10 +44,283 @@
  *
  * Roll proportional gain, i.e. desired angular speed in rad/s for error 1 rad.
  *
+ * @min 0
+ * @max 1
+ * @decimal 0
+ * @increment 1
+ * @group Multicopter Attitude Control
+ */
+PARAM_DEFINE_INT32(MC_ROLL_SWITCH, 0);
+
+/**
+ * Roll P gain
+ *
+ * Roll proportional gain, i.e. desired angular speed in rad/s for error 1 rad.
+ *
+ * @min 0
+ * @max 1
+ * @decimal 0
+ * @increment 1
+ * @group Multicopter Attitude Control
+ */
+PARAM_DEFINE_INT32(MC_PITCH_SWITCH, 0);
+
+/**
+ * Roll P gain
+ *
+ * Roll proportional gain, i.e. desired angular speed in rad/s for error 1 rad.
+ *
+ * @min 0
+ * @max 1
+ * @decimal 0
+ * @increment 1
+ * @group Multicopter Attitude Control
+ */
+PARAM_DEFINE_INT32(MC_YAW_SWITCH, 0);
+
+/**
+ * Roll P gain
+ *
+ * Roll proportional gain, i.e. desired angular speed in rad/s for error 1 rad.
+ *
+ * @min 0.0
+ * @max 100
+ * @decimal 3
+ * @increment 0.001
+ * @group Multicopter Attitude Control
+ */
+PARAM_DEFINE_FLOAT(MC_ROLL_A1, 40.280f);
+
+/**
+ * Roll P gain
+ *
+ * Roll proportional gain, i.e. desired angular speed in rad/s for error 1 rad.
+ *
+ * @min 0.0
+ * @max 100
+ * @decimal 3
+ * @increment 0.001
+ * @group Multicopter Attitude Control
+ */
+PARAM_DEFINE_FLOAT(MC_ROLL_A2, 3.784f);
+
+/**
+ * Roll P gain
+ *
+ * Roll proportional gain, i.e. desired angular speed in rad/s for error 1 rad.
+ *
+ * @min 0.0
+ * @max 100
+ * @decimal 3
+ * @increment 0.001
+ * @group Multicopter Attitude Control
+ */
+PARAM_DEFINE_FLOAT(MC_ROLL_B1, 0.000f);
+
+/**
+ * Roll P gain
+ *
+ * Roll proportional gain, i.e. desired angular speed in rad/s for error 1 rad.
+ *
+ * @min 0.0
+ * @max 100
+ * @decimal 3
+ * @increment 0.001
+ * @group Multicopter Attitude Control
+ */
+PARAM_DEFINE_FLOAT(MC_ROLL_B2, 0.080f);
+
+/**
+ * Roll P gain
+ *
+ * Roll proportional gain, i.e. desired angular speed in rad/s for error 1 rad.
+ *
+ * @min 0.0
+ * @max 100
+ * @decimal 3
+ * @increment 0.001
+ * @group Multicopter Attitude Control
+ */
+PARAM_DEFINE_FLOAT(MC_ROLL_H, 1.069f);
+
+/**
+ * Roll P gain
+ *
+ * Roll proportional gain, i.e. desired angular speed in rad/s for error 1 rad.
+ *
+ * @min 0.0
+ * @max 100
+ * @decimal 3
+ * @increment 0.001
+ * @group Multicopter Attitude Control
+ */
+PARAM_DEFINE_FLOAT(MC_ROLL_Y1, 0.990f);
+
+/**
+ * Roll P gain
+ *
+ * Roll proportional gain, i.e. desired angular speed in rad/s for error 1 rad.
+ *
+ * @min 0.0
+ * @max 100
+ * @decimal 3
+ * @increment 0.001
+ * @group Multicopter Attitude Control
+ */
+PARAM_DEFINE_FLOAT(MC_PITCH_A1, 40.280f);
+
+/**
+ * Roll P gain
+ *
+ * Roll proportional gain, i.e. desired angular speed in rad/s for error 1 rad.
+ *
+ * @min 0.0
+ * @max 100
+ * @decimal 3
+ * @increment 0.001
+ * @group Multicopter Attitude Control
+ */
+PARAM_DEFINE_FLOAT(MC_PITCH_A2, 3.784f);
+
+/**
+ * Roll P gain
+ *
+ * Roll proportional gain, i.e. desired angular speed in rad/s for error 1 rad.
+ *
+ * @min 0.0
+ * @max 100
+ * @decimal 3
+ * @increment 0.001
+ * @group Multicopter Attitude Control
+ */
+PARAM_DEFINE_FLOAT(MC_PITCH_B1, 0.000f);
+
+/**
+ * Roll P gain
+ *
+ * Roll proportional gain, i.e. desired angular speed in rad/s for error 1 rad.
+ *
+ * @min 0.0
+ * @max 100
+ * @decimal 3
+ * @increment 0.001
+ * @group Multicopter Attitude Control
+ */
+PARAM_DEFINE_FLOAT(MC_PITCH_B2, 0.084f);
+
+/**
+ * Roll P gain
+ *
+ * Roll proportional gain, i.e. desired angular speed in rad/s for error 1 rad.
+ *
+ * @min 0.0
+ * @max 100
+ * @decimal 3
+ * @increment 0.001
+ * @group Multicopter Attitude Control
+ */
+PARAM_DEFINE_FLOAT(MC_PITCH_H, 1.069f);
+
+/**
+ * Roll P gain
+ *
+ * Roll proportional gain, i.e. desired angular speed in rad/s for error 1 rad.
+ *
+ * @min 0.0
+ * @max 100
+ * @decimal 3
+ * @increment 0.001
+ * @group Multicopter Attitude Control
+ */
+PARAM_DEFINE_FLOAT(MC_PITCH_Y1, 0.990f);
+
+/**
+ * Roll P gain
+ *
+ * Roll proportional gain, i.e. desired angular speed in rad/s for error 1 rad.
+ *
+ * @min 0.0
+ * @max 100
+ * @decimal 3
+ * @increment 0.001
+ * @group Multicopter Attitude Control
+ */
+PARAM_DEFINE_FLOAT(MC_YAW_A1, 40.280f);
+
+/**
+ * Roll P gain
+ *
+ * Roll proportional gain, i.e. desired angular speed in rad/s for error 1 rad.
+ *
+ * @min 0.0
+ * @max 100
+ * @decimal 3
+ * @increment 0.001
+ * @group Multicopter Attitude Control
+ */
+PARAM_DEFINE_FLOAT(MC_YAW_A2, 3.784f);
+
+/**
+ * Roll P gain
+ *
+ * Roll proportional gain, i.e. desired angular speed in rad/s for error 1 rad.
+ *
+ * @min 0.0
+ * @max 100
+ * @decimal 3
+ * @increment 0.001
+ * @group Multicopter Attitude Control
+ */
+PARAM_DEFINE_FLOAT(MC_YAW_B1, 0.000f);
+
+/**
+ * Roll P gain
+ *
+ * Roll proportional gain, i.e. desired angular speed in rad/s for error 1 rad.
+ *
+ * @min 0.0
+ * @max 100
+ * @decimal 3
+ * @increment 0.001
+ * @group Multicopter Attitude Control
+ */
+PARAM_DEFINE_FLOAT(MC_YAW_B2, 0.084f);
+
+/**
+ * Roll P gain
+ *
+ * Roll proportional gain, i.e. desired angular speed in rad/s for error 1 rad.
+ *
+ * @min 0.0
+ * @max 100
+ * @decimal 3
+ * @increment 0.001
+ * @group Multicopter Attitude Control
+ */
+PARAM_DEFINE_FLOAT(MC_YAW_H, 1.069f);
+
+/**
+ * Roll P gain
+ *
+ * Roll proportional gain, i.e. desired angular speed in rad/s for error 1 rad.
+ *
+ * @min 0.0
+ * @max 100
+ * @decimal 3
+ * @increment 0.001
+ * @group Multicopter Attitude Control
+ */
+PARAM_DEFINE_FLOAT(MC_YAW_Y1, 0.990f);
+
+/**
+ * Roll P gain
+ *
+ * Roll proportional gain, i.e. desired angular speed in rad/s for error 1 rad.
+ *
  * @min 0.0
  * @max 12
- * @decimal 2
- * @increment 0.1
+ * @decimal 3
+ * @increment 0.001
  * @group Multicopter Attitude Control
  */
 PARAM_DEFINE_FLOAT(MC_ROLL_P, 6.5f);
@@ -59,8 +332,8 @@ PARAM_DEFINE_FLOAT(MC_ROLL_P, 6.5f);
  *
  * @min 0.0
  * @max 12
- * @decimal 2
- * @increment 0.1
+ * @decimal 3
+ * @increment 0.001
  * @group Multicopter Attitude Control
  */
 PARAM_DEFINE_FLOAT(MC_PITCH_P, 6.5f);
@@ -72,8 +345,8 @@ PARAM_DEFINE_FLOAT(MC_PITCH_P, 6.5f);
  *
  * @min 0.0
  * @max 5
- * @decimal 2
- * @increment 0.1
+ * @decimal 3
+ * @increment 0.001
  * @group Multicopter Attitude Control
  */
 PARAM_DEFINE_FLOAT(MC_YAW_P, 2.8f);

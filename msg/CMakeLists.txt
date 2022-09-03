@@ -61,6 +61,7 @@ set(msg_files
 	collision_report.msg
 	commander_state.msg
 	control_allocator_status.msg
+	control_data.msg
 	cpuload.msg
 	differential_pressure.msg
 	distance_sensor.msg

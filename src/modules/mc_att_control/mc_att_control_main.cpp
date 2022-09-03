@@ -44,7 +44,6 @@
  */
 
 #include "mc_att_control.hpp"
-
 #include <drivers/drv_hrt.h>
 #include <mathlib/math/Limits.hpp>
 #include <mathlib/math/Functions.hpp>
@@ -54,9 +53,12 @@ using namespace matrix;
 MulticopterAttitudeControl::MulticopterAttitudeControl(bool vtol) :
 	ModuleParams(nullptr),
 	WorkItem(MODULE_NAME, px4::wq_configurations::nav_and_controllers),
+	_fnsm_controller(),
 	_vehicle_attitude_setpoint_pub(vtol ? ORB_ID(mc_virtual_attitude_setpoint) : ORB_ID(vehicle_attitude_setpoint)),
+	_actuators_0_pub(vtol ? ORB_ID(actuator_controls_virtual_mc) : ORB_ID(actuator_controls_0)),
 	_loop_perf(perf_alloc(PC_ELAPSED, MODULE_NAME": cycle")),
 	_vtol(vtol)
+
 {
 	if (_vtol) {
 		int32_t vt_type = -1;
@@ -81,13 +83,37 @@ MulticopterAttitudeControl::init()
 		PX4_ERR("callback registration failed");
 		return false;
 	}
-
 	return true;
 }
 
 void
 MulticopterAttitudeControl::parameters_updated()
 {
+	FNSMParam roll, pitch, yaw;
+	roll.lambda1 = _param_mc_roll_a1.get();
+	roll.lambda2 = _param_mc_roll_a2.get();
+	roll.beta1 = _param_mc_roll_b1.get();
+	roll.beta2 = _param_mc_roll_b2.get();
+	roll.r1 = _param_mc_roll_y1.get();
+	roll.b1 = _param_mc_roll_h.get();
+
+	pitch.lambda1 = _param_mc_pitch_a1.get();
+	pitch.lambda2 = _param_mc_pitch_a2.get();
+	pitch.beta1 = _param_mc_pitch_b1.get();
+	pitch.beta2 = _param_mc_pitch_b2.get();
+	pitch.r1 = _param_mc_pitch_y1.get();
+	pitch.b1 = _param_mc_pitch_h.get();
+
+	yaw.lambda1 = _param_mc_yaw_a1.get();
+	yaw.lambda2 = _param_mc_yaw_a2.get();
+	yaw.beta1 = _param_mc_yaw_b1.get();
+	yaw.beta2 = _param_mc_yaw_b2.get();
+	yaw.r1 = _param_mc_yaw_y1.get();
+	yaw.b1 = _param_mc_yaw_h.get();
+
+	_fnsm_controller.setParam(roll, pitch, yaw);
+	_fnsm_controller.setIntegratorLimit(Vector3f(10,10,10));
+
 	// Store some of the parameters in a more convenient way & precompute often-used values
 	_attitude_control.setProportionalGain(Vector3f(_param_mc_roll_p.get(), _param_mc_pitch_p.get(), _param_mc_yaw_p.get()),
 					      _param_mc_yaw_weight.get());
@@ -211,15 +237,11 @@ MulticopterAttitudeControl::generate_attitude_setpoint(const Quatf &q, float dt,
 	Quatf q_sp = Eulerf(attitude_setpoint.roll_body, attitude_setpoint.pitch_body, attitude_setpoint.yaw_body);
 	q_sp.copyTo(attitude_setpoint.q_d);
 
-	attitude_setpoint.thrust_body[2] = -throttle_curve(math::constrain(_manual_control_setpoint.z, 0.f, 1.f));
+	attitude_setpoint.thrust_body[2] = -throttle_curve(math::constrain(_manual_control_setpoint.z, 0.0f,
+					   1.0f));
 	attitude_setpoint.timestamp = hrt_absolute_time();
 
 	_vehicle_attitude_setpoint_pub.publish(attitude_setpoint);
-
-	// update attitude controller setpoint immediately
-	_attitude_control.setAttitudeSetpoint(q_sp, attitude_setpoint.yaw_sp_move_rate);
-	_thrust_setpoint_body = Vector3f(attitude_setpoint.thrust_body);
-	_last_attitude_setpoint = attitude_setpoint.timestamp;
 }
 
 void
@@ -248,39 +270,42 @@ MulticopterAttitudeControl::Run()
 
 	if (_vehicle_attitude_sub.update(&v_att)) {
 
-		// Guard against too small (< 0.2ms) and too large (> 20ms) dt's.
-		const float dt = math::constrain(((v_att.timestamp_sample - _last_run) * 1e-6f), 0.0002f, 0.02f);
-		_last_run = v_att.timestamp_sample;
+		const matrix::Quatf q(v_att.q);//YJJ: 取出更新的姿态四元数
+		const matrix::Eulerf euler = q;//YJJ: 四元数转欧拉角，得到euler
 
-		const Quatf q{v_att.q};
+		vehicle_status_s vehicle_status;
+		control_data_s _control_data;
+                vehicle_angular_velocity_s angular_velocity;
+		vehicle_attitude_setpoint_s vehicle_attitude_setpoint;
+
+		_vehicle_angular_velocity_sub.copy(&angular_velocity);
+		_vehicle_attitude_setpoint_sub.copy(&vehicle_attitude_setpoint);
+
+		Vector3f des_angle;
+                des_angle(1) = vehicle_attitude_setpoint.pitch_body;
+		des_angle(0) = vehicle_attitude_setpoint.roll_body;
+		des_angle(2) = vehicle_attitude_setpoint.yaw_body;
 
 		// Check for new attitude setpoint
 		if (_vehicle_attitude_setpoint_sub.updated()) {
-			vehicle_attitude_setpoint_s vehicle_attitude_setpoint;
-
-			if (_vehicle_attitude_setpoint_sub.copy(&vehicle_attitude_setpoint)
-			    && (vehicle_attitude_setpoint.timestamp > _last_attitude_setpoint)) {
-
-				_attitude_control.setAttitudeSetpoint(Quatf(vehicle_attitude_setpoint.q_d), vehicle_attitude_setpoint.yaw_sp_move_rate);
-				_thrust_setpoint_body = Vector3f(vehicle_attitude_setpoint.thrust_body);
-				_last_attitude_setpoint = vehicle_attitude_setpoint.timestamp;
-			}
+			_vehicle_attitude_setpoint_sub.update(&vehicle_attitude_setpoint);
+			_attitude_control.setAttitudeSetpoint(Quatf(vehicle_attitude_setpoint.q_d), vehicle_attitude_setpoint.yaw_sp_move_rate);
+			_thrust_setpoint_body = Vector3f(vehicle_attitude_setpoint.thrust_body);
 		}
 
 		// Check for a heading reset
 		if (_quat_reset_counter != v_att.quat_reset_counter) {
 			const Quatf delta_q_reset(v_att.delta_q_reset);
-
 			// for stabilized attitude generation only extract the heading change from the delta quaternion
-			_man_yaw_sp = wrap_pi(_man_yaw_sp + Eulerf(delta_q_reset).psi());
-
-			if (v_att.timestamp > _last_attitude_setpoint) {
-				// adapt existing attitude setpoint unless it was generated after the current attitude estimate
-				_attitude_control.adaptAttitudeSetpoint(delta_q_reset);
-			}
+			_man_yaw_sp += Eulerf(delta_q_reset).psi();
+			_attitude_control.adaptAttitudeSetpoint(delta_q_reset);
 
 			_quat_reset_counter = v_att.quat_reset_counter;
 		}
+
+		// Guard against too small (< 0.2ms) and too large (> 20ms) dt's.
+		const float dt = math::constrain(((v_att.timestamp_sample - _last_run) * 1e-6f), 0.0002f, 0.02f);
+		_last_run = v_att.timestamp_sample;
 
 		/* check for updates in other topics */
 		_manual_control_setpoint_sub.update(&_manual_control_setpoint);
@@ -291,11 +316,25 @@ MulticopterAttitudeControl::Run()
 
 			if (_vehicle_land_detected_sub.copy(&vehicle_land_detected)) {
 				_landed = vehicle_land_detected.landed;
+				_maybe_landed = vehicle_land_detected.maybe_landed;
+			}
+		}
+
+		if (_landing_gear_sub.updated()) {
+			landing_gear_s landing_gear;
+
+			if (_landing_gear_sub.copy(&landing_gear)) {
+				if (landing_gear.landing_gear != landing_gear_s::GEAR_KEEP) {
+					if (landing_gear.landing_gear == landing_gear_s::GEAR_UP && (_landed || _maybe_landed)) {
+						mavlink_log_critical(&_mavlink_log_pub, "Landed, unable to retract landing gear\t");
+					} else {
+						_landing_gear = landing_gear.landing_gear;
+					}
+				}
 			}
 		}
 
 		if (_vehicle_status_sub.updated()) {
-			vehicle_status_s vehicle_status;
 
 			if (_vehicle_status_sub.copy(&vehicle_status)) {
 				_vehicle_type_rotary_wing = (vehicle_status.vehicle_type == vehicle_status_s::VEHICLE_TYPE_ROTARY_WING);
@@ -313,7 +352,11 @@ MulticopterAttitudeControl::Run()
 
 		bool run_att_ctrl = _v_control_mode.flag_control_attitude_enabled && (is_hovering || is_tailsitter_transition);
 
+		_control_data.run_att_ctrl = run_att_ctrl;
+
 		if (run_att_ctrl) {
+
+			//const Quatf q{v_att.q};YJJ
 
 			// Generate the attitude setpoint from stick inputs if we are in Manual/Stabilized mode
 			if (_v_control_mode.flag_control_manual_enabled &&
@@ -329,30 +372,54 @@ MulticopterAttitudeControl::Run()
 				_man_y_input_filter.reset(0.f);
 			}
 
-			Vector3f rates_sp = _attitude_control.update(q);
+			Vector3f _att_res = _fnsm_controller.update(euler, des_angle, Vector3f(angular_velocity.xyz), dt, _maybe_landed || _landed);
+			_att_res(0) = math::constrain(_att_res(0), -0.3f, 0.3f);
+			_att_res(1) = math::constrain(_att_res(1), -0.3f, 0.3f);
+			_att_res(2) = math::constrain(_att_res(2), -0.3f, 0.3f);
 
-			const hrt_abstime now = hrt_absolute_time();
-			autotune_attitude_control_status_s pid_autotune;
+			_control_data.timestamp_sample = v_att.timestamp_sample;
+			_control_data.timestamp = hrt_absolute_time();
+			_control_data.int_yaw = _fnsm_controller._control_int(2);
+			_control_data.int_pitch = _fnsm_controller._control_int(1);
+			_control_data.int_roll = _fnsm_controller._control_int(0);
 
-			if (_autotune_attitude_control_status_sub.copy(&pid_autotune)) {
-				if ((pid_autotune.state == autotune_attitude_control_status_s::STATE_ROLL
-				     || pid_autotune.state == autotune_attitude_control_status_s::STATE_PITCH
-				     || pid_autotune.state == autotune_attitude_control_status_s::STATE_YAW
-				     || pid_autotune.state == autotune_attitude_control_status_s::STATE_TEST)
-				    && ((now - pid_autotune.timestamp) < 1_s)) {
-					rates_sp += Vector3f(pid_autotune.rate_sp);
-				}
+			_control_data.tau_yaw = _att_res(2);
+			_control_data.tau_roll = _att_res(0);
+			_control_data.tau_pitch = _att_res(1);
+			_control_data.pitch = euler(1);
+			_control_data.roll = euler(0);
+			_control_data.yaw = euler(2);
+			_control_data.des_pitch = des_angle(1);
+			_control_data.des_roll = des_angle(0);
+			_control_data.des_yaw = des_angle(2);
+
+			_thrust_sp = math::constrain(-vehicle_attitude_setpoint.thrust_body[2], 0.0f, 1.0f);//YJJ： 取了负，因为Z轴朝下
+
+			actuator_controls_s actuators{};//YJJ
+			actuators.control[actuator_controls_s::INDEX_ROLL] = PX4_ISFINITE(_att_res(0)) ? _att_res(0) : 0.0f;
+			actuators.control[actuator_controls_s::INDEX_PITCH] = PX4_ISFINITE(_att_res(1)) ? _att_res(1) : 0.0f;
+			actuators.control[actuator_controls_s::INDEX_YAW] = PX4_ISFINITE(_att_res(2)) ? _att_res(2) : 0.0f;
+			actuators.control[actuator_controls_s::INDEX_THROTTLE] = PX4_ISFINITE(_thrust_sp) ? _thrust_sp : 0.0f;
+			actuators.control[actuator_controls_s::INDEX_LANDING_GEAR] = _landing_gear;
+			actuators.timestamp_sample = v_att.timestamp_sample;
+
+			//const hrt_abstime now = hrt_absolute_time();
+
+			if (!vehicle_status.is_vtol) {
+				publishTorqueSetpoint(_att_res, v_att.timestamp_sample);
+				publishThrustSetpoint(v_att.timestamp_sample);
 			}
 
-			// publish rate setpoint
-			vehicle_rates_setpoint_s v_rates_sp{};
-			v_rates_sp.roll = rates_sp(0);
-			v_rates_sp.pitch = rates_sp(1);
-			v_rates_sp.yaw = rates_sp(2);
-			_thrust_setpoint_body.copyTo(v_rates_sp.thrust_body);
-			v_rates_sp.timestamp = hrt_absolute_time();
+			// FILE *fichier = fopen("info.txt","a");
+   			// fprintf(fichier,"             \tpitch\troll\tyaw\n");
+    			// fprintf(fichier,"control_outputs: \t%f\t%f\t%f\n",(double)tau_Pitch, tau_Roll, tau_Yaw);
+			// fclose(fichier);
 
-			_v_rates_sp_pub.publish(v_rates_sp);
+			actuators.timestamp = hrt_absolute_time();
+			_actuators_0_pub.publish(actuators);
+			_control_data_pub.publish(_control_data);
+
+			updateActuatorControlsStatus(actuators, dt);
 		}
 
 		// reset yaw setpoint during transitions, tailsitter.cpp generates
@@ -361,6 +428,53 @@ MulticopterAttitudeControl::Run()
 	}
 
 	perf_end(_loop_perf);
+}
+
+void MulticopterAttitudeControl::publishTorqueSetpoint(const Vector3f &torque_sp, const hrt_abstime &timestamp_sample)
+{
+	vehicle_torque_setpoint_s v_torque_sp = {};
+	v_torque_sp.timestamp = hrt_absolute_time();
+	v_torque_sp.timestamp_sample = timestamp_sample;
+	v_torque_sp.xyz[0] = (PX4_ISFINITE(torque_sp(0))) ? torque_sp(0) : 0.0f;
+	v_torque_sp.xyz[1] = (PX4_ISFINITE(torque_sp(1))) ? torque_sp(1) : 0.0f;
+	v_torque_sp.xyz[2] = (PX4_ISFINITE(torque_sp(2))) ? torque_sp(2) : 0.0f;
+
+	_vehicle_torque_setpoint_pub.publish(v_torque_sp);
+}
+
+void MulticopterAttitudeControl::publishThrustSetpoint(const hrt_abstime &timestamp_sample)
+{
+	vehicle_thrust_setpoint_s v_thrust_sp = {};
+	v_thrust_sp.timestamp = hrt_absolute_time();
+	v_thrust_sp.timestamp_sample = timestamp_sample;
+	v_thrust_sp.xyz[0] = 0.0f;
+	v_thrust_sp.xyz[1] = 0.0f;
+	v_thrust_sp.xyz[2] = PX4_ISFINITE(_thrust_sp) ? -_thrust_sp : 0.0f; // Z is Down
+
+	_vehicle_thrust_setpoint_pub.publish(v_thrust_sp);
+}
+
+void MulticopterAttitudeControl::updateActuatorControlsStatus(const actuator_controls_s &actuators, float dt)
+{
+	for (int i = 0; i < 4; i++) {
+		_control_energy[i] += actuators.control[i] * actuators.control[i] * dt;
+	}
+
+	_energy_integration_time += dt;
+
+	if (_energy_integration_time > 500e-3f) {
+
+		actuator_controls_status_s status;
+		status.timestamp = actuators.timestamp;
+
+		for (int i = 0; i < 4; i++) {
+			status.control_power[i] = _control_energy[i] / _energy_integration_time;
+			_control_energy[i] = 0.f;
+		}
+
+		_actuator_controls_status_0_pub.publish(status);
+		_energy_integration_time = 0.f;
+	}
 }
 
 int MulticopterAttitudeControl::task_spawn(int argc, char *argv[])

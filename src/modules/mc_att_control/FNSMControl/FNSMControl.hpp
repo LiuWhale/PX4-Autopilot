@@ -50,51 +50,56 @@
 
 #include <matrix/matrix/math.hpp>
 #include <mathlib/math/Limits.hpp>
-class AttitudeControl
+#include <controllib/blocks.hpp>
+#include <cmath>
+
+#define sig(a, b) pow(abs(a), b)*(a/abs(a))
+
+struct FNSMParam{
+	float lambda1;
+	float lambda2;
+	float beta1;
+	float beta2;
+	float r1;
+	float r2 = 2*r1/(r1+1);
+	float b1;
+};
+
+class FNSMControl: public control::SuperBlock
 {
 public:
-	AttitudeControl() = default;
-	~AttitudeControl() = default;
+	FNSMControl();
+	~FNSMControl() = default;
 
-	/**
-	 * Set proportional attitude control gain
-	 * @param proportional_gain 3D vector containing gains for roll, pitch, yaw
-	 * @param yaw_weight A fraction [0,1] deprioritizing yaw compared to roll and pitch
-	 */
-	void setProportionalGain(const matrix::Vector3f &proportional_gain, const float yaw_weight);
+	void setParam(FNSMParam &roll, FNSMParam &pitch, FNSMParam &yaw){ _params(0) = roll; _params(1) = pitch; _params(2) = yaw; }
+	void setIntegratorLimit(const matrix::Vector3f &integrator_limit) { _lim_int = integrator_limit; };
+	void resetIntegral() { _control_int.zero(); }
+	matrix::Vector3f update(const matrix::Vector3f &angle, const matrix::Vector3f &angle_sp, const matrix::Vector3f &angular_velocity, const float dt, const bool land);
 
-	/**
-	 * Set hard limit for output rate setpoints
-	 * @param rate_limit [rad/s] 3D vector containing limits for roll, pitch, yaw
-	 */
-	void setRateLimit(const matrix::Vector3f &rate_limit) { _rate_limit = rate_limit; }
-
-	/**
-	 * Set a new attitude setpoint replacing the one tracked before
-	 * @param qd desired vehicle attitude setpoint
-	 * @param yawspeed_setpoint [rad/s] yaw feed forward angular rate in world frame
-	 */
-	void setAttitudeSetpoint(const matrix::Quatf &qd, const float yawspeed_setpoint) { _attitude_setpoint_q = qd; _attitude_setpoint_q.normalize(); _yawspeed_setpoint = yawspeed_setpoint; }
-
-	/**
-	 * Adjust last known attitude setpoint by a delta rotation
-	 * Optional use to avoid glitches when attitude estimate reference e.g. heading changes.
-	 * @param q_delta delta rotation to apply
-	 */
-	void adaptAttitudeSetpoint(const matrix::Quatf &q_delta) { _attitude_setpoint_q = q_delta * _attitude_setpoint_q; }
-
-	/**
-	 * Run one control loop cycle calculation
-	 * @param q estimation of the current vehicle attitude unit quaternion
-	 * @return [rad/s] body frame 3D angular rate setpoint vector to be executed by the rate controller
-	 */
-	matrix::Vector3f update(const matrix::Quatf &q) const;
+	matrix::Vector3f _control_int;
+	matrix::Vector3<FNSMParam> _params;
 
 private:
-	matrix::Vector3f _proportional_gain;
-	matrix::Vector3f _rate_limit;
-	float _yaw_w{0.f}; ///< yaw weight [0,1] to deprioritize caompared to roll and pitch
+	void updateIntegral(const float dt);
+	void updateSlidingSurface(const float dt);
 
-	matrix::Quatf _attitude_setpoint_q; ///< latest known attitude setpoint e.g. from position control
-	float _yawspeed_setpoint{0.f}; ///< latest known yawspeed feed-forward setpoint
+	matrix::Vector3f _error;
+	matrix::Vector3f _lim_int;
+	matrix::Vector3f _sliding_surface;
+	matrix::Matrix<float, 3, 3> j_mat;
+	control::BlockDerivative _derivate_pitch_e;
+	control::BlockDerivative _derivate_pitch;
+	control::BlockDerivative _dderivate_pitch;
+	control::BlockDerivative _derivate_roll_e;
+	control::BlockDerivative _derivate_roll;
+	control::BlockDerivative _dderivate_roll;
+	control::BlockDerivative _derivate_yaw_e;
+	control::BlockDerivative _derivate_yaw;
+	control::BlockDerivative _dderivate_yaw;
+
+	float L = 0.11669;
+	float K4 = 0.001;
+	float J1 = 0.0053;
+	float J2 = 0.0057;
+	float J3 = 0.008;
 };
