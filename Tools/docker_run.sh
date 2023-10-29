@@ -27,7 +27,7 @@ fi
 
 # otherwise default to nuttx
 if [ -z ${PX4_DOCKER_REPO+x} ]; then
-	PX4_DOCKER_REPO="px4io/px4-dev-nuttx-focal:2021-09-08"
+	PX4_DOCKER_REPO="liuwhale/px4-dev-ros2-humble:cuda12.2.2-cudnn8"
 fi
 
 # docker hygiene
@@ -41,7 +41,7 @@ fi
 echo "PX4_DOCKER_REPO: $PX4_DOCKER_REPO";
 
 PWD=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
-SRC_DIR=$PWD/../
+SRC_DIR=$PWD/../../
 
 CCACHE_DIR=${HOME}/.ccache
 mkdir -p "${CCACHE_DIR}"
