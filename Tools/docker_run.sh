@@ -58,6 +58,10 @@ docker run -it --rm -w "${SRC_DIR}" \
 	--env=PX4_ASAN \
 	--env=PX4_MSAN \
 	--env=PX4_TSAN \
+	--gpus all \
+	--shm-size=1g \
+	--ulimit memlock=-1 \
+	--ulimit stack=67108864 \
 	--env=PX4_UBSAN \
 	--env=TRAVIS_BRANCH \
 	--env=TRAVIS_BUILD_ID \
