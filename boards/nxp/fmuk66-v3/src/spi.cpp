@@ -47,7 +47,7 @@
 #include <nuttx/spi/spi.h>
 #include <arch/board/board.h>
 
-#include "arm_arch.h"
+#include "arm_internal.h"
 #include "chip.h"
 #include <kinetis.h>
 #include "board_config.h"
@@ -124,7 +124,7 @@ __EXPORT void board_spi_reset(int ms, int bus_mask)
 	VDD_3V3_SENSORS_EN(true);
 	up_mdelay(2);
 
-	/* Restore all the CS to ouputs inactive */
+	/* Restore all the CS to outputs inactive */
 
 	for (int bus = 0; bus < SPI_BUS_MAX_BUS_ITEMS; ++bus) {
 		if (px4_spi_buses[bus].bus == PX4_BUS_NUMBER_TO_PX4(1)) {

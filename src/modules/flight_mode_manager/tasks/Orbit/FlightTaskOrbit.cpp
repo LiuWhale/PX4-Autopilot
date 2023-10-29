@@ -49,10 +49,14 @@ FlightTaskOrbit::FlightTaskOrbit()
 	_sticks_data_required = false;
 }
 
-bool FlightTaskOrbit::applyCommandParameters(const vehicle_command_s &command)
+bool FlightTaskOrbit::applyCommandParameters(const vehicle_command_s &command, bool &success)
 {
-	bool ret = true;
-	// save previous velocity and roatation direction
+	if (command.command != vehicle_command_s::VEHICLE_CMD_DO_ORBIT) {
+		return false;
+	}
+
+	success = true;
+	// save previous velocity and rotation direction
 	bool new_is_clockwise = _orbit_velocity > 0;
 	float new_radius = _orbit_radius;
 	float new_absolute_velocity = fabsf(_orbit_velocity);
@@ -72,7 +76,7 @@ bool FlightTaskOrbit::applyCommandParameters(const vehicle_command_s &command)
 
 	float new_velocity = signFromBool(new_is_clockwise) * new_absolute_velocity;
 
-	if (math::isInRange(new_radius, _radius_min, _radius_max)) {
+	if (math::isInRange(new_radius, _radius_min, _param_mc_orbit_rad_max.get())) {
 		_started_clockwise = new_is_clockwise;
 		_sanitizeParams(new_radius, new_velocity);
 		_orbit_radius = new_radius;
@@ -81,7 +85,7 @@ bool FlightTaskOrbit::applyCommandParameters(const vehicle_command_s &command)
 	} else {
 		mavlink_log_critical(&_mavlink_log_pub, "Orbit radius limit exceeded\t");
 		events::send(events::ID("orbit_radius_exceeded"), events::Log::Alert, "Orbit radius limit exceeded");
-		ret = false;
+		success = false;
 	}
 
 	// commanded heading behaviour
@@ -98,7 +102,7 @@ bool FlightTaskOrbit::applyCommandParameters(const vehicle_command_s &command)
 			_center.xy() = _geo_projection.project(command.param5, command.param6);
 
 		} else {
-			ret = false;
+			success = false;
 		}
 	}
 
@@ -108,7 +112,7 @@ bool FlightTaskOrbit::applyCommandParameters(const vehicle_command_s &command)
 			_center(2) = _global_local_alt0 - command.param7;
 
 		} else {
-			ret = false;
+			success = false;
 		}
 	}
 
@@ -118,7 +122,7 @@ bool FlightTaskOrbit::applyCommandParameters(const vehicle_command_s &command)
 		_position_smoothing.reset(_acceleration_setpoint, _velocity_setpoint, _position);
 	}
 
-	return ret;
+	return true;
 }
 
 bool FlightTaskOrbit::sendTelemetry()
@@ -146,7 +150,7 @@ bool FlightTaskOrbit::sendTelemetry()
 void FlightTaskOrbit::_sanitizeParams(float &radius, float &velocity) const
 {
 	// clip the radius to be within range
-	radius = math::constrain(radius, _radius_min, _radius_max);
+	radius = math::constrain(radius, _radius_min, _param_mc_orbit_rad_max.get());
 	velocity = math::constrain(velocity, -fabsf(_velocity_max), fabsf(_velocity_max));
 
 	bool exceeds_maximum_acceleration = (velocity * velocity) >= _acceleration_max * radius;
@@ -169,12 +173,7 @@ bool FlightTaskOrbit::activate(const trajectory_setpoint_s &last_setpoint)
 	_slew_rate_yaw.setSlewRate(math::radians(_param_mpc_yawrauto_max.get()));
 
 	// need a valid position and velocity
-	ret = ret && PX4_ISFINITE(_position(0))
-	      && PX4_ISFINITE(_position(1))
-	      && PX4_ISFINITE(_position(2))
-	      && PX4_ISFINITE(_velocity(0))
-	      && PX4_ISFINITE(_velocity(1))
-	      && PX4_ISFINITE(_velocity(2));
+	ret = ret && _position.isAllFinite() && _velocity.isAllFinite();
 
 	Vector3f pos_prev{last_setpoint.position};
 	Vector3f vel_prev{last_setpoint.velocity};

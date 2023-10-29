@@ -34,6 +34,7 @@
 #include "input_test.h"
 
 #include <px4_platform_common/posix.h>
+#include <px4_platform_common/log.h>
 #include <lib/matrix/matrix/math.hpp>
 #include <lib/mathlib/mathlib.h>
 
@@ -64,8 +65,6 @@ InputTest::UpdateResult InputTest::update(unsigned int timeout_ms, ControlData &
 	matrix::Quatf q(euler);
 
 	q.copyTo(control_data.type_data.angle.q);
-
-	control_data.gimbal_shutter_retract = false;
 
 	control_data.type_data.angle.angular_velocity[0] = NAN;
 	control_data.type_data.angle.angular_velocity[1] = NAN;

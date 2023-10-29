@@ -31,8 +31,11 @@
  *
  ****************************************************************************/
 
+#include <board_config.h>
+
 #if defined(CONFIG_SYSTEM_CDCACM)
 __BEGIN_DECLS
+#include <board_config.h>
 #include <arch/board/board.h>
 #include <syslog.h>
 #include <nuttx/wqueue.h>
@@ -40,6 +43,7 @@ __BEGIN_DECLS
 
 #include <termios.h>
 #include <sys/ioctl.h>
+#include <fcntl.h>
 
 extern int sercon_main(int c, char **argv);
 extern int serdis_main(int c, char **argv);
@@ -282,7 +286,7 @@ static void mavlink_usb_check(void *arg)
 #if defined(CONFIG_SERIAL_PASSTHRU_UBLOX)
 								speed_t baudrate = cfgetspeed(&uart_config);
 								char baudstring[16];
-								snprintf(baudstring, sizeof(baudstring), "%d", baudrate);
+								snprintf(baudstring, sizeof(baudstring), "%ld", baudrate);
 								static const char *gps_argv[] {"gps", "stop", nullptr};
 
 								static const char *passthru_argv[] {"serial_passthru", "start", "-t", "-b", baudstring, "-e", USB_DEVICE_PATH, "-d", SERIAL_PASSTHRU_UBLOX_DEV,   nullptr};

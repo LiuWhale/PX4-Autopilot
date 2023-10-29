@@ -77,6 +77,8 @@ VtolAttitudeControl::VtolAttitudeControl() :
 		exit_and_cleanup();
 	}
 
+	_flaps_setpoint_pub.advertise();
+	_spoilers_setpoint_pub.advertise();
 	_vtol_vehicle_status_pub.advertise();
 	_vehicle_thrust_setpoint0_pub.advertise();
 	_vehicle_torque_setpoint0_pub.advertise();
@@ -92,17 +94,40 @@ VtolAttitudeControl::~VtolAttitudeControl()
 bool
 VtolAttitudeControl::init()
 {
-	if (!_actuator_inputs_mc.registerCallback()) {
+	if (!_vehicle_torque_setpoint_virtual_fw_sub.registerCallback()) {
 		PX4_ERR("callback registration failed");
 		return false;
 	}
 
-	if (!_actuator_inputs_fw.registerCallback()) {
+	if (!_vehicle_torque_setpoint_virtual_mc_sub.registerCallback()) {
+		PX4_ERR("callback registration failed");
+		return false;
+	}
+
+	if (!_vehicle_thrust_setpoint_virtual_fw_sub.registerCallback()) {
+		PX4_ERR("callback registration failed");
+		return false;
+	}
+
+	if (!_vehicle_thrust_setpoint_virtual_mc_sub.registerCallback()) {
 		PX4_ERR("callback registration failed");
 		return false;
 	}
 
 	return true;
+}
+
+void VtolAttitudeControl::vehicle_status_poll()
+{
+	_vehicle_status_sub.copy(&_vehicle_status);
+
+	// abort front transition when RTL is triggered
+	if (_vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_RTL
+	    && _nav_state_prev != vehicle_status_s::NAVIGATION_STATE_AUTO_RTL && _vtol_type->get_mode() == mode::TRANSITION_TO_FW) {
+		_transition_command = vtol_vehicle_status_s::VEHICLE_VTOL_STATE_MC;
+	}
+
+	_nav_state_prev = _vehicle_status.nav_state;
 }
 
 void VtolAttitudeControl::action_request_poll()
@@ -120,6 +145,12 @@ void VtolAttitudeControl::action_request_poll()
 			case action_request_s::ACTION_VTOL_TRANSITION_TO_FIXEDWING:
 				_transition_command = vtol_vehicle_status_s::VEHICLE_VTOL_STATE_FW;
 				_immediate_transition = false;
+
+				// reset fixed_wing_system_failure flag when a new transition to FW is triggered
+				if (_transition_command == vtol_vehicle_status_s::VEHICLE_VTOL_STATE_FW) {
+					_vtol_vehicle_status.fixed_wing_system_failure = false;
+				}
+
 				break;
 			}
 		}
@@ -132,25 +163,28 @@ void VtolAttitudeControl::vehicle_cmd_poll()
 
 	while (_vehicle_cmd_sub.update(&vehicle_command)) {
 		if (vehicle_command.command == vehicle_command_s::VEHICLE_CMD_DO_VTOL_TRANSITION) {
-			vehicle_status_s vehicle_status{};
-			_vehicle_status_sub.copy(&vehicle_status);
 
-			uint8_t result = vehicle_command_ack_s::VEHICLE_RESULT_ACCEPTED;
+			uint8_t result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_ACCEPTED;
 
 			const int transition_command_param1 = int(vehicle_command.param1 + 0.5f);
 
 			// deny transition from MC to FW in Takeoff, Land, RTL and Orbit
 			if (transition_command_param1 == vtol_vehicle_status_s::VEHICLE_VTOL_STATE_FW &&
-			    (vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_TAKEOFF
-			     || vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_LAND
-			     || vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_RTL
-			     ||  vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_ORBIT)) {
+			    (_vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_TAKEOFF
+			     || _vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_LAND
+			     || _vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_RTL
+			     ||  _vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_ORBIT)) {
 
-				result = vehicle_command_ack_s::VEHICLE_RESULT_TEMPORARILY_REJECTED;
+				result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_TEMPORARILY_REJECTED;
 
 			} else {
 				_transition_command = transition_command_param1;
 				_immediate_transition = (PX4_ISFINITE(vehicle_command.param2)) ? int(vehicle_command.param2 + 0.5f) : false;
+
+				// reset fixed_wing_system_failure flag when a new transition to FW is triggered
+				if (_transition_command == vtol_vehicle_status_s::VEHICLE_VTOL_STATE_FW) {
+					_vtol_vehicle_status.fixed_wing_system_failure = false;
+				}
 			}
 
 			if (vehicle_command.from_external) {
@@ -171,52 +205,56 @@ void VtolAttitudeControl::vehicle_cmd_poll()
 void
 VtolAttitudeControl::quadchute(QuadchuteReason reason)
 {
-	if (!_vtol_vehicle_status.vtol_transition_failsafe) {
+	if (!_vtol_vehicle_status.fixed_wing_system_failure) {
 		switch (reason) {
 		case QuadchuteReason::TransitionTimeout:
 			mavlink_log_critical(&_mavlink_log_pub, "Quadchute: transition timeout\t");
 			events::send(events::ID("vtol_att_ctrl_quadchute_tout"), events::Log::Critical,
-				     "Quadchute triggered, due to transition timeout");
+				     "Quad-chute triggered due to transition timeout");
 			break;
 
 		case QuadchuteReason::ExternalCommand:
 			mavlink_log_critical(&_mavlink_log_pub, "Quadchute: external command\t");
 			events::send(events::ID("vtol_att_ctrl_quadchute_ext_cmd"), events::Log::Critical,
-				     "Quadchute triggered, due to external command");
+				     "Quad-chute triggered due to external command");
 			break;
 
 		case QuadchuteReason::MinimumAltBreached:
 			mavlink_log_critical(&_mavlink_log_pub, "Quadchute: minimum altitude breached\t");
 			events::send(events::ID("vtol_att_ctrl_quadchute_min_alt"), events::Log::Critical,
-				     "Quadchute triggered, due to minimum altitude breach");
+				     "Quad-chute triggered due to minimum altitude breach");
 			break;
 
-		case QuadchuteReason::LossOfAlt:
-			mavlink_log_critical(&_mavlink_log_pub, "Quadchute: loss of altitude\t");
+		case QuadchuteReason::UncommandedDescent:
+			mavlink_log_critical(&_mavlink_log_pub, "Quadchute: Uncommanded descent detected\t");
 			events::send(events::ID("vtol_att_ctrl_quadchute_alt_loss"), events::Log::Critical,
-				     "Quadchute triggered, due to loss of altitude");
+				     "Quad-chute triggered due to uncommanded descent detection");
 			break;
 
-		case QuadchuteReason::LargeAltError:
-			mavlink_log_critical(&_mavlink_log_pub, "Quadchute: large altitude error\t");
-			events::send(events::ID("vtol_att_ctrl_quadchute_alt_err"), events::Log::Critical,
-				     "Quadchute triggered, due to large altitude error");
+		case QuadchuteReason::TransitionAltitudeLoss:
+			mavlink_log_critical(&_mavlink_log_pub, "Quadchute: loss of altitude during transition\t");
+			events::send(events::ID("vtol_att_ctrl_quadchute_trans_alt_err"), events::Log::Critical,
+				     "Quad-chute triggered due to loss of altitude during transition");
 			break;
 
 		case QuadchuteReason::MaximumPitchExceeded:
 			mavlink_log_critical(&_mavlink_log_pub, "Quadchute: maximum pitch exceeded\t");
 			events::send(events::ID("vtol_att_ctrl_quadchute_max_pitch"), events::Log::Critical,
-				     "Quadchute triggered, due to maximum pitch angle exceeded");
+				     "Quad-chute triggered due to maximum pitch angle exceeded");
 			break;
 
 		case QuadchuteReason::MaximumRollExceeded:
 			mavlink_log_critical(&_mavlink_log_pub, "Quadchute: maximum roll exceeded\t");
 			events::send(events::ID("vtol_att_ctrl_quadchute_max_roll"), events::Log::Critical,
-				     "Quadchute triggered, due to maximum roll angle exceeded");
+				     "Quad-chute triggered due to maximum roll angle exceeded");
 			break;
+
+		case QuadchuteReason::None:
+			// should never get in here
+			return;
 		}
 
-		_vtol_vehicle_status.vtol_transition_failsafe = true;
+		_vtol_vehicle_status.fixed_wing_system_failure = true;
 	}
 }
 
@@ -242,8 +280,10 @@ void
 VtolAttitudeControl::Run()
 {
 	if (should_exit()) {
-		_actuator_inputs_fw.unregisterCallback();
-		_actuator_inputs_mc.unregisterCallback();
+		_vehicle_torque_setpoint_virtual_fw_sub.unregisterCallback();
+		_vehicle_torque_setpoint_virtual_mc_sub.unregisterCallback();
+		_vehicle_thrust_setpoint_virtual_fw_sub.unregisterCallback();
+		_vehicle_thrust_setpoint_virtual_mc_sub.unregisterCallback();
 		exit_and_cleanup();
 		return;
 	}
@@ -277,8 +317,10 @@ VtolAttitudeControl::Run()
 
 	perf_begin(_loop_perf);
 
-	const bool updated_fw_in = _actuator_inputs_fw.update(&_actuators_fw_in);
-	const bool updated_mc_in = _actuator_inputs_mc.update(&_actuators_mc_in);
+	bool updated_fw_in = _vehicle_torque_setpoint_virtual_fw_sub.update(&_vehicle_torque_setpoint_virtual_fw);
+	updated_fw_in |= _vehicle_thrust_setpoint_virtual_fw_sub.update(&_vehicle_thrust_setpoint_virtual_fw);
+	bool updated_mc_in = _vehicle_torque_setpoint_virtual_mc_sub.update(&_vehicle_torque_setpoint_virtual_mc);
+	updated_mc_in |= _vehicle_thrust_setpoint_virtual_mc_sub.update(&_vehicle_thrust_setpoint_virtual_mc);
 
 	// run on actuator publications corresponding to VTOL mode
 	bool should_run = false;
@@ -309,6 +351,19 @@ VtolAttitudeControl::Run()
 		_airspeed_validated_sub.update(&_airspeed_validated);
 		_tecs_status_sub.update(&_tecs_status);
 		_land_detected_sub.update(&_land_detected);
+
+		if (_home_position_sub.updated()) {
+			home_position_s home_position;
+
+			if (_home_position_sub.copy(&home_position) && home_position.valid_alt) {
+				_home_position_z = home_position.z;
+
+			} else {
+				_home_position_z = NAN;
+			}
+		}
+
+		vehicle_status_poll();
 		action_request_poll();
 		vehicle_cmd_poll();
 
@@ -331,7 +386,7 @@ VtolAttitudeControl::Run()
 			// vehicle is doing a transition to FW
 			_vtol_vehicle_status.vehicle_vtol_state = vtol_vehicle_status_s::VEHICLE_VTOL_STATE_TRANSITION_TO_FW;
 
-			if (!_vtol_type->was_in_trans_mode() || mc_att_sp_updated || fw_att_sp_updated) {
+			if (mc_att_sp_updated || fw_att_sp_updated) {
 				_vtol_type->update_transition_state();
 				_vehicle_attitude_sp_pub.publish(_vehicle_attitude_sp);
 			}
@@ -342,7 +397,7 @@ VtolAttitudeControl::Run()
 			// vehicle is doing a transition to MC
 			_vtol_vehicle_status.vehicle_vtol_state = vtol_vehicle_status_s::VEHICLE_VTOL_STATE_TRANSITION_TO_MC;
 
-			if (!_vtol_type->was_in_trans_mode() || mc_att_sp_updated || fw_att_sp_updated) {
+			if (mc_att_sp_updated || fw_att_sp_updated) {
 				_vtol_type->update_transition_state();
 				_vehicle_attitude_sp_pub.publish(_vehicle_attitude_sp);
 			}
@@ -373,8 +428,6 @@ VtolAttitudeControl::Run()
 		}
 
 		_vtol_type->fill_actuator_outputs();
-		_actuator_controls_0_pub.publish(_actuators_out_0);
-		_actuator_controls_1_pub.publish(_actuators_out_1);
 
 		_vehicle_torque_setpoint0_pub.publish(_torque_setpoint_0);
 		_vehicle_torque_setpoint1_pub.publish(_torque_setpoint_1);
@@ -384,6 +437,31 @@ VtolAttitudeControl::Run()
 		// Advertise/Publish vtol vehicle status
 		_vtol_vehicle_status.timestamp = hrt_absolute_time();
 		_vtol_vehicle_status_pub.publish(_vtol_vehicle_status);
+
+		// Publish flaps/spoiler setpoint with configured deflection in Hover if in Auto.
+		// In Manual always published in FW rate controller, and in Auto FW in FW Position Controller.
+		if (_vehicle_control_mode.flag_control_auto_enabled
+		    && _vtol_vehicle_status.vehicle_vtol_state != vtol_vehicle_status_s::VEHICLE_VTOL_STATE_FW) {
+
+			// flaps
+			normalized_unsigned_setpoint_s flaps_setpoint;
+			flaps_setpoint.normalized_setpoint = 0.f; // for now always set flaps to 0 in transitions and hover
+			flaps_setpoint.timestamp = hrt_absolute_time();
+			_flaps_setpoint_pub.publish(flaps_setpoint);
+
+			// spoilers
+			float spoiler_control = 0.f;
+
+			if ((_pos_sp_triplet.current.valid && _pos_sp_triplet.current.type == position_setpoint_s::SETPOINT_TYPE_LAND) ||
+			    _vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_DESCEND) {
+				spoiler_control = _param_vt_spoiler_mc_ld.get();
+			}
+
+			normalized_unsigned_setpoint_s spoiler_setpoint;
+			spoiler_setpoint.normalized_setpoint = spoiler_control;
+			spoiler_setpoint.timestamp = hrt_absolute_time();
+			_spoilers_setpoint_pub.publish(spoiler_setpoint);
+		}
 	}
 
 	perf_end(_loop_perf);

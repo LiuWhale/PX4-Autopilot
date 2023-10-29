@@ -37,6 +37,7 @@
 #include <future>
 #include <thread>
 #include <unistd.h>
+#include <cmath>
 
 std::string connection_url {"udp://"};
 std::optional<float> speed_factor {std::nullopt};
@@ -64,7 +65,7 @@ void AutopilotTester::connect(const std::string uri)
 	REQUIRE(poll_condition_with_timeout(
 	[this]() { return _mavsdk.systems().size() > 0; }, std::chrono::seconds(25)));
 
-	auto system = _mavsdk.systems().at(0);
+	auto system = get_system();
 
 	_action.reset(new Action(system));
 	_failure.reset(new Failure(system));
@@ -79,27 +80,22 @@ void AutopilotTester::connect(const std::string uri)
 
 void AutopilotTester::wait_until_ready()
 {
-	std::cout << time_str() << "Waiting for system to be ready" << std::endl;
+	std::cout << time_str() << "Waiting for system to be ready (system health ok & able to arm)" << std::endl;
+
+	// Wiat until the system is healthy
 	CHECK(poll_condition_with_timeout(
 	[this]() { return _telemetry->health_all_ok(); }, std::chrono::seconds(30)));
 
-	// FIXME: workaround to prevent race between PX4 switching to Hold mode
-	// and us trying to arm and take off. If PX4 is not in Hold mode yet,
-	// our arming presumably triggers a failsafe in manual mode.
-	std::this_thread::sleep_for(std::chrono::seconds(1));
-}
+	// Note: There is a known bug in MAVSDK (https://github.com/mavlink/MAVSDK/issues/1852),
+	// where `health_all_ok()` returning true doesn't actually mean vehicle is ready to accept
+	// global position estimate as valid (due to hysteresis). This needs to be fixed properly.
 
-void AutopilotTester::wait_until_ready_local_position_only()
-{
-	std::cout << time_str() << "Waiting for system to be ready" << std::endl;
+	// However, this is mitigated by the `is_armable` check below as a side effect, since
+	// when the vehicle considers global position to be valid, it will then allow arming
+
+	// Wait until we can arm
 	CHECK(poll_condition_with_timeout(
-	[this]() {
-		return
-			(_telemetry->health().is_gyrometer_calibration_ok &&
-			 _telemetry->health().is_accelerometer_calibration_ok &&
-			 _telemetry->health().is_magnetometer_calibration_ok &&
-			 _telemetry->health().is_local_position_ok);
-	}, std::chrono::seconds(20)));
+	[this]() {	return _telemetry->health().is_armable;	}, std::chrono::seconds(20)));
 }
 
 void AutopilotTester::store_home()
@@ -143,11 +139,11 @@ void AutopilotTester::set_height_source(AutopilotTester::HeightSource height_sou
 {
 	switch (height_source) {
 	case HeightSource::Baro:
-		CHECK(_param->set_param_int("EKF2_HGT_MODE", 0) == Param::Result::Success);
+		CHECK(_param->set_param_int("EKF2_HGT_REF", 0) == Param::Result::Success);
 		break;
 
 	case HeightSource::Gps:
-		CHECK(_param->set_param_int("EKF2_HGT_MODE", 1) == Param::Result::Success);
+		CHECK(_param->set_param_int("EKF2_HGT_REF", 1) == Param::Result::Success);
 	}
 }
 
@@ -272,7 +268,7 @@ void AutopilotTester::execute_mission_and_lose_gps()
 {
 	CHECK(_param->set_param_int("SYS_FAILURE_EN", 1) == Param::Result::Success);
 
-	start_and_wait_for_first_mission_item();
+	start_and_wait_for_mission_sequence(1);
 
 	CHECK(_failure->inject(Failure::FailureUnit::SensorGps, Failure::FailureType::Off, 0) == Failure::Result::Success);
 
@@ -284,7 +280,7 @@ void AutopilotTester::execute_mission_and_lose_mag()
 {
 	CHECK(_param->set_param_int("SYS_FAILURE_EN", 1) == Param::Result::Success);
 
-	start_and_wait_for_first_mission_item();
+	start_and_wait_for_mission_sequence(1);
 
 	CHECK(_failure->inject(Failure::FailureUnit::SensorMag, Failure::FailureType::Off, 0) == Failure::Result::Success);
 
@@ -300,7 +296,7 @@ void AutopilotTester::execute_mission_and_lose_baro()
 {
 	CHECK(_param->set_param_int("SYS_FAILURE_EN", 1) == Param::Result::Success);
 
-	start_and_wait_for_first_mission_item();
+	start_and_wait_for_mission_sequence(1);
 
 	CHECK(_failure->inject(Failure::FailureUnit::SensorBaro, Failure::FailureType::Off, 0) == Failure::Result::Success);
 
@@ -316,7 +312,7 @@ void AutopilotTester::execute_mission_and_get_baro_stuck()
 {
 	CHECK(_param->set_param_int("SYS_FAILURE_EN", 1) == Param::Result::Success);
 
-	start_and_wait_for_first_mission_item();
+	start_and_wait_for_mission_sequence(1);
 
 	CHECK(_failure->inject(Failure::FailureUnit::SensorBaro, Failure::FailureType::Stuck, 0) == Failure::Result::Success);
 
@@ -332,7 +328,7 @@ void AutopilotTester::execute_mission_and_get_mag_stuck()
 {
 	CHECK(_param->set_param_int("SYS_FAILURE_EN", 1) == Param::Result::Success);
 
-	start_and_wait_for_first_mission_item();
+	start_and_wait_for_mission_sequence(1);
 
 	CHECK(_failure->inject(Failure::FailureUnit::SensorMag, Failure::FailureType::Stuck, 0) == Failure::Result::Success);
 
@@ -488,6 +484,65 @@ void AutopilotTester::fly_forward_in_altctl()
 		}
 	}
 }
+void AutopilotTester::fly_forward_in_offboard_attitude()
+{
+	// This test does not depend on valid position estimate.
+	// Wait for raw gps & stable attitude estimate
+	CHECK(poll_condition_with_timeout(
+	[this]() {
+		auto attitude = _telemetry->attitude_euler();
+		return _telemetry->raw_gps().altitude_ellipsoid_m > 0.f && fabsf(attitude.roll_deg) < 5.f
+		       && fabsf(attitude.pitch_deg) < 5.f;
+	}, std::chrono::seconds(20)));
+
+	const float start_altitude_ellipsoid_m = _telemetry->raw_gps().altitude_ellipsoid_m;
+
+	Offboard::Attitude attitude{};
+	_offboard->set_attitude(attitude);
+	REQUIRE(_offboard->start() == Offboard::Result::Success);
+
+	// Wait until we can arm
+	CHECK(poll_condition_with_timeout(
+	[this]() {	return _telemetry->health().is_armable;	}, std::chrono::seconds(20)));
+	arm();
+
+	const unsigned offboard_rate_hz = 50;
+
+	// Climb
+	const float climb_altitude_m = 10.f;
+	attitude.thrust_value = 0.8f;
+
+	while (_telemetry->raw_gps().altitude_ellipsoid_m - start_altitude_ellipsoid_m < climb_altitude_m) {
+		CHECK(_offboard->set_attitude(attitude) == Offboard::Result::Success);
+		sleep_for(std::chrono::milliseconds(1000 / offboard_rate_hz));
+	}
+
+	// Fly forward for 3s
+	attitude.thrust_value = 0.8f;
+	attitude.pitch_deg = -20.f;
+
+	for (unsigned i = 0; i < 3 * offboard_rate_hz; ++i) {
+		CHECK(_offboard->set_attitude(attitude) == Offboard::Result::Success);
+		sleep_for(std::chrono::milliseconds(1000 / offboard_rate_hz));
+	}
+
+	// Check attitude
+	auto attitude_estimate = _telemetry->attitude_euler();
+	CHECK(fabsf(attitude.roll_deg - attitude_estimate.roll_deg) < 5.f);
+	CHECK(fabsf(attitude.pitch_deg - attitude_estimate.pitch_deg) < 5.f);
+
+	// Descend
+	attitude.thrust_value = 0.4f;
+	attitude.pitch_deg = 0.f;
+
+	for (unsigned i = 0; i < 6 * offboard_rate_hz; ++i) {
+		CHECK(_offboard->set_attitude(attitude) == Offboard::Result::Success);
+		sleep_for(std::chrono::milliseconds(1000 / offboard_rate_hz));
+	}
+
+	attitude.thrust_value = 0.0f;
+	CHECK(_offboard->set_attitude(attitude) == Offboard::Result::Success);
+}
 
 void AutopilotTester::start_checking_altitude(const float max_deviation_m)
 {
@@ -503,6 +558,49 @@ void AutopilotTester::start_checking_altitude(const float max_deviation_m)
 void AutopilotTester::stop_checking_altitude()
 {
 	_telemetry->subscribe_position(nullptr);
+}
+
+void AutopilotTester::check_tracks_mission_raw(float corridor_radius_m, bool reverse)
+{
+	auto mission_raw = _mission_raw->download_mission();
+	CHECK(mission_raw.first == MissionRaw::Result::Success);
+
+	auto mission_items = mission_raw.second;
+	auto ct = get_coordinate_transformation();
+
+	_telemetry->set_rate_position_velocity_ned(5);
+	_telemetry->subscribe_position_velocity_ned([ct, mission_items, corridor_radius_m, reverse,
+	    this](Telemetry::PositionVelocityNed position_velocity_ned) {
+		auto progress = _mission_raw->mission_progress();
+
+
+		std::function<std::array<float, 3>(std::vector<mavsdk::MissionRaw::MissionItem>, unsigned, mavsdk::geometry::CoordinateTransformation)>
+		get_waypoint_for_sequence = [](std::vector<mavsdk::MissionRaw::MissionItem> mission_items, int sequence, auto ct) {
+			for (auto waypoint : mission_items) {
+
+				if (waypoint.seq == (uint32_t)sequence) {
+					return get_local_mission_item_from_raw_item<float>(waypoint, ct);
+				}
+			}
+
+			return  std::array<float, 3>({0.0f, 0.0f, 0.0f});
+		};
+
+		if (progress.current > 0 && progress.current < progress.total) {
+			// Get shortest distance of current position to 3D line between previous and next waypoint
+
+			std::array<float, 3> current { position_velocity_ned.position.north_m,
+						       position_velocity_ned.position.east_m,
+						       position_velocity_ned.position.down_m };
+			std::array<float, 3> wp_prev = get_waypoint_for_sequence(mission_items,
+						       reverse ? progress.current + 1 : progress.current - 1, ct);
+			std::array<float, 3> wp_next = get_waypoint_for_sequence(mission_items, progress.current, ct);
+
+			float distance_to_trajectory = point_to_line_distance(current, wp_prev, wp_next);
+
+			CHECK(distance_to_trajectory < corridor_radius_m);
+		}
+	});
 }
 
 void AutopilotTester::check_tracks_mission(float corridor_radius_m)
@@ -532,6 +630,17 @@ void AutopilotTester::check_tracks_mission(float corridor_radius_m)
 			CHECK(distance_to_trajectory < corridor_radius_m);
 		}
 	});
+}
+
+void AutopilotTester::check_current_altitude(float target_rel_altitude_m, float max_distance_m)
+{
+	CHECK(std::abs(_telemetry->position().relative_altitude_m - target_rel_altitude_m) <= max_distance_m);
+}
+
+void AutopilotTester::execute_rtl_when_reaching_mission_sequence(int sequence_number)
+{
+	start_and_wait_for_mission_sequence_raw(sequence_number);
+	execute_rtl();
 }
 
 std::array<float, 3> AutopilotTester::get_current_position_ned()
@@ -641,21 +750,40 @@ bool AutopilotTester::ground_truth_horizontal_position_far_from(const Telemetry:
 	return pass;
 }
 
-void AutopilotTester::start_and_wait_for_first_mission_item()
+void AutopilotTester::start_and_wait_for_mission_sequence(int sequence_number)
 {
 	auto prom = std::promise<void> {};
 	auto fut = prom.get_future();
 
-	_mission->subscribe_mission_progress([&prom, this](Mission::MissionProgress progress) {
+	_mission->subscribe_mission_progress([&prom, this, sequence_number](Mission::MissionProgress progress) {
 		std::cout << time_str() << "Progress: " << progress.current << "/" << progress.total << std::endl;
 
-		if (progress.current >= 1) {
+		if (progress.current >= sequence_number) {
 			_mission->subscribe_mission_progress(nullptr);
 			prom.set_value();
 		}
 	});
 
 	REQUIRE(_mission->start_mission() == Mission::Result::Success);
+
+	REQUIRE(fut.wait_for(std::chrono::seconds(60)) == std::future_status::ready);
+}
+
+void AutopilotTester::start_and_wait_for_mission_sequence_raw(int sequence_number)
+{
+	auto prom = std::promise<void> {};
+	auto fut = prom.get_future();
+
+	_mission_raw->subscribe_mission_progress([&prom, this, sequence_number](MissionRaw::MissionProgress progress) {
+		std::cout << time_str() << "Progress: " << progress.current << "/" << progress.total << std::endl;
+
+		if (progress.current >= sequence_number) {
+			_mission_raw->subscribe_mission_progress(nullptr);
+			prom.set_value();
+		}
+	});
+
+	REQUIRE(_mission_raw->start_mission() == MissionRaw::Result::Success);
 
 	REQUIRE(fut.wait_for(std::chrono::seconds(60)) == std::future_status::ready);
 }

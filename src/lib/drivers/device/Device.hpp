@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2012-2017 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2012-2022 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,9 +40,12 @@
 #ifndef _DEVICE_DEVICE_HPP
 #define _DEVICE_DEVICE_HPP
 
+#include <cstdio>
+
 /*
  * Includes here should only cover the needs of the framework definitions.
  */
+#include <px4_platform_common/log.h>
 #include <px4_platform_common/px4_config.h>
 #include <px4_platform_common/posix.h>
 
@@ -166,7 +169,7 @@ public:
 
 	union DeviceId {
 		struct DeviceStructure devid_s;
-		uint32_t devid;
+		uint32_t devid{0};
 	};
 
 	uint32_t get_device_id() const { return _device_id.devid; }
@@ -265,8 +268,8 @@ protected:
 	Device(uint8_t devtype, const char *name, DeviceBusType bus_type, uint8_t bus, uint8_t address) : _name(name)
 	{
 		set_device_type(devtype);
-		_device_id.devid_s.bus_type = bus_type;
-		_device_id.devid_s.bus = bus;
+		set_device_bus_type(bus_type);
+		set_device_bus(bus);
 		set_device_address(address);
 	}
 

@@ -139,7 +139,7 @@ static inline hrt_abstime ts_to_abstime(const struct timespec *ts)
 	hrt_abstime	result;
 
 	result = (hrt_abstime)(ts->tv_sec) * 1000000;
-	result += ts->tv_nsec / 1000;
+	result += (hrt_abstime)(ts->tv_nsec / 1000);
 
 	return result;
 }
@@ -149,9 +149,9 @@ static inline hrt_abstime ts_to_abstime(const struct timespec *ts)
  */
 static inline void abstime_to_ts(struct timespec *ts, hrt_abstime abstime)
 {
-	ts->tv_sec = abstime / 1000000;
-	abstime -= ts->tv_sec * 1000000;
-	ts->tv_nsec = abstime * 1000;
+	ts->tv_sec = (typeof(ts->tv_sec))(abstime / 1000000);
+	abstime -= (hrt_abstime)(ts->tv_sec) * 1000000;
+	ts->tv_nsec = (typeof(ts->tv_nsec))(abstime * 1000);
 }
 
 /**
@@ -235,11 +235,11 @@ __EXPORT extern void	hrt_call_delay(struct hrt_call *entry, hrt_abstime delay);
  */
 __EXPORT extern void	hrt_init(void);
 
-#ifdef __PX4_POSIX
+/*
+ * Initialise the HRT ioctl (user mode access to HRT).
+ */
+__EXPORT extern void	hrt_ioctl_init(void);
 
-__EXPORT extern hrt_abstime hrt_absolute_time_offset(void);
-
-#endif
 #if defined(ENABLE_LOCKSTEP_SCHEDULER)
 
 __EXPORT extern int px4_lockstep_register_component(void);
@@ -249,8 +249,8 @@ __EXPORT extern void px4_lockstep_wait_for_components(void);
 
 #else
 static inline int px4_lockstep_register_component(void) { return 0; }
-static inline void px4_lockstep_unregister_component(int component) { }
-static inline void px4_lockstep_progress(int component) { }
+static inline void px4_lockstep_unregister_component(int component) { (void)component; }
+static inline void px4_lockstep_progress(int component) {(void)component; }
 static inline void px4_lockstep_wait_for_components(void) { }
 #endif /* defined(ENABLE_LOCKSTEP_SCHEDULER) */
 
@@ -294,17 +294,17 @@ namespace time_literals
 // User-defined integer literals for different time units.
 // The base unit is hrt_abstime in microseconds
 
-constexpr hrt_abstime operator "" _s(unsigned long long seconds)
+constexpr hrt_abstime operator ""_s(unsigned long long seconds)
 {
 	return hrt_abstime(seconds * 1000000ULL);
 }
 
-constexpr hrt_abstime operator "" _ms(unsigned long long milliseconds)
+constexpr hrt_abstime operator ""_ms(unsigned long long milliseconds)
 {
 	return hrt_abstime(milliseconds * 1000ULL);
 }
 
-constexpr hrt_abstime operator "" _us(unsigned long long microseconds)
+constexpr hrt_abstime operator ""_us(unsigned long long microseconds)
 {
 	return hrt_abstime(microseconds);
 }

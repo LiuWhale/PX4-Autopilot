@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2020, 2021 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2020-2021 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -64,7 +64,8 @@ extern "C" {
 					off_t firstblock, off_t nblocks);
 }
 static int num_instances = 0;
-static mtd_instance_s *instances = nullptr;
+static int total_blocks = 0;
+static mtd_instance_s *instances[MAX_MTD_INSTANCES] = {};
 
 
 static int ramtron_attach(mtd_instance_s &instance)
@@ -147,14 +148,18 @@ static int at24xxx_attach(mtd_instance_s &instance)
 
 	/* start the MTD driver, attempt 5 times */
 	for (int i = 0; i < 5; i++) {
-		instance.mtd_dev = px4_at24c_initialize(i2c, PX4_I2C_DEVID_ADDR(instance.devid));
+		int ret_val = px4_at24c_initialize(i2c, PX4_I2C_DEVID_ADDR(instance.devid), &(instance.mtd_dev));
 
-		if (instance.mtd_dev) {
+		if (ret_val == 0) {
 			/* abort on first valid result */
 			if (i > 0) {
 				PX4_WARN("EEPROM needed %d attempts to attach", i + 1);
 			}
 
+			break;
+
+		} else if (ret_val == -ENOMEM) {
+			PX4_ERR("Number of at24c EEPROM instances reached the board limit of %d", BOARD_MTD_NUM_EEPROM);
 			break;
 		}
 	}
@@ -230,7 +235,7 @@ ssize_t px4_mtd_get_partition_size(const mtd_instance_s *instance, const char *p
 	return instance->partition_block_counts[partn] * blocksize;
 }
 
-mtd_instance_s *px4_mtd_get_instances(unsigned int *count)
+mtd_instance_s **px4_mtd_get_instances(unsigned int *count)
 {
 	*count = num_instances;
 	return instances;
@@ -244,25 +249,19 @@ static const px4_mtd_manifest_t default_mtd_config = {
 
 #else
 
-const px4_mft_device_t spifram  = {             // FM25V02A on FMUM 32K 512 X 64
+const px4_mft_device_t spifram  = {             // FM25V02A on FMUM native: 32K X 8, emulated as (1024 Blocks of 32)
 	.bus_type = px4_mft_device_t::SPI,
 	.devid    = SPIDEV_FLASH(0)
 };
 
 const px4_mtd_entry_t fram = {
 	.device = &spifram,
-	.npart = 2,
+	.npart = 1,
 	.partd = {
 		{
 			.type = MTD_PARAMETERS,
 			.path = "/fs/mtd_params",
-			.nblocks = 32
-		},
-		{
-			.type = MTD_WAYPOINTS,
-			.path = "/fs/mtd_waypoints",
-			.nblocks = 32
-
+			.nblocks = (32768 / (1 << CONFIG_RAMTRON_EMULATE_SECTOR_SHIFT))
 		}
 	},
 };
@@ -292,62 +291,69 @@ int px4_mtd_config(const px4_mtd_manifest_t *mft_mtd)
 	}
 
 	rv = -ENOMEM;
-	int total_blocks = 0;
+	uint8_t total_new_instances = mtd_list->nconfigs + num_instances;
 
-	instances = new mtd_instance_s[mtd_list->nconfigs];
-
-	if (instances == nullptr) {
-memoryout:
-		PX4_ERR("failed to allocate memory!");
+	if (total_new_instances >= MAX_MTD_INSTANCES) {
+		PX4_ERR("reached limit of max %u mtd instances", MAX_MTD_INSTANCES);
 		return rv;
 	}
 
-	for (uint32_t i = 0; i < mtd_list->nconfigs; i++) {
+	for (uint8_t i = num_instances, num_entry = 0u; i < total_new_instances; ++i, ++num_entry) {
+
+		instances[i] = new mtd_instance_s;
+
+		if (instances[i] == nullptr) {
+memoryout:
+			PX4_ERR("failed to allocate memory!");
+			return rv;
+		}
+
 		num_instances++;
-		uint32_t nparts = mtd_list->entries[i]->npart;
-		instances[i].devid = mtd_list->entries[i]->device->devid;
-		instances[i].mtd_dev = nullptr;
-		instances[i].n_partitions_current = 0;
+
+		uint32_t nparts = mtd_list->entries[num_entry]->npart;
+		instances[i]->devid = mtd_list->entries[num_entry]->device->devid;
+		instances[i]->mtd_dev = nullptr;
+		instances[i]->n_partitions_current = 0;
 
 		rv = -ENOMEM;
-		instances[i].part_dev = new FAR struct mtd_dev_s *[nparts];
+		instances[i]->part_dev = new FAR struct mtd_dev_s *[nparts];
 
-		if (instances[i].part_dev == nullptr) {
+		if (instances[i]->part_dev == nullptr) {
 			goto memoryout;
 		}
 
-		instances[i].partition_block_counts = new int[nparts];
+		instances[i]->partition_block_counts = new int[nparts];
 
-		if (instances[i].partition_block_counts == nullptr) {
+		if (instances[i]->partition_block_counts == nullptr) {
 			goto memoryout;
 		}
 
-		instances[i].partition_types = new int[nparts];
+		instances[i]->partition_types = new int[nparts];
 
-		if (instances[i].partition_types == nullptr) {
+		if (instances[i]->partition_types == nullptr) {
 			goto memoryout;
 		}
 
-		instances[i].partition_names = new const char *[nparts];
+		instances[i]->partition_names = new const char *[nparts];
 
-		if (instances[i].partition_names == nullptr) {
+		if (instances[i]->partition_names == nullptr) {
 			goto memoryout;
 		}
 
 		for (uint32_t p = 0; p < nparts; p++) {
-			instances[i].partition_block_counts[p] =  mtd_list->entries[i]->partd[p].nblocks;
-			instances[i].partition_names[p] = mtd_list->entries[i]->partd[p].path;
-			instances[i].partition_types[p] = mtd_list->entries[i]->partd[p].type;
+			instances[i]->partition_block_counts[p] =  mtd_list->entries[num_entry]->partd[p].nblocks;
+			instances[i]->partition_names[p] = mtd_list->entries[num_entry]->partd[p].path;
+			instances[i]->partition_types[p] = mtd_list->entries[num_entry]->partd[p].type;
 		}
 
-		if (mtd_list->entries[i]->device->bus_type == px4_mft_device_t::I2C) {
-			rv = at24xxx_attach(instances[i]);
+		if (mtd_list->entries[num_entry]->device->bus_type == px4_mft_device_t::I2C) {
+			rv = at24xxx_attach(*instances[i]);
 
-		} else if (mtd_list->entries[i]->device->bus_type == px4_mft_device_t::SPI) {
-			rv = ramtron_attach(instances[i]);
+		} else if (mtd_list->entries[num_entry]->device->bus_type == px4_mft_device_t::SPI) {
+			rv = ramtron_attach(*instances[i]);
 
-		} else if (mtd_list->entries[i]->device->bus_type == px4_mft_device_t::ONCHIP) {
-			instances[i].n_partitions_current++;
+		} else if (mtd_list->entries[num_entry]->device->bus_type == px4_mft_device_t::ONCHIP) {
+			instances[i]->n_partitions_current++;
 			return 0;
 		}
 
@@ -362,7 +368,7 @@ memoryout:
 		unsigned int  nblocks;
 		unsigned int  partsize;
 
-		rv = px4_mtd_get_geometry(&instances[i], &blocksize, &erasesize, &neraseblocks, &blkpererase, &nblocks, &partsize);
+		rv = px4_mtd_get_geometry(instances[i], &blocksize, &erasesize, &neraseblocks, &blkpererase, &nblocks, &partsize);
 
 		if (rv != 0) {
 			goto errout;
@@ -375,13 +381,13 @@ memoryout:
 		unsigned long offset;
 		unsigned part;
 
-		for (offset = 0, part = 0; rv == 0 && part < nparts; offset += instances[i].partition_block_counts[part], part++) {
+		for (offset = 0, part = 0; rv == 0 && part < nparts; offset += instances[i]->partition_block_counts[part], part++) {
 
 			/* Create the partition */
 
-			instances[i].part_dev[part] = mtd_partition(instances[i].mtd_dev, offset, instances[i].partition_block_counts[part]);
+			instances[i]->part_dev[part] = mtd_partition(instances[i]->mtd_dev, offset, instances[i]->partition_block_counts[part]);
 
-			if (instances[i].part_dev[part] == nullptr) {
+			if (instances[i]->part_dev[part] == nullptr) {
 				PX4_ERR("mtd_partition failed. offset=%lu nblocks=%u",
 					offset, nblocks);
 				rv = -ENOSPC;
@@ -392,7 +398,7 @@ memoryout:
 
 			snprintf(blockname, sizeof(blockname), "/dev/mtdblock%d", total_blocks);
 
-			rv = ftl_initialize(total_blocks, instances[i].part_dev[part]);
+			rv = ftl_initialize(total_blocks, instances[i]->part_dev[part]);
 
 			if (rv < 0) {
 				PX4_ERR("ftl_initialize %s failed: %d", blockname, rv);
@@ -403,14 +409,14 @@ memoryout:
 
 			/* Now create a character device on the block device */
 
-			rv = bchdev_register(blockname, instances[i].partition_names[part], false);
+			rv = bchdev_register(blockname, instances[i]->partition_names[part], false);
 
 			if (rv < 0) {
-				PX4_ERR("bchdev_register %s failed: %d", instances[i].partition_names[part], rv);
+				PX4_ERR("bchdev_register %s failed: %d", instances[i]->partition_names[part], rv);
 				goto errout;
 			}
 
-			instances[i].n_partitions_current++;
+			instances[i]->n_partitions_current++;
 		}
 
 errout:
@@ -418,9 +424,9 @@ errout:
 		if (rv < 0) {
 			PX4_ERR("mtd failure: %d bus %" PRId32 " address %" PRId32 " class %d",
 				rv,
-				PX4_I2C_DEVID_BUS(instances[i].devid),
-				PX4_I2C_DEVID_ADDR(instances[i].devid),
-				mtd_list->entries[i]->partd[instances[i].n_partitions_current].type);
+				PX4_I2C_DEVID_BUS(instances[i]->devid),
+				PX4_I2C_DEVID_ADDR(instances[i]->devid),
+				mtd_list->entries[num_entry]->partd[instances[i]->n_partitions_current].type);
 			break;
 		}
 	}
@@ -432,41 +438,39 @@ __EXPORT int px4_mtd_query(const char *sub, const char *val, const char **get)
 {
 	int rv = -ENODEV;
 
-	if (instances != nullptr) {
+	static const char *keys[] = PX4_MFT_MTD_STR_TYPES;
+	static const px4_mtd_types_t types[] = PX4_MFT_MTD_TYPES;
+	int key = 0;
 
-		static const char *keys[] = PX4_MFT_MTD_STR_TYPES;
-		static const px4_mtd_types_t types[] = PX4_MFT_MTD_TYPES;
-		int key = 0;
-
-		for (unsigned int k = 0; k < arraySize(keys); k++) {
-			if (!strcmp(keys[k], sub)) {
-				key = types[k];
-				break;
-			}
+	for (unsigned int k = 0; k < arraySize(keys); k++) {
+		if (!strcmp(keys[k], sub)) {
+			key = types[k];
+			break;
 		}
+	}
 
 
-		rv = -EINVAL;
+	rv = -EINVAL;
 
-		if (key != 0) {
-			rv = -ENOENT;
+	if (key != 0) {
+		rv = -ENOENT;
 
-			for (int i = 0; i < num_instances; i++) {
-				for (unsigned n = 0; n < instances[i].n_partitions_current; n++) {
-					if (instances[i].partition_types[n] == key) {
-						if (get != nullptr && val == nullptr) {
-							*get =  instances[i].partition_names[n];
-							return 0;
-						}
+		for (int i = 0; i < num_instances; i++) {
+			for (unsigned n = 0; n < instances[i]->n_partitions_current; n++) {
+				if (instances[i]->partition_types[n] == key) {
+					if (get != nullptr && val == nullptr) {
+						*get =  instances[i]->partition_names[n];
+						return 0;
+					}
 
-						if (val != nullptr && strcmp(instances[i].partition_names[n], val) == 0) {
-							return 0;
-						}
+					if (val != nullptr && strcmp(instances[i]->partition_names[n], val) == 0) {
+						return 0;
 					}
 				}
 			}
 		}
 	}
+
 
 	return rv;
 }

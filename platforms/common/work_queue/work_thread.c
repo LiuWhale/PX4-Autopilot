@@ -39,6 +39,7 @@
 
 #include <px4_platform_common/px4_config.h>
 #include <px4_platform_common/defines.h>
+#include <px4_platform_common/log.h>
 #include <px4_platform_common/posix.h>
 #include <px4_platform_common/time.h>
 #include <px4_platform_common/tasks.h>
@@ -105,6 +106,14 @@ static void work_process(struct wqueue_s *wqueue, int lock_id)
 	 */
 
 	next  = CONFIG_SCHED_WORKPERIOD;
+
+#ifdef __PX4_QURT
+	// In Posix certain signals wake up a sleeping thread but it isn't the case
+	// with the Qurt POSIX implementation. So rather than assume we can come out
+	// of the sleep early by a signal we just wake up more often.
+	next = 1000;
+#endif
+
 
 	work_lock(lock_id);
 
@@ -329,7 +338,7 @@ int work_usrthread(int argc, char *argv[])
 
 #endif /* CONFIG_SCHED_USRWORK */
 
-uint32_t clock_systimer()
+uint32_t clock_systimer(void)
 {
 	//printf("clock_systimer: %0lx\n", hrt_absolute_time());
 	return (0x00000000ffffffff & hrt_absolute_time());

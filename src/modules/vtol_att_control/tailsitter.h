@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2015 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2015-2023 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -48,6 +48,12 @@
 #include <drivers/drv_hrt.h>
 #include <matrix/matrix/math.hpp>
 
+// [rad] Pitch threshold required for completing transition to fixed-wing in automatic transitions
+static constexpr float PITCH_THRESHOLD_AUTO_TRANSITION_TO_FW = -1.05f; // -60°
+
+// [rad] Pitch threshold required for completing transition to hover in automatic transitions
+static constexpr float PITCH_THRESHOLD_AUTO_TRANSITION_TO_MC = -0.26f; // -15°
+
 class Tailsitter : public VtolType
 {
 
@@ -69,10 +75,9 @@ private:
 		FW_MODE					/**< vtol is in fixed wing mode */
 	};
 
-	struct {
-		vtol_mode flight_mode;			/**< vtol flight mode, defined by enum vtol_mode */
-		hrt_abstime transition_start;	/**< absoulte time at which front transition started */
-	} _vtol_schedule;
+	vtol_mode _vtol_mode{vtol_mode::MC_MODE};			/**< vtol flight mode, defined by enum vtol_mode */
+
+	bool _flag_was_in_trans_mode = false;	// true if mode has just switched to transition
 
 	matrix::Quatf _q_trans_start;
 	matrix::Quatf _q_trans_sp;
@@ -80,8 +85,11 @@ private:
 
 	void parameters_update() override;
 
+	bool isFrontTransitionCompletedBase() override;
+
 	DEFINE_PARAMETERS_CUSTOM_PARENT(VtolType,
-					(ParamFloat<px4::params::FW_PSP_OFF>) _param_fw_psp_off
+					(ParamFloat<px4::params::FW_PSP_OFF>) _param_fw_psp_off,
+					(ParamFloat<px4::params::MPC_MAN_TILT_MAX>) _param_mpc_tilt_max
 				       )
 
 

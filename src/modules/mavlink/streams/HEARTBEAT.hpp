@@ -37,7 +37,6 @@
 #include <uORB/topics/actuator_armed.h>
 #include <uORB/topics/vehicle_control_mode.h>
 #include <uORB/topics/vehicle_status.h>
-#include <uORB/topics/vehicle_status_flags.h>
 
 class MavlinkStreamHeartbeat : public MavlinkStream
 {
@@ -63,7 +62,6 @@ private:
 	uORB::Subscription _acturator_armed_sub{ORB_ID(actuator_armed)};
 	uORB::Subscription _vehicle_control_mode_sub{ORB_ID(vehicle_control_mode)};
 	uORB::Subscription _vehicle_status_sub{ORB_ID(vehicle_status)};
-	uORB::Subscription _vehicle_status_flags_sub{ORB_ID(vehicle_status_flags)};
 
 	bool send() override
 	{
@@ -71,9 +69,6 @@ private:
 			// always send the heartbeat, independent of the update status of the topics
 			vehicle_status_s vehicle_status{};
 			_vehicle_status_sub.copy(&vehicle_status);
-
-			vehicle_status_flags_s vehicle_status_flags{};
-			_vehicle_status_flags_sub.copy(&vehicle_status_flags);
 
 			vehicle_control_mode_s vehicle_control_mode{};
 			_vehicle_control_mode_sub.copy(&vehicle_control_mode);
@@ -112,27 +107,23 @@ private:
 			// uint8_t system_status (MAV_STATE) - System status flag.
 			uint8_t system_status = MAV_STATE_UNINIT;
 
-			switch (vehicle_status.arming_state) {
-			case vehicle_status_s::ARMING_STATE_ARMED:
+			if (vehicle_status.arming_state == vehicle_status_s::ARMING_STATE_ARMED) {
 				system_status = vehicle_status.failsafe ? MAV_STATE_CRITICAL : MAV_STATE_ACTIVE;
-				break;
 
-			case vehicle_status_s::ARMING_STATE_STANDBY:
+			} else if (vehicle_status.calibration_enabled || vehicle_status.rc_calibration_in_progress
+				   || actuator_armed.in_esc_calibration_mode) {
+				system_status = MAV_STATE_CALIBRATING;
+
+			} else if (vehicle_status.pre_flight_checks_pass) {
 				system_status = MAV_STATE_STANDBY;
-				break;
-
-			case vehicle_status_s::ARMING_STATE_SHUTDOWN:
-				system_status = MAV_STATE_POWEROFF;
-				break;
 			}
 
 			// system_status overrides
-			if (actuator_armed.force_failsafe || actuator_armed.lockdown || actuator_armed.manual_lockdown
+			if (actuator_armed.force_failsafe || (actuator_armed.lockdown
+							      && vehicle_status.hil_state == vehicle_status_s::HIL_STATE_OFF) || actuator_armed.manual_lockdown
 			    || vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_TERMINATION) {
-				system_status = MAV_STATE_FLIGHT_TERMINATION;
 
-			} else if (vehicle_status_flags.calibration_enabled) {
-				system_status = MAV_STATE_CALIBRATING;
+				system_status = MAV_STATE_FLIGHT_TERMINATION;
 			}
 
 

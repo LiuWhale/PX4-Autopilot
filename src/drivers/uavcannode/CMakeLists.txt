@@ -1,6 +1,6 @@
 ############################################################################
 #
-#   Copyright (c) 2015-2021 PX4 Development Team. All rights reserved.
+#   Copyright (c) 2015-2023 PX4 Development Team. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -40,7 +40,10 @@ set(UAVCAN_USE_CPP03 ON CACHE BOOL "uavcan cpp03")
 set(UAVCAN_PLATFORM "generic")
 
 if(CONFIG_ARCH_CHIP)
-	if(${CONFIG_ARCH_CHIP} MATCHES "kinetis")
+	if(${CONFIG_NET_CAN} MATCHES "y")
+		set(UAVCAN_DRIVER "socketcan")
+		set(UAVCAN_TIMER 1)
+	elseif(${CONFIG_ARCH_CHIP} MATCHES "kinetis")
 		set(UAVCAN_DRIVER "kinetis")
 		set(UAVCAN_TIMER 1)
 	elseif(${CONFIG_ARCH_CHIP} MATCHES "stm32h7")
@@ -85,6 +88,7 @@ add_compile_options(
 	-Wno-deprecated-copy # TODO: fix
 	-Wno-address-of-packed-member
 )
+set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "" FORCE) # silence libuavcan deprecation warning for now (TODO: fix and remove)
 add_subdirectory(${LIBUAVCAN_DIR} libuavcan EXCLUDE_FROM_ALL)
 add_dependencies(uavcan prebuild_targets)
 
@@ -126,14 +130,15 @@ add_custom_target(px4_uavcan_dsdlc DEPENDS px4_uavcan_dsdlc_run.stamp)
 px4_add_module(
 	MODULE drivers__uavcannode
 	MAIN uavcannode
+	COMPILE_FLAGS
+		#-O0
+		#-DDEBUG_BUILD
 	INCLUDES
 		${DSDLC_OUTPUT}
 		${LIBUAVCAN_DIR}/libuavcan/include
 		${LIBUAVCAN_DIR}/libuavcan/include/dsdlc_generated
 		${LIBUAVCAN_DIR}/libuavcan_drivers/posix/include
 		${LIBUAVCAN_DIR_DRIVERS}/${UAVCAN_DRIVER}/driver/include
-	COMPILE_OPTIONS
-		#-O0
 	SRCS
 		allocator.hpp
 		uavcan_driver.hpp

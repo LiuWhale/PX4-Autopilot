@@ -11,6 +11,32 @@ class JsonOutput():
         all_params=[]
         all_json['parameters']=all_params
 
+        all_json["translation"] = {
+            "items": {
+                "parameters": {
+                    "list": {
+                        "key": "name",
+                        "translate": [ "shortDesc", "longDesc" ],
+                        "translate-global": ["category", "group"],
+                        "items": {
+                            "bitmask": {
+                                "list": {
+                                    "key": "index",
+                                    "translate": [ "description" ]
+                                }
+                            },
+                            "values": {
+                                "list": {
+                                    "key": "value",
+                                    "translate": [ "description" ]
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         schema_map = {
                         "short_desc": "shortDesc",
 			"long_desc": "longDesc",
@@ -114,7 +140,7 @@ class JsonOutput():
 
 
         #Json string output.
-        self.output = json.dumps(all_json,indent=2)
+        self.output = json.dumps(all_json, sort_keys=True)
 
 
     def Save(self, filename):

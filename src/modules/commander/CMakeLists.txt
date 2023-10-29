@@ -32,7 +32,10 @@
 ############################################################################
 
 add_subdirectory(failure_detector)
+add_subdirectory(HealthAndArmingChecks)
+add_subdirectory(failsafe)
 add_subdirectory(Arming)
+add_subdirectory(ModeUtil)
 
 px4_add_module(
 	MODULE modules__commander
@@ -48,28 +51,25 @@ px4_add_module(
 		esc_calibration.cpp
 		factory_calibration_storage.cpp
 		gyro_calibration.cpp
+		HomePosition.cpp
+		UserModeIntention.cpp
 		level_calibration.cpp
 		lm_fit.cpp
 		mag_calibration.cpp
 		rc_calibration.cpp
 		Safety.cpp
-		state_machine_helper.cpp
 		worker_thread.cpp
 	DEPENDS
 		circuit_breaker
 		failure_detector
 		geo
+		health_and_arming_checks
 		hysteresis
-		PreFlightCheck
 		ArmAuthorization
-		ArmStateMachine
-		HealthFlags
 		sensor_calibration
 		world_magnetic_model
+		mode_util
+		failsafe
 	)
-
-if(PX4_TESTING)
-	add_subdirectory(commander_tests)
-endif()
 
 px4_add_unit_gtest(SRC mag_calibration_test.cpp LINKLIBS modules__commander)

@@ -43,16 +43,12 @@
  * Included Files
  ****************************************************************************************************/
 
+#include <px4_platform/board_ctrl.h>
 #include <px4_platform_common/px4_config.h>
 #include <nuttx/compiler.h>
 #include <stdint.h>
 
 #include <stm32_gpio.h>
-
-#if !defined(CONFIG_BUILD_FLAT)
-#include <sys/boardctl.h>
-#include <px4_platform/board_ctrl.h>
-#endif
 
 /****************************************************************************************************
  * Definitions
@@ -188,9 +184,8 @@
 #define GPIO_HW_REV_SENSE    /* PC3   */ ADC1_GPIO(13)
 #define GPIO_HW_VER_DRIVE    /* PG0   */ (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_SET|GPIO_PORTG|GPIO_PIN0)
 #define GPIO_HW_VER_SENSE    /* PC2   */ ADC1_GPIO(12)
-#define HW_INFO_INIT         {'V','5','x', 'x',0}
-#define HW_INFO_INIT_VER     2
-#define HW_INFO_INIT_REV     3
+
+#define HW_INFO_INIT_PREFIX         "V5"
 #define BOARD_NUM_SPI_CFG_HW_VERSIONS 3
 #define V500   HW_VER_REV(0x0,0x0) // FMUV5,                    Rev 0
 #define V515   HW_VER_REV(0x1,0x5) // CUAV V5,                  Rev 5
@@ -230,20 +225,8 @@
 #define BOARD_INDICATE_EXTERNAL_LOCKOUT_STATE(enabled)  px4_arch_configgpio((enabled) ? GPIO_nARMED : GPIO_nARMED_INIT)
 #define BOARD_GET_EXTERNAL_LOCKOUT_STATE() px4_arch_gpioread(GPIO_nARMED)
 #else
-static inline void board_indicate_external_lockout_state(bool enable)
-{
-	platformioclockoutstate_t state = {enable};
-	boardctl(PLATFORMIOCINDICATELOCKOUT, (uintptr_t)&state);
-}
-
-static inline bool board_get_external_lockout_state(void)
-{
-	platformioclockoutstate_t state = {false};
-	boardctl(PLATFORMIOCGETLOCKOUT, (uintptr_t)&state);
-	return state.enabled;
-}
-#define BOARD_INDICATE_EXTERNAL_LOCKOUT_STATE(enabled) board_indicate_external_lockout_state(enabled)
-#define BOARD_GET_EXTERNAL_LOCKOUT_STATE() board_get_external_lockout_state()
+#define BOARD_INDICATE_EXTERNAL_LOCKOUT_STATE(enabled) boardctrl_indicate_external_lockout_state(enabled)
+#define BOARD_GET_EXTERNAL_LOCKOUT_STATE() boardctrl_get_external_lockout_state()
 #endif
 
 /* PWM
@@ -372,11 +355,11 @@ static inline bool board_get_external_lockout_state(void)
 /* SD card bringup does not work if performed on the IDLE thread because it
  * will cause waiting.  Use either:
  *
- *  CONFIG_LIB_BOARDCTL=y, OR
+ *  CONFIG_BOARDCTL=y, OR
  *  CONFIG_BOARD_INITIALIZE=y && CONFIG_BOARD_INITTHREAD=y
  */
 
-#if defined(CONFIG_BOARD_INITIALIZE) && !defined(CONFIG_LIB_BOARDCTL) && \
+#if defined(CONFIG_BOARD_INITIALIZE) && !defined(CONFIG_BOARDCTL) && \
    !defined(CONFIG_BOARD_INITTHREAD)
 #  warning SDIO initialization cannot be perfomed on the IDLE thread
 #endif

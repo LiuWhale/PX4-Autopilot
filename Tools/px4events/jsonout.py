@@ -7,7 +7,7 @@ import os
 class JsonOutput():
     def __init__(self, groups):
         all_json = {}
-        all_json['version'] = 1
+        all_json['version'] = 2
         component = {}
         all_json['components'] = {1: component} #1: autopilot component
 
@@ -25,6 +25,8 @@ class JsonOutput():
                 event_obj = {}
                 event_obj['name'] = e.name
                 event_obj['message'] = e.message
+                if e.type is not None:
+                    event_obj['type'] = e.type
                 if e.description is not None:
                     event_obj['description'] = e.description
                 args = []

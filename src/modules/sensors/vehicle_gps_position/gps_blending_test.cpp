@@ -60,10 +60,10 @@ sensor_gps_s GpsBlendingTest::getDefaultGpsData()
 	sensor_gps_s gps_data{};
 	gps_data.timestamp = _time_now_us - 10e3;
 	gps_data.time_utc_usec = 0;
-	gps_data.lat = 47e7;
-	gps_data.lon = 9e7;
-	gps_data.alt = 800e3;
-	gps_data.alt_ellipsoid = 800e3;
+	gps_data.latitude_deg = 47.0;
+	gps_data.longitude_deg = 9.0;
+	gps_data.altitude_msl_m = 800.0;
+	gps_data.altitude_ellipsoid_m = 800.0;
 	gps_data.s_variance_m_s = 0.2f;
 	gps_data.c_variance_rad = 0.5f;
 	gps_data.eph = 0.7f;
@@ -211,6 +211,11 @@ TEST_F(GpsBlendingTest, dualReceiverBlendingHPos)
 	EXPECT_TRUE(gps_blending.isNewOutputDataAvailable());
 	EXPECT_LT(gps_blending.getOutputGpsData().eph, gps_data0.eph);
 	EXPECT_FLOAT_EQ(gps_blending.getOutputGpsData().eph, gps_data1.eph); // TODO: should be greater than
+	EXPECT_EQ(gps_blending.getOutputGpsData().timestamp, gps_data0.timestamp);
+	EXPECT_EQ(gps_blending.getOutputGpsData().timestamp_sample, gps_data0.timestamp_sample);
+	EXPECT_EQ(gps_blending.getOutputGpsData().latitude_deg, gps_data0.latitude_deg);
+	EXPECT_EQ(gps_blending.getOutputGpsData().latitude_deg, gps_data0.latitude_deg);
+	EXPECT_EQ(gps_blending.getOutputGpsData().altitude_msl_m, gps_data0.altitude_msl_m);
 }
 
 TEST_F(GpsBlendingTest, dualReceiverFailover)

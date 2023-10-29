@@ -215,9 +215,11 @@ void VehicleAcceleration::Run()
 	// update corrections first to set _selected_sensor
 	bool selection_updated = SensorSelectionUpdate();
 
-	_calibration.SensorCorrectionsUpdate(selection_updated);
-	SensorBiasUpdate(selection_updated);
 	ParametersUpdate();
+
+	_calibration.SensorCorrectionsUpdate(selection_updated);
+
+	SensorBiasUpdate(selection_updated);
 
 	// require valid sensor sample rate to run
 	if (!PX4_ISFINITE(_filter_sample_rate)) {
@@ -234,7 +236,7 @@ void VehicleAcceleration::Run()
 	while (_sensor_sub.update(&sensor_data)) {
 		const Vector3f accel_raw{sensor_data.x, sensor_data.y, sensor_data.z};
 
-		if (math::isFinite(accel_raw)) {
+		if (accel_raw.isAllFinite()) {
 			// Apply calibration and filter
 			//  - calibration offsets, scale factors, and thermal scale (if available)
 			//  - estimated in run bias (if available)

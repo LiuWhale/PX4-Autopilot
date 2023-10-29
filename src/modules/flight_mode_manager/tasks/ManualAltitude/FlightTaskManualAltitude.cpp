@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2018 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2018-2023 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -42,10 +42,6 @@
 
 using namespace matrix;
 
-FlightTaskManualAltitude::FlightTaskManualAltitude() :
-	_sticks(this)
-{}
-
 bool FlightTaskManualAltitude::updateInitialize()
 {
 	bool ret = FlightTask::updateInitialize();
@@ -68,6 +64,7 @@ bool FlightTaskManualAltitude::activate(const trajectory_setpoint_s &last_setpoi
 	_acceleration_setpoint = Vector3f(0.f, 0.f, NAN); // altitude is controlled from position/velocity
 	_position_setpoint(2) = _position(2);
 	_velocity_setpoint(2) = 0.f;
+	_stick_yaw.reset(_yaw, _unaided_yaw);
 	_setDefaultConstraints();
 
 	_updateConstraintsFromEstimator();
@@ -94,22 +91,10 @@ void FlightTaskManualAltitude::_updateConstraintsFromEstimator()
 
 void FlightTaskManualAltitude::_scaleSticks()
 {
-	// Use stick input with deadzone, exponential curve and first order lpf for yawspeed
-	const float yawspeed_target = _sticks.getPositionExpo()(3) * math::radians(_param_mpc_man_y_max.get());
-	_yawspeed_setpoint = _applyYawspeedFilter(yawspeed_target);
-
 	// Use sticks input with deadzone and exponential curve for vertical velocity
 	const float vel_max_z = (_sticks.getPosition()(2) > 0.0f) ? _param_mpc_z_vel_max_dn.get() :
 				_param_mpc_z_vel_max_up.get();
 	_velocity_setpoint(2) = vel_max_z * _sticks.getPositionExpo()(2);
-}
-
-float FlightTaskManualAltitude::_applyYawspeedFilter(float yawspeed_target)
-{
-	const float den = math::max(_param_mpc_man_y_tau.get() + _deltatime, 0.001f);
-	const float alpha = _deltatime / den;
-	_yawspeed_filter_state = (1.f - alpha) * _yawspeed_filter_state + alpha * yawspeed_target;
-	return _yawspeed_filter_state;
 }
 
 void FlightTaskManualAltitude::_updateAltitudeLock()
@@ -130,7 +115,7 @@ void FlightTaskManualAltitude::_updateAltitudeLock()
 		float spd_xy = Vector2f(_velocity).length();
 
 		// Use presence of horizontal stick inputs as a transition criteria
-		float stick_xy = Vector2f(_sticks.getPositionExpo().slice<2, 1>(0, 0)).length();
+		float stick_xy = Vector2f(_sticks.getPitchRollExpo()).length();
 		bool stick_input = stick_xy > 0.001f;
 
 		if (_terrain_hold) {
@@ -273,57 +258,15 @@ void FlightTaskManualAltitude::_respectMaxAltitude()
 
 void FlightTaskManualAltitude::_respectGroundSlowdown()
 {
-	// limit speed gradually within the altitudes MPC_LAND_ALT1 and MPC_LAND_ALT2
+	// Interpolate descent rate between the altitudes MPC_LAND_ALT1 and MPC_LAND_ALT2
 	if (PX4_ISFINITE(_dist_to_ground)) {
-		const float limit_down = math::gradual(_dist_to_ground,
-						       _param_mpc_land_alt2.get(), _param_mpc_land_alt1.get(),
-						       _param_mpc_land_speed.get(), _constraints.speed_down);
-		const float limit_up = math::gradual(_dist_to_ground,
-						     _param_mpc_land_alt2.get(), _param_mpc_land_alt1.get(),
-						     _param_mpc_tko_speed.get(), _constraints.speed_up);
+		const float limit_down = math::interpolate(_dist_to_ground,
+					 _param_mpc_land_alt2.get(), _param_mpc_land_alt1.get(),
+					 _param_mpc_land_speed.get(), _constraints.speed_down);
+		const float limit_up = math::interpolate(_dist_to_ground,
+				       _param_mpc_land_alt2.get(), _param_mpc_land_alt1.get(),
+				       _param_mpc_tko_speed.get(), _constraints.speed_up);
 		_velocity_setpoint(2) = math::constrain(_velocity_setpoint(2), -limit_up, limit_down);
-	}
-}
-
-void FlightTaskManualAltitude::_rotateIntoHeadingFrame(Vector2f &v)
-{
-	const float yaw_rotate = PX4_ISFINITE(_yaw_setpoint) ? _yaw_setpoint : _yaw;
-	Vector3f v_r = Vector3f(Dcmf(Eulerf(0.0f, 0.0f, yaw_rotate)) * Vector3f(v(0), v(1), 0.0f));
-	v(0) = v_r(0);
-	v(1) = v_r(1);
-}
-
-void FlightTaskManualAltitude::_updateHeadingSetpoints()
-{
-	if (_isYawInput() || !_is_yaw_good_for_control) {
-		_unlockYaw();
-
-	} else {
-		_lockYaw();
-	}
-}
-
-bool FlightTaskManualAltitude::_isYawInput()
-{
-	/*
-	 * A threshold larger than FLT_EPSILON is required because the
-	 * _yawspeed_setpoint comes from an IIR filter and takes too much
-	 * time to reach zero.
-	 */
-	return fabsf(_yawspeed_setpoint) > 0.001f;
-}
-
-void FlightTaskManualAltitude::_unlockYaw()
-{
-	// no fixed heading when rotating around yaw by stick
-	_yaw_setpoint = NAN;
-}
-
-void FlightTaskManualAltitude::_lockYaw()
-{
-	// hold the current heading when no more rotation commanded
-	if (!PX4_ISFINITE(_yaw_setpoint)) {
-		_yaw_setpoint = _yaw;
 	}
 }
 
@@ -331,32 +274,17 @@ void FlightTaskManualAltitude::_ekfResetHandlerHeading(float delta_psi)
 {
 	// Only reset the yaw setpoint when the heading is locked
 	if (PX4_ISFINITE(_yaw_setpoint)) {
-		_yaw_setpoint += delta_psi;
+		_yaw_setpoint = wrap_pi(_yaw_setpoint + delta_psi);
 	}
+
+	_stick_yaw.ekfResetHandler(delta_psi);
 }
 
 void FlightTaskManualAltitude::_updateSetpoints()
 {
-	_updateHeadingSetpoints(); // get yaw setpoint
-
-	// Thrust in xy are extracted directly from stick inputs. A magnitude of
-	// 1 means that maximum thrust along xy is demanded. A magnitude of 0 means no
-	// thrust along xy is demanded. The maximum thrust along xy depends on the thrust
-	// setpoint along z-direction, which is computed in PositionControl.cpp.
-
-	Vector2f sp(_sticks.getPosition().slice<2, 1>(0, 0));
-
-	_man_input_filter.setParameters(_deltatime, _param_mc_man_tilt_tau.get());
-	_man_input_filter.update(sp);
-	sp = _man_input_filter.getState();
-	_rotateIntoHeadingFrame(sp);
-
-	if (sp.longerThan(1.0f)) {
-		sp.normalize();
-	}
-
-	_acceleration_setpoint.xy() = sp * tanf(math::radians(_param_mpc_man_tilt_max.get())) * CONSTANTS_ONE_G;
-
+	_stick_yaw.generateYawSetpoint(_yawspeed_setpoint, _yaw_setpoint, _sticks.getYawExpo(), _yaw, _deltatime, _unaided_yaw);
+	_acceleration_setpoint.xy() = _stick_tilt_xy.generateAccelerationSetpoints(_sticks.getPitchRoll(), _deltatime, _yaw,
+				      _yaw_setpoint);
 	_updateAltitudeLock();
 	_respectGroundSlowdown();
 }

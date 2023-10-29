@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2018, 2021 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2018-2021 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,10 +40,14 @@
  */
 
 #include "camera_capture.hpp"
+#include <px4_platform_common/events.h>
+#include <systemlib/mavlink_log.h>
 
 #include <board_config.h>
 
 #define commandParamToInt(n) static_cast<int>(n >= 0 ? n + 0.5f : n - 0.5f)
+
+using namespace time_literals;
 
 namespace camera_capture
 {
@@ -67,28 +71,18 @@ CameraCapture::CameraCapture() :
 	_p_camera_capture_edge = param_find("CAM_CAP_EDGE");
 	param_get(_p_camera_capture_edge, &_camera_capture_edge);
 
-
 	// get the capture channel from function configuration params
-	param_t p_ctrl_alloc = param_find("SYS_CTRL_ALLOC");
-	int32_t ctrl_alloc = 0;
+	_capture_channel = -1;
 
-	if (p_ctrl_alloc != PARAM_INVALID) {
-		param_get(p_ctrl_alloc, &ctrl_alloc);
-	}
+	for (unsigned i = 0; i < 16 && _capture_channel == -1; ++i) {
+		char param_name[17];
+		snprintf(param_name, sizeof(param_name), "%s_%s%d", PARAM_PREFIX, "FUNC", i + 1);
+		param_t function_handle = param_find(param_name);
+		int32_t function;
 
-	if (ctrl_alloc == 1) {
-		_capture_channel = -1;
-
-		for (unsigned i = 0; i < 16 && _capture_channel == -1; ++i) {
-			char param_name[17];
-			snprintf(param_name, sizeof(param_name), "%s_%s%d", PARAM_PREFIX, "FUNC", i + 1);
-			param_t function_handle = param_find(param_name);
-			int32_t function;
-
-			if (function_handle != PARAM_INVALID && param_get(function_handle, &function) == 0) {
-				if (function == 2032) { // Camera_Capture
-					_capture_channel = i;
-				}
+		if (function_handle != PARAM_INVALID && param_get(function_handle, &function) == 0) {
+			if (function == 2032) { // Camera_Capture
+				_capture_channel = i;
 			}
 		}
 	}
@@ -104,6 +98,21 @@ CameraCapture::~CameraCapture()
 void
 CameraCapture::capture_callback(uint32_t chan_index, hrt_abstime edge_time, uint32_t edge_state, uint32_t overflow)
 {
+	// Maximum acceptable rate is 5kHz
+	if ((edge_time - _trigger.hrt_edge_time) < 200_us) {
+		++_trigger_rate_exceeded_counter;
+
+		if (_trigger_rate_exceeded_counter > 100) {
+
+			// Trigger rate too high, stop future interrupts
+			up_input_capture_set(_capture_channel, Disabled, 0, nullptr, nullptr);
+			_trigger_rate_failure.store(true);
+		}
+
+	} else if (_trigger_rate_exceeded_counter > 0) {
+		--_trigger_rate_exceeded_counter;
+	}
+
 	_trigger.chan_index = chan_index;
 	_trigger.hrt_edge_time = edge_time;
 	_trigger.edge_state = edge_state;
@@ -139,6 +148,13 @@ void
 CameraCapture::publish_trigger()
 {
 	bool publish = false;
+
+	if (_trigger_rate_failure.load()) {
+		mavlink_log_warning(&_mavlink_log_pub, "Hardware fault: Camera capture disabled\t");
+		events::send(events::ID("camera_capture_trigger_rate_exceeded"),
+			     events::Log::Error, "Hardware fault: Camera capture disabled");
+		_trigger_rate_failure.store(false);
+	}
 
 	camera_trigger_s trigger{};
 
@@ -210,7 +226,9 @@ void
 CameraCapture::capture_trampoline(void *context, uint32_t chan_index, hrt_abstime edge_time, uint32_t edge_state,
 				  uint32_t overflow)
 {
-	camera_capture::g_camera_capture->capture_callback(chan_index, edge_time, edge_state, overflow);
+	if (camera_capture::g_camera_capture) {
+		camera_capture::g_camera_capture->capture_callback(chan_index, edge_time, edge_state, overflow);
+	}
 }
 
 void
@@ -244,7 +262,7 @@ CameraCapture::Run()
 
 			command_ack.timestamp = hrt_absolute_time();
 			command_ack.command = cmd.command;
-			command_ack.result = (uint8_t)vehicle_command_s::VEHICLE_CMD_RESULT_ACCEPTED;
+			command_ack.result = (uint8_t)vehicle_command_ack_s::VEHICLE_CMD_RESULT_ACCEPTED;
 			command_ack.target_system = cmd.source_system;
 			command_ack.target_component = cmd.source_component;
 
@@ -342,6 +360,11 @@ CameraCapture::stop()
 	ScheduleClear();
 
 	work_cancel(HPWORK, &_work_publisher);
+
+	if (_capture_channel >= 0) {
+		up_input_capture_set(_capture_channel, Disabled, 0, nullptr, nullptr);
+	}
+
 
 	if (camera_capture::g_camera_capture != nullptr) {
 		delete (camera_capture::g_camera_capture);

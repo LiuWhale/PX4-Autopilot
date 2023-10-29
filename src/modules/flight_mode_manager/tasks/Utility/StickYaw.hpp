@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2020 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2020-2023 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,19 +39,31 @@
 
 #pragma once
 
-#include "SlewRate.hpp"
+#include <lib/mathlib/math/filter/AlphaFilter.hpp>
+#include <px4_platform_common/module_params.h>
 
-class StickYaw
+class StickYaw : public ModuleParams
 {
 public:
-	StickYaw();
+	StickYaw(ModuleParams *parent);
 	~StickYaw() = default;
 
-	void generateYawSetpoint(float &yawspeed_setpoint, float &yaw_setpoint, float desired_yawspeed, float yaw,
-				 bool is_yaw_good_for_control, float deltatime);
+	void reset(float yaw, float unaided_yaw = NAN);
+	void ekfResetHandler(float delta_yaw);
+	void generateYawSetpoint(float &yawspeed_setpoint, float &yaw_setpoint, float stick_yaw, float yaw, float deltatime,
+				 float unaided_yaw = NAN);
 
 private:
-	SlewRate<float> _yawspeed_slew_rate;
+	AlphaFilter<float> _yawspeed_filter;
+
+	float _yaw_error_ref{0.f};
+	float _yaw_correction{0.f};
+	bool _yaw_estimate_converging{false};
+	AlphaFilter<float> _yaw_error_lpf{0.01f}; ///< used to create a high-pass filter
+	static constexpr float _kYawErrorTimeConstant{1.f}; ///< time constant of the high-pass filter used to detect yaw convergence
+	static constexpr float _kYawErrorChangeThreshold{radians(1.f)}; ///< we consider the yaw estimate as "converging" when above this threshold
+
+	bool updateYawCorrection(float yaw, float unaided_yaw);
 
 	/**
 	 * Lock yaw when not currently turning
@@ -64,5 +76,10 @@ private:
 	 * @param yaw current yaw setpoint which then will be overwritten by the return value
 	 * @return yaw setpoint to execute to have a yaw lock at the correct moment in time
 	 */
-	static float updateYawLock(float yaw, float yawspeed_setpoint, float yaw_setpoint, bool is_yaw_good_for_control);
+	float updateYawLock(float yaw, float yawspeed_setpoint, float yaw_setpoint, float yaw_correction_prev) const;
+
+	DEFINE_PARAMETERS(
+		(ParamFloat<px4::params::MPC_MAN_Y_MAX>) _param_mpc_man_y_max, ///< Maximum yaw speed with full stick deflection
+		(ParamFloat<px4::params::MPC_MAN_Y_TAU>) _param_mpc_man_y_tau ///< time constant for yaw speed filtering
+	)
 };

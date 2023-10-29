@@ -79,7 +79,7 @@ if validate:
         print("  v1.9.0-beta1")
         print("  v1.9.0-1.0.0")
         print("  v1.9.0-1.0.0-alpha2")
-        print("See also https://dev.px4.io/master/en/setup/building_px4.html#firmware_version")
+        print("See also https://docs.px4.io/main/en/dev_setup/building_px4.html#building-for-nuttx")
         print("")
         sys.exit(1)
 
@@ -116,21 +116,6 @@ header += f"""
 #define PX4_GIT_OEM_VERSION_STR  "{oem_tag}"
 
 #define PX4_GIT_TAG_OR_BRANCH_NAME "{tag_or_branch}" // special variable: git tag, release or master branch
-"""
-
-
-# ECL
-if (os.path.exists('src/lib/ecl/.git')):
-    ecl_git_tag = subprocess.check_output('git describe --always --tags --dirty'.split(),
-                                  cwd='src/lib/ecl', stderr=subprocess.STDOUT).decode('utf-8')
-
-    ecl_git_version = subprocess.check_output('git rev-parse --verify HEAD'.split(),
-                                      cwd='src/lib/ecl', stderr=subprocess.STDOUT).decode('utf-8').strip()
-    ecl_git_version_short = ecl_git_version[0:16]
-
-    header += f"""
-#define ECL_LIB_GIT_VERSION_STR  "{ecl_git_version}"
-#define ECL_LIB_GIT_VERSION_BINARY 0x{ecl_git_version_short}
 """
 
 

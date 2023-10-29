@@ -90,7 +90,6 @@ public:
 		const Type b = q(1);
 		const Type c = q(2);
 		const Type d = q(3);
-		const Type aa = a * a;
 		const Type ab = a * b;
 		const Type ac = a * c;
 		const Type ad = a * d;
@@ -100,15 +99,15 @@ public:
 		const Type cc = c * c;
 		const Type cd = c * d;
 		const Type dd = d * d;
-		dcm(0, 0) = aa + bb - cc - dd;
+		dcm(0, 0) = Type(1) - Type(2) * (cc + dd);
 		dcm(0, 1) = Type(2) * (bc - ad);
 		dcm(0, 2) = Type(2) * (ac + bd);
 		dcm(1, 0) = Type(2) * (bc + ad);
-		dcm(1, 1) = aa - bb + cc - dd;
+		dcm(1, 1) = Type(1) - Type(2) * (bb + dd);
 		dcm(1, 2) = Type(2) * (cd - ab);
 		dcm(2, 0) = Type(2) * (bd - ac);
 		dcm(2, 1) = Type(2) * (ab + cd);
-		dcm(2, 2) = aa - bb - cc + dd;
+		dcm(2, 2) = Type(1) - Type(2) * (bb + cc);
 	}
 
 	/**
@@ -123,12 +122,12 @@ public:
 	Dcm(const Euler<Type> &euler)
 	{
 		Dcm &dcm = *this;
-		Type cosPhi = Type(cos(euler.phi()));
-		Type sinPhi = Type(sin(euler.phi()));
-		Type cosThe = Type(cos(euler.theta()));
-		Type sinThe = Type(sin(euler.theta()));
-		Type cosPsi = Type(cos(euler.psi()));
-		Type sinPsi = Type(sin(euler.psi()));
+		Type cosPhi = Type(std::cos(euler.phi()));
+		Type sinPhi = Type(std::sin(euler.phi()));
+		Type cosThe = Type(std::cos(euler.theta()));
+		Type sinThe = Type(std::sin(euler.theta()));
+		Type cosPsi = Type(std::cos(euler.psi()));
+		Type sinPsi = Type(std::sin(euler.psi()));
 
 		dcm(0, 0) = cosThe * cosPsi;
 		dcm(0, 1) = -cosPhi * sinPsi + sinPhi * sinThe * cosPsi;

@@ -41,7 +41,7 @@
  * @reboot_required true
  * @group Cyphal
  */
-PARAM_DEFINE_INT32(CYPHAL_ENABLE, 0);
+PARAM_DEFINE_INT32(CYPHAL_ENABLE, 1);
 
 /**
  * Cyphal Node ID.
@@ -123,7 +123,7 @@ PARAM_DEFINE_INT32(UCAN1_BMS_BS_SUB, -1);
 PARAM_DEFINE_INT32(UCAN1_BMS_BP_SUB, -1);
 
 /**
- * Cyphal leagcy battery port ID.
+ * Cyphal legacy battery port ID.
  *
  * @min -1
  * @max 6143

@@ -43,10 +43,17 @@
 #include <errno.h>
 
 #include <px4_arch/micro_hal.h>
-#include "arm_arch.h"
+#include "arm_internal.h"
 #include "boot_app_shared.h"
 
-#include <lib/systemlib/crc.h>
+#include <lib/crc/crc.h>
+
+#if !defined(shared_lock)
+#  define shared_lock()
+#endif
+#if !defined(shared_unlock)
+#  define shared_unlock()
+#endif
 
 #define BOOTLOADER_COMMON_APP_SIGNATURE         0xB0A04150u
 #define BOOTLOADER_COMMON_BOOTLOADER_SIGNATURE  0xB0A0424Cu
@@ -54,22 +61,26 @@
 #define CRC_H 1
 #define CRC_L 0
 
-inline static void read(bootloader_app_shared_t *pshared)
+inline static void read_shared(bootloader_app_shared_t *pshared)
 {
+	shared_unlock();
 	pshared->signature = getreg32(signature_LOC);
 	pshared->bus_speed = getreg32(bus_speed_LOC);
 	pshared->node_id = getreg32(node_id_LOC);
 	pshared->crc.ul[CRC_L] = getreg32(crc_LoLOC);
 	pshared->crc.ul[CRC_H] = getreg32(crc_HiLOC);
+	shared_lock();
 }
 
-inline static void write(bootloader_app_shared_t *pshared)
+inline static void write_shared(bootloader_app_shared_t *pshared)
 {
+	shared_unlock();
 	putreg32(pshared->signature, signature_LOC);
 	putreg32(pshared->bus_speed, bus_speed_LOC);
 	putreg32(pshared->node_id, node_id_LOC);
 	putreg32(pshared->crc.ul[CRC_L], crc_LoLOC);
 	putreg32(pshared->crc.ul[CRC_H], crc_HiLOC);
+	shared_lock();
 }
 
 static uint64_t calulate_signature(bootloader_app_shared_t *pshared)
@@ -126,7 +137,7 @@ __EXPORT int bootloader_app_shared_read(bootloader_app_shared_t *shared, eRole_t
 	int rv = -EBADR;
 	bootloader_app_shared_t working;
 
-	read(&working);
+	read_shared(&working);
 
 	if ((role == App ? working.signature == BOOTLOADER_COMMON_APP_SIGNATURE
 	     : working.signature == BOOTLOADER_COMMON_BOOTLOADER_SIGNATURE)
@@ -166,7 +177,7 @@ __EXPORT void bootloader_app_shared_write(bootloader_app_shared_t *shared, eRole
 	bootloader_app_shared_t working = *shared;
 	working.signature = (role == App ? BOOTLOADER_COMMON_APP_SIGNATURE : BOOTLOADER_COMMON_BOOTLOADER_SIGNATURE);
 	working.crc.ull = calulate_signature(&working);
-	write(&working);
+	write_shared(&working);
 }
 
 /****************************************************************************
@@ -190,5 +201,5 @@ __EXPORT void bootloader_app_shared_invalidate(void)
 {
 	bootloader_app_shared_t working;
 	bootloader_app_shared_init(&working, Invalid);
-	write(&working);
+	write_shared(&working);
 }

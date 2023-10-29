@@ -8,13 +8,9 @@
 
 #pragma once
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
-
-#if defined(SUPPORT_STDIOSTREAM)
-#include <iostream>
-#include <iomanip>
-#endif // defined(SUPPORT_STDIOSTREAM)
 
 #include "math.hpp"
 
@@ -162,6 +158,7 @@ public:
 		return res;
 	}
 
+	// Element-wise multiplication
 	Matrix<Type, M, N> emult(const Matrix<Type, M, N> &other) const
 	{
 		Matrix<Type, M, N> res;
@@ -176,6 +173,7 @@ public:
 		return res;
 	}
 
+	// Element-wise division
 	Matrix<Type, M, N> edivide(const Matrix<Type, M, N> &other) const
 	{
 		Matrix<Type, M, N> res;
@@ -371,10 +369,9 @@ public:
 	{
 		// element: tab, point, 8 digits, 4 scientific notation chars; row: newline; string: \0 end
 		static const size_t n = 15 * N * M + M + 1;
-		char *buf = new char[n];
-		write_string(buf, n);
-		printf("%s\n", buf);
-		delete[] buf;
+		char string[n];
+		write_string(string, n);
+		printf("%s\n", string);
 	}
 
 	Matrix<Type, N, M> transpose() const
@@ -539,7 +536,7 @@ public:
 
 		for (size_t i = 0; i < M; i++) {
 			for (size_t j = 0; j < N; j++) {
-				r(i, j) = Type(fabs((*this)(i, j)));
+				r(i, j) = Type(std::fabs((*this)(i, j)));
 			}
 		}
 
@@ -582,16 +579,31 @@ public:
 
 	bool isAllNan() const
 	{
-		const Matrix<float, M, N> &self = *this;
+		const Matrix<Type, M, N> &self = *this;
 		bool result = true;
 
 		for (size_t i = 0; i < M; i++) {
 			for (size_t j = 0; j < N; j++) {
-				result = result && isnan(self(i, j));
+				result = result && std::isnan(self(i, j));
 			}
 		}
 
 		return result;
+	}
+
+	bool isAllFinite() const
+	{
+		const Matrix<Type, M, N> &self = *this;
+
+		for (size_t i = 0; i < M; i++) {
+			for (size_t j = 0; j < N; j++) {
+				if (!std::isfinite(self(i, j))) {
+					return false;
+				}
+			}
+		}
+
+		return true;
 	}
 };
 
@@ -645,8 +657,8 @@ namespace typeFunction
 template<typename Type>
 Type min(const Type x, const Type y)
 {
-	bool x_is_nan = isnan(x);
-	bool y_is_nan = isnan(y);
+	bool x_is_nan = std::isnan(x);
+	bool y_is_nan = std::isnan(y);
 
 	// take the non-nan value if there is one
 	if (x_is_nan || y_is_nan) {
@@ -664,8 +676,8 @@ Type min(const Type x, const Type y)
 template<typename Type>
 Type max(const Type x, const Type y)
 {
-	bool x_is_nan = isnan(x);
-	bool y_is_nan = isnan(y);
+	bool x_is_nan = std::isnan(x);
+	bool y_is_nan = std::isnan(y);
 
 	// take the non-nan value if there is one
 	if (x_is_nan || y_is_nan) {
@@ -686,7 +698,7 @@ Type constrain(const Type x, const Type lower_bound, const Type upper_bound)
 	if (lower_bound > upper_bound) {
 		return NAN;
 
-	} else if (isnan(x)) {
+	} else if (std::isnan(x)) {
 		return NAN;
 
 	} else {
@@ -800,24 +812,16 @@ Matrix<Type, M, N> constrain(const Matrix<Type, M, N> &x,
 	return m;
 }
 
-#if defined(SUPPORT_STDIOSTREAM)
-template<typename Type, size_t  M, size_t N>
-std::ostream &operator<<(std::ostream &os,
-			 const matrix::Matrix<Type, M, N> &matrix)
+template<typename OStream, typename Type, size_t M, size_t N>
+OStream &operator<<(OStream &os, const matrix::Matrix<Type, M, N> &matrix)
 {
-	for (size_t i = 0; i < M; ++i) {
-		os << "[";
-
-		for (size_t j = 0; j < N; ++j) {
-			os << std::setw(10) << matrix(i, j);
-			os << "\t";
-		}
-
-		os << "]" << std::endl;
-	}
-
+	os << "\n";
+	// element: tab, point, 8 digits, 4 scientific notation chars; row: newline; string: \0 end
+	static const size_t n = 15 * N * M + M + 1;
+	char string[n];
+	matrix.write_string(string, n);
+	os << string;
 	return os;
 }
-#endif // defined(SUPPORT_STDIOSTREAM)
 
 } // namespace matrix

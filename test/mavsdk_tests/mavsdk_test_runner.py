@@ -110,7 +110,7 @@ def is_everything_ready(config: Dict[str, str], build_dir: str) -> bool:
             print("PX4 SITL is not built\n"
                   "run `DONT_RUN=1 "
                   "make px4_sitl gazebo mavsdk_tests` or "
-                  "`DONT_RUN=1 make px4_sitl_rtps gazebo mavsdk_tests`")
+                  "`DONT_RUN=1 make px4_sitl_default gazebo mavsdk_tests`")
             result = False
         if config['simulator'] == 'gazebo':
             if is_running('gzserver'):
@@ -127,7 +127,7 @@ def is_everything_ready(config: Dict[str, str], build_dir: str) -> bool:
         print("Test runner is not built\n"
               "run `DONT_RUN=1 "
               "make px4_sitl gazebo mavsdk_tests` or "
-              "`DONT_RUN=1 make px4_sitl_rtps gazebo mavsdk_tests`")
+              "`DONT_RUN=1 make px4_sitl_default gazebo mavsdk_tests`")
         result = False
 
     return result
@@ -401,17 +401,6 @@ class Tester:
         self.active_runners = []
 
         if self.config['mode'] == 'sitl':
-            px4_runner = ph.Px4Runner(
-                os.getcwd(),
-                log_dir,
-                test['model'],
-                case,
-                self.get_max_speed_factor(test),
-                self.debugger,
-                self.verbose,
-                self.build_dir)
-            self.active_runners.append(px4_runner)
-
             if self.config['simulator'] == 'gazebo':
                 gzserver_runner = ph.GzserverRunner(
                     os.getcwd(),
@@ -440,6 +429,24 @@ class Tester:
                         case,
                         self.verbose)
                     self.active_runners.append(gzclient_runner)
+
+                # We must start the PX4 instance at the end, as starting
+                # it in the beginning, then connecting Gazebo server freaks
+                # out the PX4 (it needs to have data coming in when started),
+                # and can lead to EKF to freak out, or the instance itself
+                # to die unexpectedly.
+                px4_runner = ph.Px4Runner(
+                    os.getcwd(),
+                    log_dir,
+                    test['model'],
+                    case,
+                    self.get_max_speed_factor(test),
+                    self.debugger,
+                    self.verbose,
+                    self.build_dir)
+                for env_key in test.get('env', []):
+                    px4_runner.env[env_key] = str(test['env'][env_key])
+                self.active_runners.append(px4_runner)
 
         mavsdk_tests_runner = ph.TestRunner(
             os.getcwd(),

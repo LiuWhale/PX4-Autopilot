@@ -36,10 +36,6 @@
 #include "uORBManager.hpp"
 #include "uORBUtils.hpp"
 
-#ifdef ORB_COMMUNICATOR
-#include "uORBCommunicator.hpp"
-#endif /* ORB_COMMUNICATOR */
-
 #include <px4_platform_common/sem.hpp>
 #include <systemlib/px4_macros.h>
 
@@ -154,7 +150,7 @@ int uORB::DeviceMaster::advertise(const struct orb_metadata *meta, bool is_adver
 
 			// add to the node map.
 			_node_list.add(node);
-			_node_exists[node->get_instance()].set((uint8_t)node->id(), true);
+			_node_exists[node->get_instance()].set((orb_id_size_t)node->id(), true);
 		}
 
 		group_tries++;

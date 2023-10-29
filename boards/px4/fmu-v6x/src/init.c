@@ -52,7 +52,6 @@
 #include <string.h>
 #include <debug.h>
 #include <errno.h>
-#include <syslog.h>
 
 #include <nuttx/config.h>
 #include <nuttx/board.h>
@@ -71,6 +70,7 @@
 #include <systemlib/px4_macros.h>
 #include <px4_arch/io_timer.h>
 #include <px4_platform_common/init.h>
+#include <px4_platform_common/px4_manifest.h>
 #include <px4_platform/gpio.h>
 #include <px4_platform/board_determine_hw_info.h>
 #include <px4_platform/board_dma_alloc.h>
@@ -141,7 +141,7 @@ __EXPORT void board_peripheral_reset(int ms)
 __EXPORT void board_on_reset(int status)
 {
 	for (int i = 0; i < DIRECT_PWM_OUTPUT_CHANNELS; ++i) {
-		px4_arch_configgpio(PX4_MAKE_GPIO_INPUT(io_timer_channel_get_as_pwm_input(i)));
+		px4_arch_configgpio(io_timer_channel_get_gpio_output(i));
 	}
 
 	if (status >= 0) {
@@ -208,6 +208,8 @@ stm32_boardinitialize(void)
 
 __EXPORT int board_app_initialize(uintptr_t arg)
 {
+#if !defined(BOOTLOADER)
+
 	/* Power on Interfaces */
 	VDD_3V3_SD_CARD_EN(true);
 	VDD_5V_PERIPH_EN(true);
@@ -219,6 +221,13 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 	px4_platform_init();
 
+	// Use the default HW_VER_REV(0x0,0x0) for Ramtron
+
+	stm32_spiinitialize();
+
+	/* Configure the HW based on the manifest */
+
+	px4_platform_configure();
 
 	if (OK == board_determine_hw_info()) {
 		syslog(LOG_INFO, "[boot] Rev 0x%1x : Ver 0x%1x %s\n", board_get_hw_revision(), board_get_hw_version(),
@@ -228,21 +237,23 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 		syslog(LOG_ERR, "[boot] Failed to read HW revision and version\n");
 	}
 
+	/* Configure the Actual SPI interfaces (after we determined the HW version)  */
+
 	stm32_spiinitialize();
 
 	board_spi_reset(10, 0xffff);
 
-	/* configure the DMA allocator */
+	/* Configure the DMA allocator */
 
 	if (board_dma_alloc_init() < 0) {
 		syslog(LOG_ERR, "[boot] DMA alloc FAILED\n");
 	}
 
-#if defined(SERIAL_HAVE_RXDMA)
+#  if defined(SERIAL_HAVE_RXDMA)
 	// set up the serial DMA polling at 1ms intervals for received bytes that have not triggered a DMA event.
 	static struct hrt_call serial_dma_call;
 	hrt_call_every(&serial_dma_call, 1000, 1000, (hrt_callout)stm32_serial_dma_poll, NULL);
-#endif
+#  endif
 
 	/* initial LED state */
 	drv_led_start();
@@ -259,18 +270,17 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	VDD_3V3_SD_CARD_EN(true);
 	usleep(500 * 1000);
 
-#ifdef CONFIG_MMCSD
+#  ifdef CONFIG_MMCSD
 	int ret = stm32_sdio_initialize();
 
 	if (ret != OK) {
 		led_on(LED_RED);
+		return ret;
 	}
 
-#endif /* CONFIG_MMCSD */
+#  endif /* CONFIG_MMCSD */
 
-	/* Configure the HW based on the manifest */
-
-	px4_platform_configure();
+#endif /* !defined(BOOTLOADER) */
 
 	return OK;
 }

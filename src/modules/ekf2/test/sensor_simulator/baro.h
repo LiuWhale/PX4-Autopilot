@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2019 ECL Development Team. All rights reserved.
+ *   Copyright (c) 2019-2023 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -52,6 +52,7 @@ public:
 	~Baro();
 
 	void setData(float baro);
+	float getData() const { return _baro_data; }
 
 private:
 	float _baro_data{0.0f};

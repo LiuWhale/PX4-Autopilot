@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2020-2021 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2020-2022 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -52,14 +52,15 @@
 #include <uORB/Publication.hpp>
 #include <uORB/Subscription.hpp>
 #include <uORB/SubscriptionCallback.hpp>
-#include <uORB/topics/actuator_controls.h>
 #include <uORB/topics/actuator_controls_status.h>
 #include <uORB/topics/manual_control_setpoint.h>
 #include <uORB/topics/parameter_update.h>
 #include <uORB/topics/autotune_attitude_control_status.h>
 #include <uORB/topics/vehicle_angular_velocity.h>
 #include <uORB/topics/vehicle_status.h>
+#include <uORB/topics/vehicle_torque_setpoint.h>
 #include <mathlib/mathlib.h>
+#include <lib/systemlib/mavlink_log.h>
 
 using namespace time_literals;
 
@@ -98,17 +99,16 @@ private:
 	void checkFilters();
 
 	void updateStateMachine(hrt_abstime now);
-	bool registerActuatorControlsCallback();
-	void stopAutotune();
 	void copyGains(int index);
 	bool areGainsGood() const;
 	void saveGainsToParams();
 	void backupAndSaveGainsToParams();
 	void revertParamGains();
+	bool isAuxEnableSwitchEnabled();
 
 	const matrix::Vector3f getIdentificationSignal();
 
-	uORB::SubscriptionCallbackWorkItem _actuator_controls_sub;
+	uORB::SubscriptionCallbackWorkItem _vehicle_torque_setpoint_sub;
 	uORB::SubscriptionCallbackWorkItem _parameter_update_sub{this, ORB_ID(parameter_update)};
 
 	uORB::Subscription _actuator_controls_status_sub;
@@ -143,6 +143,11 @@ private:
 	int8_t _signal_sign{0};
 
 	bool _armed{false};
+	uint8_t _nav_state{0};
+	uint8_t _start_flight_mode{0};
+	bool _aux_switch_en{false};
+
+	orb_advert_t _mavlink_log_pub{nullptr};
 
 	matrix::Vector3f _kiff{};
 	matrix::Vector3f _rate_k{};
@@ -179,6 +184,7 @@ private:
 	DEFINE_PARAMETERS(
 		(ParamInt<px4::params::FW_AT_AXES>) _param_fw_at_axes,
 		(ParamBool<px4::params::FW_AT_START>) _param_fw_at_start,
+		(ParamInt<px4::params::FW_AT_MAN_AUX>) _param_fw_at_man_aux,
 		(ParamFloat<px4::params::FW_AT_SYSID_AMP>) _param_fw_at_sysid_amp,
 		(ParamInt<px4::params::FW_AT_APPLY>) _param_fw_at_apply,
 
@@ -187,14 +193,18 @@ private:
 		(ParamFloat<px4::params::FW_RR_P>) _param_fw_rr_p,
 		(ParamFloat<px4::params::FW_RR_I>) _param_fw_rr_i,
 		(ParamFloat<px4::params::FW_RR_FF>) _param_fw_rr_ff,
+		(ParamFloat<px4::params::FW_R_RMAX>) _param_fw_r_rmax,
 		(ParamFloat<px4::params::FW_R_TC>) _param_fw_r_tc,
 		(ParamFloat<px4::params::FW_PR_P>) _param_fw_pr_p,
 		(ParamFloat<px4::params::FW_PR_I>) _param_fw_pr_i,
 		(ParamFloat<px4::params::FW_PR_FF>) _param_fw_pr_ff,
+		(ParamFloat<px4::params::FW_P_RMAX_POS>) _param_fw_p_rmax_pos,
+		(ParamFloat<px4::params::FW_P_RMAX_NEG>) _param_fw_p_rmax_neg,
 		(ParamFloat<px4::params::FW_P_TC>) _param_fw_p_tc,
 		(ParamFloat<px4::params::FW_YR_P>) _param_fw_yr_p,
 		(ParamFloat<px4::params::FW_YR_I>) _param_fw_yr_i,
-		(ParamFloat<px4::params::FW_YR_FF>) _param_fw_yr_ff
+		(ParamFloat<px4::params::FW_YR_FF>) _param_fw_yr_ff,
+		(ParamFloat<px4::params::FW_Y_RMAX>) _param_fw_y_rmax
 	)
 
 	static constexpr float _publishing_dt_s = 100e-3f;

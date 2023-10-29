@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2021 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2021-2022 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,45 +39,96 @@
 
 #pragma once
 
+#include <lib/mathlib/mathlib.h>
+
 namespace math
 {
 
-template<typename T>
+template <typename Type = float>
 class WelfordMean
 {
 public:
 	// For a new value, compute the new count, new mean, the new M2.
-	void update(const T &new_value)
+	bool update(const Type &new_value)
 	{
-		_count++;
+		if (_count == 0) {
+			reset();
+			_count = 1;
+			_mean = new_value;
+			return false;
+
+		} else if (_count == UINT16_MAX) {
+			// count overflow
+			//  reset count, but maintain mean and variance
+			_M2 = _M2 / _count;
+			_M2_accum = 0;
+
+			_count = 1;
+
+		} else {
+			_count++;
+		}
 
 		// mean accumulates the mean of the entire dataset
-		const T delta{new_value - _mean};
-		_mean += delta / _count;
+		// delta can be very small compared to the mean, use algorithm to minimise numerical error
+		const Type delta{new_value - _mean};
+		const Type mean_change = delta / _count;
+		_mean = kahanSummation(_mean, mean_change, _mean_accum);
 
 		// M2 aggregates the squared distance from the mean
 		// count aggregates the number of samples seen so far
-		_M2 += delta.emult(new_value - _mean);
+		const Type M2_change = delta * (new_value - _mean);
+		_M2 = kahanSummation(_M2, M2_change, _M2_accum);
+
+		// protect against floating point precision causing negative variances
+		_M2 = math::max(_M2, 0.f);
+
+		if (!PX4_ISFINITE(_mean) || !PX4_ISFINITE(_M2)) {
+			reset();
+			return false;
+		}
+
+		return valid();
 	}
 
 	bool valid() const { return _count > 2; }
-	unsigned count() const { return _count; }
+	auto count() const { return _count; }
 
 	void reset()
 	{
 		_count = 0;
-		_mean = {};
-		_M2 = {};
+		_mean = 0;
+		_M2 = 0;
+
+		_mean_accum = 0;
+		_M2_accum = 0;
 	}
 
-	// Retrieve the mean, variance and sample variance
-	T mean() const { return _mean; }
-	T variance() const { return _M2 / _count; }
-	T sample_variance() const { return _M2 / (_count - 1); }
+	Type mean() const { return _mean; }
+	Type variance() const { return _M2 / (_count - 1); }
+	Type standard_deviation() const { return std::sqrt(variance()); }
+
 private:
-	T _mean{};
-	T _M2{};
-	unsigned _count{0};
+
+	// Use Kahan summation algorithm to get the sum of "sum_previous" and "input".
+	// This function relies on the caller to be responsible for keeping a copy of
+	// "accumulator" and passing this value at the next iteration.
+	// Ref: https://en.wikipedia.org/wiki/Kahan_summation_algorithm
+	inline Type kahanSummation(Type sum_previous, Type input, Type &accumulator)
+	{
+		const Type y = input - accumulator;
+		const Type t = sum_previous + y;
+		accumulator = (t - sum_previous) - y;
+		return t;
+	}
+
+	Type _mean{};
+	Type _M2{};
+
+	Type _mean_accum{};  ///< kahan summation algorithm accumulator for mean
+	Type _M2_accum{};    ///< kahan summation algorithm accumulator for M2
+
+	uint16_t _count{0};
 };
 
 } // namespace math

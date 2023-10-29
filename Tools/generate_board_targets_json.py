@@ -28,12 +28,13 @@ args = parser.parse_args()
 verbose = args.verbose
 
 build_configs = []
+excluded_boards = ['modalai_voxl2', 'px4_ros2']  # TODO: fix and enable
 excluded_manufacturers = ['atlflight']
 excluded_platforms = ['qurt']
 excluded_labels = [
     'stackcheck',
     'nolockstep', 'replay', 'test',
-    'uavcanv1' # TODO: fix and enable
+    'uavcanv1', # TODO: fix and enable
     ]
 
 def process_target(px4board_file, target_name):
@@ -60,18 +61,19 @@ def process_target(px4board_file, target_name):
 
     if platform not in excluded_platforms:
         # get the container based on the platform and toolchain
-        container = platform
         if platform == 'posix':
-            container = 'base-focal'
+            container = 'px4io/px4-dev-base-focal:2021-09-08'
             if toolchain:
                 if toolchain.startswith('aarch64'):
-                    container = 'aarch64'
+                    container = 'px4io/px4-dev-aarch64:2022-08-12'
                 elif toolchain == 'arm-linux-gnueabihf':
-                    container = 'armhf'
+                    container = 'px4io/px4-dev-armhf:2023-06-26'
                 else:
-                    if verbose: print(f'possibly unmatched toolchain: {toolchain}')
+                    if verbose: print(f'unmatched toolchain: {toolchain}')
         elif platform == 'nuttx':
-            container = 'nuttx-focal'
+            container = 'px4io/px4-dev-nuttx-focal:2022-08-12'
+        else:
+            if verbose: print(f'unmatched platform: {platform}')
 
         ret = {'target': target_name, 'container': container}
 
@@ -87,10 +89,18 @@ for manufacturer in os.scandir(os.path.join(source_dir, 'boards')):
     for board in os.scandir(manufacturer.path):
         if not board.is_dir():
             continue
+
         for files in os.scandir(board.path):
             if files.is_file() and files.name.endswith('.px4board'):
+
+                board_name = manufacturer.name + '_' + board.name
                 label = files.name[:-9]
                 target_name = manufacturer.name + '_' + board.name + '_' + label
+
+                if board_name in excluded_boards:
+                    if verbose: print(f'excluding board {board_name} ({target_name})')
+                    continue
+
                 if label in excluded_labels:
                     if verbose: print(f'excluding label {label} ({target_name})')
                     continue
@@ -104,4 +114,3 @@ extra_args = {}
 if args.pretty:
     extra_args['indent'] = 2
 print(json.dumps(github_action_config, **extra_args))
-

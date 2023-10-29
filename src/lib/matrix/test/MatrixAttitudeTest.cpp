@@ -200,8 +200,8 @@ TEST(MatrixAttitudeTest, Attitude)
 	}
 
 	// constants
-	double deg2rad = M_PI / 180.0;
-	double rad2deg = 180.0 / M_PI;
+	double deg2rad = M_PI_PRECISE / 180.0;
+	double rad2deg = 180.0 / M_PI_PRECISE;
 
 	// euler dcm round trip check
 	for (double roll = -90; roll <= 90; roll += 90) {
@@ -260,7 +260,7 @@ TEST(MatrixAttitudeTest, Attitude)
 
 	// quaterion copy ctors
 	float data_v4[] = {1, 2, 3, 4};
-	Vector<float, 4> v4(data_v4);
+	Vector4f v4(data_v4);
 	Quatf q_from_v(v4);
 	EXPECT_EQ(q_from_v, v4);
 
@@ -270,15 +270,13 @@ TEST(MatrixAttitudeTest, Attitude)
 
 	// quaternion derivative in frame 1
 	Quatf q1(0, 1, 0, 0);
-	Vector<float, 4> q1_dot1 = q1.derivative1(Vector3f(1, 2, 3));
-	float data_q_dot1_check[] = { -0.5f, 0.0f, -1.5f, 1.0f};
-	Vector<float, 4> q1_dot1_check(data_q_dot1_check);
+	Vector4f q1_dot1 = q1.derivative1(Vector3f(1, 2, 3));
+	Vector4f q1_dot1_check(-0.5f, 0.0f, -1.5f, 1.0f);
 	EXPECT_EQ(q1_dot1, q1_dot1_check);
 
 	// quaternion derivative in frame 2
-	Vector<float, 4> q1_dot2 = q1.derivative2(Vector3f(1, 2, 3));
-	float data_q_dot2_check[] = { -0.5f, 0.0f, 1.5f, -1.0f};
-	Vector<float, 4> q1_dot2_check(data_q_dot2_check);
+	Vector4f q1_dot2 = q1.derivative2(Vector3f(1, 2, 3));
+	Vector4f q1_dot2_check(-0.5f, 0.0f, 1.5f, -1.0f);
 	EXPECT_EQ(q1_dot2, q1_dot2_check);
 
 	// quaternion product
@@ -379,14 +377,14 @@ TEST(MatrixAttitudeTest, Attitude)
 	Vector3f rot(1.f, 0.f, 0.f);
 	Quatf q_test;
 	q_test.rotate(rot);
-	Quatf q_true(cos(1.0f / 2), sin(1.0f / 2), 0.0f, 0.0f);
+	Quatf q_true(std::cos(1.0f / 2), sin(1.0f / 2), 0.0f, 0.0f);
 	EXPECT_EQ(q_test, q_true);
 
 	// rotate quaternion (zero rotation)
 	rot(0) = rot(1) = rot(2) = 0.0f;
 	q_test = Quatf();
 	q_test.rotate(rot);
-	q_true = Quatf(cos(0.0f), sin(0.0f), 0.0f, 0.0f);
+	q_true = Quatf(std::cos(0.0f), sin(0.0f), 0.0f, 0.0f);
 	EXPECT_EQ(q_test, q_true);
 
 	// rotate quaternion (random non-commutating rotation)
@@ -397,7 +395,7 @@ TEST(MatrixAttitudeTest, Attitude)
 	EXPECT_EQ(q, q_true);
 
 	// get rotation axis from quaternion (nonzero rotation)
-	q = Quatf(cos(1.0f / 2), 0.0f, sin(1.0f / 2), 0.0f);
+	q = Quatf(std::cos(1.0f / 2), 0.0f, sin(1.0f / 2), 0.0f);
 	rot = AxisAnglef(q);
 	EXPECT_FLOAT_EQ(rot(0), 0.0f);
 	EXPECT_FLOAT_EQ(rot(1), 1.0f);
@@ -417,7 +415,7 @@ TEST(MatrixAttitudeTest, Attitude)
 	EXPECT_EQ(q, q_true);
 
 	// from axis angle, with length of vector the rotation
-	float n = float(sqrt(4 * M_PI * M_PI / 3));
+	float n = float(std::sqrt(4 * M_PI_F * M_PI_F / 3));
 	q = AxisAnglef(n, n, n);
 	EXPECT_EQ(q, Quatf(-1, 0, 0, 0));
 	q = AxisAnglef(0, 0, 0);

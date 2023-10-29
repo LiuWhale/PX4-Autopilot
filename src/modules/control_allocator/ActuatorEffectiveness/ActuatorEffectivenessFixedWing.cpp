@@ -53,6 +53,7 @@ ActuatorEffectivenessFixedWing::getEffectivenessMatrix(Configuration &configurat
 	// Motors
 	_rotors.enablePropellerTorque(false);
 	const bool rotors_added_successfully = _rotors.addActuators(configuration);
+	_forwards_motors_mask = _rotors.getForwardsMotors();
 
 	// Control Surfaces
 	_first_control_surface_idx = configuration.num_actuators_matrix[0];
@@ -62,14 +63,26 @@ ActuatorEffectivenessFixedWing::getEffectivenessMatrix(Configuration &configurat
 }
 
 void ActuatorEffectivenessFixedWing::updateSetpoint(const matrix::Vector<float, NUM_AXES> &control_sp,
-		int matrix_index, ActuatorVector &actuator_sp)
+		int matrix_index, ActuatorVector &actuator_sp, const matrix::Vector<float, NUM_ACTUATORS> &actuator_min,
+		const matrix::Vector<float, NUM_ACTUATORS> &actuator_max)
+{
+	stopMaskedMotorsWithZeroThrust(_forwards_motors_mask, actuator_sp);
+}
+
+void ActuatorEffectivenessFixedWing::allocateAuxilaryControls(const float dt, int matrix_index,
+		ActuatorVector &actuator_sp)
 {
 	// apply flaps
-	actuator_controls_s actuator_controls_0;
+	normalized_unsigned_setpoint_s flaps_setpoint;
 
-	if (_actuator_controls_0_sub.copy(&actuator_controls_0)) {
-		float control_flaps = actuator_controls_0.control[actuator_controls_s::INDEX_FLAPS];
-		float airbrakes_control = actuator_controls_0.control[actuator_controls_s::INDEX_AIRBRAKES];
-		_control_surfaces.applyFlapsAndAirbrakes(control_flaps, airbrakes_control, _first_control_surface_idx, actuator_sp);
+	if (_flaps_setpoint_sub.copy(&flaps_setpoint)) {
+		_control_surfaces.applyFlaps(flaps_setpoint.normalized_setpoint, _first_control_surface_idx, dt, actuator_sp);
+	}
+
+	// apply spoilers
+	normalized_unsigned_setpoint_s spoilers_setpoint;
+
+	if (_spoilers_setpoint_sub.copy(&spoilers_setpoint)) {
+		_control_surfaces.applySpoilers(spoilers_setpoint.normalized_setpoint, _first_control_surface_idx, dt, actuator_sp);
 	}
 }

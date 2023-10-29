@@ -92,7 +92,7 @@ public:
 	Type norm() const
 	{
 		const Vector &a(*this);
-		return Type(matrix::sqrt(a.dot(a)));
+		return Type(std::sqrt(a.dot(a)));
 	}
 
 	Type norm_squared() const
@@ -143,11 +143,28 @@ public:
 		Vector r;
 
 		for (size_t i = 0; i < M; i++) {
-			r(i) = Type(matrix::sqrt(a(i)));
+			r(i) = Type(std::sqrt(a(i)));
 		}
 
 		return r;
 	}
+
+	void print() const
+	{
+		(*this).transpose().print();
+	}
 };
+
+template<typename OStream, typename Type, size_t M>
+OStream &operator<<(OStream &os, const matrix::Vector<Type, M> &vector)
+{
+	os << "\n";
+	// element: tab, point, 8 digits, 4 scientific notation chars; row: newline; string: \0 end
+	static const size_t n = 15 * M * 1 + 1 + 1;
+	char string[n];
+	vector.transpose().write_string(string, n);
+	os << string;
+	return os;
+}
 
 } // namespace matrix

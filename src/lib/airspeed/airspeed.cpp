@@ -44,16 +44,19 @@
 
 #include <px4_platform_common/defines.h>
 #include <lib/geo/geo.h>
+#include <lib/atmosphere/atmosphere.h>
+
+using atmosphere::getDensityFromPressureAndTemp;
 
 float calc_IAS_corrected(enum AIRSPEED_COMPENSATION_MODEL pmodel, enum AIRSPEED_SENSOR_MODEL smodel,
 			 float tube_len, float tube_dia_mm, float differential_pressure, float pressure_ambient, float temperature_celsius)
 {
 	if (!PX4_ISFINITE(temperature_celsius)) {
-		temperature_celsius = 15.f; // ICAO Standard Atmosphere 15 degrees celcius
+		temperature_celsius = 15.f; // ICAO Standard Atmosphere 15 degrees Celsius
 	}
 
 	// air density in kg/m3
-	const float rho_air = get_air_density(pressure_ambient, temperature_celsius);
+	const float rho_air = getDensityFromPressureAndTemp(pressure_ambient, temperature_celsius);
 
 	const float dp = fabsf(differential_pressure);
 	float dp_tot = dp;
@@ -153,18 +156,6 @@ float calc_IAS_corrected(enum AIRSPEED_COMPENSATION_MODEL pmodel, enum AIRSPEED_
 		break;
 	}
 
-	// if (!PX4_ISFINITE(dp_tube)) {
-	// 	dp_tube = 0.0f;
-	// }
-
-	// if (!PX4_ISFINITE(dp_pitot)) {
-	// 	dp_pitot = 0.0f;
-	// }
-
-	// if (!PX4_ISFINITE(dv)) {
-	// 	dv = 0.0f;
-	// }
-
 	// computed airspeed without correction for inflow-speed at tip of pitot-tube
 	const float airspeed_uncorrected = sqrtf(2.0f * dp_tot / CONSTANTS_AIR_DENSITY_SEA_LEVEL_15C);
 
@@ -189,10 +180,10 @@ float calc_IAS(float differential_pressure)
 float calc_TAS_from_CAS(float speed_calibrated, float pressure_ambient, float temperature_celsius)
 {
 	if (!PX4_ISFINITE(temperature_celsius)) {
-		temperature_celsius = 15.f; // ICAO Standard Atmosphere 15 degrees celcius
+		temperature_celsius = 15.f; // ICAO Standard Atmosphere 15 degrees Celsius
 	}
 
-	return speed_calibrated * sqrtf(CONSTANTS_AIR_DENSITY_SEA_LEVEL_15C / get_air_density(pressure_ambient,
+	return speed_calibrated * sqrtf(CONSTANTS_AIR_DENSITY_SEA_LEVEL_15C / getDensityFromPressureAndTemp(pressure_ambient,
 					temperature_celsius));
 }
 
@@ -203,7 +194,7 @@ float calc_CAS_from_IAS(float speed_indicated, float scale)
 
 float calc_TAS(float total_pressure, float static_pressure, float temperature_celsius)
 {
-	float density = get_air_density(static_pressure, temperature_celsius);
+	float density = getDensityFromPressureAndTemp(static_pressure, temperature_celsius);
 
 	if (density < 0.0001f || !PX4_ISFINITE(density)) {
 		density = CONSTANTS_AIR_DENSITY_SEA_LEVEL_15C;
@@ -219,16 +210,7 @@ float calc_TAS(float total_pressure, float static_pressure, float temperature_ce
 	}
 }
 
-float get_air_density(float static_pressure, float temperature_celsius)
+float calc_calibrated_from_true_airspeed(float speed_true, float air_density)
 {
-	if (!PX4_ISFINITE(temperature_celsius)) {
-		temperature_celsius = 15.f; // ICAO Standard Atmosphere 15 degrees celcius
-	}
-
-	return static_pressure / (CONSTANTS_AIR_GAS_CONST * (temperature_celsius - CONSTANTS_ABSOLUTE_NULL_CELSIUS));
-}
-
-float calc_CAS_from_TAS(float speed_true, float pressure_ambient, float temperature_celsius)
-{
-	return speed_true * sqrtf(get_air_density(pressure_ambient, temperature_celsius) / CONSTANTS_AIR_DENSITY_SEA_LEVEL_15C);
+	return speed_true * sqrtf(air_density / CONSTANTS_AIR_DENSITY_SEA_LEVEL_15C);
 }

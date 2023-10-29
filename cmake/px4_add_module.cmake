@@ -168,10 +168,11 @@ function(px4_add_module)
 	if(NOT DYNAMIC)
 		target_link_libraries(${MODULE} PRIVATE prebuild_targets px4_platform systemlib perf)
 		if (${PX4_PLATFORM} STREQUAL "nuttx" AND NOT CONFIG_BUILD_FLAT AND KERNEL)
-			target_link_libraries(${MODULE} PRIVATE kernel_parameters_interface px4_kernel_layer uORB_kernel)
+			target_link_libraries(${MODULE} PRIVATE
+				kernel_events_interface kernel_parameters_interface px4_kernel_layer uORB_kernel)
 			set_property(GLOBAL APPEND PROPERTY PX4_KERNEL_MODULE_LIBRARIES ${MODULE})
 		else()
-			target_link_libraries(${MODULE} PRIVATE parameters_interface px4_layer uORB)
+			target_link_libraries(${MODULE} PRIVATE events_interface parameters_interface px4_layer uORB)
 			set_property(GLOBAL APPEND PROPERTY PX4_MODULE_LIBRARIES ${MODULE})
 		endif()
 		set_property(GLOBAL APPEND PROPERTY PX4_MODULE_PATHS ${CMAKE_CURRENT_SOURCE_DIR})
@@ -202,6 +203,9 @@ function(px4_add_module)
 	set_target_properties(${MODULE} PROPERTIES STACK_MAX ${STACK_MAX})
 
 	if(${PX4_PLATFORM} STREQUAL "nuttx")
+		# double the allocated stacks for 64 bit nuttx targets
+		set(STACK_MAIN "${STACK_MAIN} * (__SIZEOF_POINTER__ >> 2)")
+
 		target_compile_options(${MODULE} PRIVATE -Wframe-larger-than=${STACK_MAX})
 	endif()
 

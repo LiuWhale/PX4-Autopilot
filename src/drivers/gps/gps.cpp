@@ -60,6 +60,7 @@
 #include <uORB/Publication.hpp>
 #include <uORB/PublicationMulti.hpp>
 #include <uORB/Subscription.hpp>
+#include <uORB/SubscriptionMultiArray.hpp>
 #include <uORB/topics/gps_dump.h>
 #include <uORB/topics/gps_inject_data.h>
 #include <uORB/topics/sensor_gps.h>
@@ -71,6 +72,8 @@
 # include "devices/src/mtk.h"
 # include "devices/src/femtomes.h"
 # include "devices/src/nmea.h"
+# include "devices/src/sbf.h"
+
 #endif // CONSTRAINED_FLASH
 #include "devices/src/ubx.h"
 
@@ -78,9 +81,11 @@
 #include <linux/spi/spidev.h>
 #endif /* __PX4_LINUX */
 
+using namespace time_literals;
+
 #define TIMEOUT_1HZ		1300	//!< Timeout time in mS, 1000 mS (1Hz) + 300 mS delta for error
 #define TIMEOUT_5HZ		500		//!< Timeout time in mS,  200 mS (5Hz) + 300 mS delta for error
-#define RATE_MEASUREMENT_PERIOD 5000000
+#define RATE_MEASUREMENT_PERIOD 5_s
 
 enum class gps_driver_mode_t {
 	None = 0,
@@ -89,7 +94,8 @@ enum class gps_driver_mode_t {
 	ASHTECH,
 	EMLIDREACH,
 	FEMTOMES,
-	NMEA
+	NMEA,
+	SBF
 };
 
 enum class gps_dump_comm_mode_t : int32_t {
@@ -103,7 +109,7 @@ struct GPS_Sat_Info {
 	satellite_info_s _data;
 };
 
-static constexpr int TASK_STACK_SIZE = PX4_STACK_ADJUSTED(1760);
+static constexpr int TASK_STACK_SIZE = PX4_STACK_ADJUSTED(2040);
 
 
 class GPS : public ModuleBase<GPS>, public device::Device
@@ -180,6 +186,8 @@ private:
 
 	sensor_gps_s			_report_gps_pos{};				///< uORB topic for gps position
 	satellite_info_s		*_p_report_sat_info{nullptr};			///< pointer to uORB topic for satellite info
+	uint8_t                         _spoofing_state{0};                             ///< spoofing state
+	uint8_t                         _jamming_state{0};                              ///< jamming state
 
 	uORB::PublicationMulti<sensor_gps_s>	_report_gps_pos_pub{ORB_ID(sensor_gps)};	///< uORB pub for gps position
 	uORB::PublicationMulti<sensor_gnss_relative_s> _sensor_gnss_relative_pub{ORB_ID(sensor_gnss_relative)};
@@ -191,10 +199,12 @@ private:
 	unsigned			_last_rate_rtcm_injection_count{0};		///< counter for number of RTCM messages
 	unsigned			_num_bytes_read{0}; 				///< counter for number of read bytes from the UART (within update interval)
 	unsigned			_rate_reading{0}; 				///< reading rate in B/s
+	hrt_abstime			_last_rtcm_injection_time{0};			///< time of last rtcm injection
+	uint8_t				_selected_rtcm_instance{0};			///< uorb instance that is being used for RTCM corrections
 
 	const Instance 			_instance;
 
-	uORB::Subscription		     _orb_inject_data_sub{ORB_ID(gps_inject_data)};
+	uORB::SubscriptionMultiArray<gps_inject_data_s, gps_inject_data_s::MAX_INSTANCES> _orb_inject_data_sub{ORB_ID::gps_inject_data};
 	uORB::Publication<gps_inject_data_s> _gps_inject_data_pub{ORB_ID(gps_inject_data)};
 	uORB::Publication<gps_dump_s>	     _dump_communication_pub{ORB_ID(gps_dump)};
 	gps_dump_s			     *_dump_to_device{nullptr};
@@ -317,7 +327,7 @@ GPS::GPS(const char *path, gps_driver_mode_t mode, GPSHelper::Interface interfac
 		set_device_bus_type(device::Device::DeviceBusType::DeviceBusType_SERIAL);
 
 		char c = _port[strlen(_port) - 1]; // last digit of path (eg /dev/ttyS2)
-		set_device_bus(atoi(&c));
+		set_device_bus(c - 48); // sub 48 to convert char to integer
 
 	} else if (_interface == GPSHelper::Interface::SPI) {
 		set_device_bus_type(device::Device::DeviceBusType::DeviceBusType_SPI);
@@ -325,7 +335,7 @@ GPS::GPS(const char *path, gps_driver_mode_t mode, GPSHelper::Interface interfac
 
 	if (_mode == gps_driver_mode_t::None) {
 		// use parameter to select mode if not provided via CLI
-		char protocol_param_name[16];
+		char protocol_param_name[17];
 		snprintf(protocol_param_name, sizeof(protocol_param_name), "GPS_%i_PROTOCOL", (int)_instance + 1);
 		int32_t protocol = 0;
 		param_get(param_find(protocol_param_name), &protocol);
@@ -343,6 +353,8 @@ GPS::GPS(const char *path, gps_driver_mode_t mode, GPSHelper::Interface interfac
 		case 5: _mode = gps_driver_mode_t::FEMTOMES; break;
 
 		case 6: _mode = gps_driver_mode_t::NMEA; break;
+
+		case 7: _mode = gps_driver_mode_t::SBF; break;
 #endif // CONSTRAINED_FLASH
 		}
 	}
@@ -511,36 +523,59 @@ void GPS::handleInjectDataTopic()
 		return;
 	}
 
-	bool updated = false;
+	// We don't want to call copy again further down if we have already done a
+	// copy in the selection process.
+	bool already_copied = false;
+	gps_inject_data_s msg;
 
-	// Limit maximum number of GPS injections to 6 since usually
-	// GPS injections should consist of 1-4 packets (GPS, Glonass, BeiDou, Galileo).
-	// Looking at 6 packets thus guarantees, that at least a full injection
-	// data set is evaluated.
-	const size_t max_num_injections = 6;
-	size_t num_injections = 0;
+	// If there has not been a valid RTCM message for a while, try to switch to a different RTCM link
+	if ((hrt_absolute_time() - _last_rtcm_injection_time) > 5_s) {
 
-	do {
-		num_injections++;
-		updated = _orb_inject_data_sub.updated();
+		for (int instance = 0; instance < _orb_inject_data_sub.size(); instance++) {
+			const bool exists = _orb_inject_data_sub[instance].advertised();
 
-		if (updated) {
-			gps_inject_data_s msg;
-
-			if (_orb_inject_data_sub.copy(&msg)) {
-
-				// Prevent injection of data from self
-				if (msg.device_id != get_device_id()) {
-					/* Write the message to the gps device. Note that the message could be fragmented.
-					* But as we don't write anywhere else to the device during operation, we don't
-					* need to assemble the message first.
-					*/
-					injectData(msg.data, msg.len);
-
-					++_last_rate_rtcm_injection_count;
+			if (exists) {
+				if (_orb_inject_data_sub[instance].copy(&msg)) {
+					if ((hrt_absolute_time() - msg.timestamp) < 5_s) {
+						// Remember that we already did a copy on this instance.
+						already_copied = true;
+						_selected_rtcm_instance = instance;
+						break;
+					}
 				}
 			}
 		}
+	}
+
+	bool updated = already_copied;
+
+	// Limit maximum number of GPS injections to 8 since usually
+	// GPS injections should consist of 1-4 packets (GPS, Glonass, BeiDou, Galileo).
+	// Looking at 8 packets thus guarantees, that at least a full injection
+	// data set is evaluated.
+	// Moving Base reuires a higher rate, so we allow up to 8 packets.
+	const size_t max_num_injections = gps_inject_data_s::ORB_QUEUE_LENGTH;
+	size_t num_injections = 0;
+
+	do {
+		if (updated) {
+			num_injections++;
+
+			// Prevent injection of data from self
+			if (msg.device_id != get_device_id()) {
+				/* Write the message to the gps device. Note that the message could be fragmented.
+				* But as we don't write anywhere else to the device during operation, we don't
+				* need to assemble the message first.
+				*/
+				injectData(msg.data, msg.len);
+
+				++_last_rate_rtcm_injection_count;
+				_last_rtcm_injection_time = hrt_absolute_time();
+			}
+		}
+
+		updated = _orb_inject_data_sub[_selected_rtcm_instance].update(&msg);
+
 	} while (updated && num_injections < max_num_injections);
 }
 
@@ -725,6 +760,13 @@ GPS::run()
 		heading_offset = matrix::wrap_pi(math::radians(heading_offset));
 	}
 
+	handle = param_find("GPS_PITCH_OFFSET");
+	float pitch_offset = 0.f;
+
+	if (handle != PARAM_INVALID) {
+		param_get(handle, &pitch_offset);
+	}
+
 	int32_t gps_ubx_dynmodel = 7; // default to 7: airborne with <2g acceleration
 	handle = param_find("GPS_UBX_DYNMODEL");
 
@@ -761,7 +803,18 @@ GPS::run()
 
 		} else if (gps_ubx_mode == 4) {
 			ubx_mode = GPSDriverUBX::UBXMode::MovingBaseUART1;
+
+		} else if (gps_ubx_mode == 5) { // rover with static base on Uart2
+			ubx_mode = GPSDriverUBX::UBXMode::RoverWithStaticBaseUart2;
+
 		}
+	}
+
+	handle = param_find("GPS_UBX_BAUD2");
+	int32_t f9p_uart2_baudrate = 57600;
+
+	if (handle != PARAM_INVALID) {
+		param_get(handle, &f9p_uart2_baudrate);
 	}
 
 	int32_t gnssSystemsParam = static_cast<int32_t>(GPSHelper::GNSSSystemsMask::RECEIVER_DEFAULTS);
@@ -824,7 +877,7 @@ GPS::run()
 		/* FALLTHROUGH */
 		case gps_driver_mode_t::UBX:
 			_helper = new GPSDriverUBX(_interface, &GPS::callback, this, &_report_gps_pos, _p_report_sat_info,
-						   gps_ubx_dynmodel, heading_offset, ubx_mode);
+						   gps_ubx_dynmodel, heading_offset, f9p_uart2_baudrate, ubx_mode);
 			set_device_type(DRV_GPS_DEVTYPE_UBX);
 			break;
 #ifndef CONSTRAINED_FLASH
@@ -853,6 +906,11 @@ GPS::run()
 			_helper = new GPSDriverNMEA(&GPS::callback, this, &_report_gps_pos, _p_report_sat_info, heading_offset);
 			set_device_type(DRV_GPS_DEVTYPE_NMEA);
 			break;
+
+		case gps_driver_mode_t::SBF:
+			_helper = new GPSDriverSBF(&GPS::callback, this, &_report_gps_pos, _p_report_sat_info, heading_offset, pitch_offset);
+			set_device_type(DRV_GPS_DEVTYPE_SBF);
+			break;
 #endif // CONSTRAINED_FLASH
 
 		default:
@@ -869,6 +927,15 @@ GPS::run()
 		} else {
 			gpsConfig.output_mode = GPSHelper::OutputMode::GPS;
 		}
+
+		int32_t gps_ubx_cfg_intf = static_cast<int32_t>(GPSHelper::InterfaceProtocolsMask::ALL_DISABLED);
+		handle = param_find("GPS_UBX_CFG_INTF");
+
+		if (handle != PARAM_INVALID) {
+			param_get(handle, &gps_ubx_cfg_intf);
+		}
+
+		gpsConfig.interface_protocols = static_cast<GPSHelper::InterfaceProtocolsMask>(gps_ubx_cfg_intf);
 
 		if (_helper && _helper->configure(_baudrate, gpsConfig) == 0) {
 
@@ -1014,6 +1081,10 @@ GPS::run()
 				break;
 
 			case gps_driver_mode_t::FEMTOMES:
+				_mode = gps_driver_mode_t::SBF;
+				break;
+
+			case gps_driver_mode_t::SBF:
 			case gps_driver_mode_t::NMEA: // skip NMEA for auto-detection to avoid false positive matching
 #endif // CONSTRAINED_FLASH
 				_mode = gps_driver_mode_t::UBX;
@@ -1075,6 +1146,9 @@ GPS::print_status()
 	case gps_driver_mode_t::NMEA:
 		PX4_INFO("protocol: NMEA");
 		break;
+
+	case gps_driver_mode_t::SBF:
+		PX4_INFO("protocol: SBF");
 #endif // CONSTRAINED_FLASH
 
 	default:
@@ -1143,11 +1217,33 @@ GPS::publish()
 	if (_instance == Instance::Main || _is_gps_main_advertised.load()) {
 		_report_gps_pos.device_id = get_device_id();
 
+		_report_gps_pos.selected_rtcm_instance = _selected_rtcm_instance;
+		_report_gps_pos.rtcm_injection_rate = _rate_rtcm_injection;
+
 		_report_gps_pos_pub.publish(_report_gps_pos);
 		// Heading/yaw data can be updated at a lower rate than the other navigation data.
 		// The uORB message definition requires this data to be set to a NAN if no new valid data is available.
 		_report_gps_pos.heading = NAN;
 		_is_gps_main_advertised.store(true);
+
+		if (_report_gps_pos.spoofing_state != _spoofing_state) {
+
+			if (_report_gps_pos.spoofing_state > sensor_gps_s::SPOOFING_STATE_NONE) {
+				PX4_WARN("GPS spoofing detected! (state: %d)", _report_gps_pos.spoofing_state);
+			}
+
+			_spoofing_state = _report_gps_pos.spoofing_state;
+		}
+
+		if (_report_gps_pos.jamming_state != _jamming_state) {
+
+			if (_report_gps_pos.jamming_state > sensor_gps_s::JAMMING_STATE_WARNING) {
+				PX4_WARN("GPS jamming detected! (state: %d) (indicator: %d)", _report_gps_pos.jamming_state,
+					 (uint8_t)_report_gps_pos.jamming_indicator);
+			}
+
+			_jamming_state = _report_gps_pos.jamming_state;
+		}
 	}
 }
 
@@ -1424,6 +1520,9 @@ GPS *GPS::instantiate(int argc, char *argv[], Instance instance)
 
 			} else if (!strcmp(myoptarg, "nmea")) {
 				mode = gps_driver_mode_t::NMEA;
+
+			} else if (!strcmp(myoptarg, "sbf")) {
+				mode = gps_driver_mode_t::SBF;
 #endif // CONSTRAINED_FLASH
 			} else {
 				PX4_ERR("unknown protocol: %s", myoptarg);

@@ -146,7 +146,7 @@ PARAM_DEFINE_INT32(SYS_CAL_BARO, 0);
  * Required temperature rise during thermal calibration
  *
  * A temperature increase greater than this value is required during calibration.
- * Calibration will complete for each sensor when the temperature increase above the starting temeprature exceeds the value set by SYS_CAL_TDEL.
+ * Calibration will complete for each sensor when the temperature increase above the starting temperature exceeds the value set by SYS_CAL_TDEL.
  * If the temperature rise is insufficient, the calibration will continue indefinitely and the board will need to be repowered to exit.
  *
  * @unit celcius
@@ -192,13 +192,11 @@ PARAM_DEFINE_INT32(SYS_HAS_GPS, 1);
 /**
  * Control if the vehicle has a magnetometer
  *
- * Disable this if the board has no magnetometer, such as the Omnibus F4 SD.
- * If disabled, the preflight checks will not check for the presence of a
- * magnetometer.
+ * Set this to 0 if the board has no magnetometer.
+ * If set to 0, the preflight checks will not check for the presence of a
+ * magnetometer, otherwise N sensors are required.
  *
- * @boolean
  * @reboot_required true
- *
  * @group System
  */
 PARAM_DEFINE_INT32(SYS_HAS_MAG, 1);
@@ -219,13 +217,11 @@ PARAM_DEFINE_INT32(SYS_HAS_MAG, 1);
 PARAM_DEFINE_INT32(SYS_HAS_BARO, 1);
 
 /**
- * Control the number of distance sensors on the vehicle
+ * Number of distance sensors to check being available
  *
- * If set to the number of distance sensors, the preflight check will check
- * for their presence and valid data publication. Disable with 0 if no distance
- * sensor present or to disbale the preflight check.
+ * The preflight check will fail if fewer than this number of distance sensors with valid data is present.
  *
- * @reboot_required true
+ * Disable the check with 0.
  *
  * @group System
  * @min 0
@@ -241,7 +237,9 @@ PARAM_DEFINE_INT32(SYS_HAS_NUM_DIST, 0);
  * Note: this is only supported on boards with a separate calibration storage
  * /fs/mtd_caldata.
  *
- * @boolean
+ * @value 0 Disabled
+ * @value 1 All sensors
+ * @value 2 All sensors except mag
  * @group System
  */
 PARAM_DEFINE_INT32(SYS_FAC_CAL_MODE, 0);
@@ -280,19 +278,3 @@ PARAM_DEFINE_INT32(SYS_BL_UPDATE, 0);
  * @group System
  */
 PARAM_DEFINE_INT32(SYS_FAILURE_EN, 0);
-
-
-/**
- * Enable Dynamic Control Allocation
- *
- * If disabled, the existing mixing implementation is used.
- * If enabled, dynamic control allocation with runtime configuration of the
- * mixing and output functions is used.
- *
- * Note: this is work-in-progress and not all vehicle types are supported yet.
- *
- * @boolean
- * @reboot_required true
- * @group System
- */
-PARAM_DEFINE_INT32(SYS_CTRL_ALLOC, 0);

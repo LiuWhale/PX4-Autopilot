@@ -118,19 +118,30 @@ void Battery::updateBatteryStatus(const hrt_abstime &timestamp)
 		_current_filter_a.reset(_current_a);
 	}
 
+	// Require minimum voltage otherwise override connected status
+	if (_voltage_filter_v.getState() < LITHIUM_BATTERY_RECOGNITION_VOLTAGE) {
+		_connected = false;
+	}
+
+	if (!_connected || (_last_unconnected_timestamp == 0)) {
+		_last_unconnected_timestamp = timestamp;
+	}
+
+	// wait with initializing filters to avoid relying on a voltage sample from the rising edge
+	_battery_initialized = _connected && (timestamp > _last_unconnected_timestamp + 2_s);
+
 	sumDischarged(timestamp, _current_a);
-	estimateStateOfCharge(_voltage_filter_v.getState(), _current_filter_a.getState());
+	_state_of_charge_volt_based =
+		calculateStateOfChargeVoltageBased(_voltage_filter_v.getState(), _current_filter_a.getState());
+
+	if (!_external_state_of_charge) {
+		estimateStateOfCharge();
+	}
+
 	computeScale();
 
 	if (_connected && _battery_initialized) {
 		_warning = determineWarning(_state_of_charge);
-	}
-
-	if (_voltage_filter_v.getState() > 2.1f) {
-		_battery_initialized = true;
-
-	} else {
-		_connected = false;
 	}
 }
 
@@ -192,7 +203,7 @@ void Battery::sumDischarged(const hrt_abstime &timestamp, float current_a)
 	_last_timestamp = timestamp;
 }
 
-void Battery::estimateStateOfCharge(const float voltage_v, const float current_a)
+float Battery::calculateStateOfChargeVoltageBased(const float voltage_v, const float current_a)
 {
 	// remaining battery capacity based on voltage
 	float cell_voltage = voltage_v / _params.n_cells;
@@ -202,9 +213,11 @@ void Battery::estimateStateOfCharge(const float voltage_v, const float current_a
 		cell_voltage += _params.r_internal * current_a;
 
 	} else {
-		actuator_controls_s actuator_controls{};
-		_actuator_controls_0_sub.copy(&actuator_controls);
-		const float throttle = actuator_controls.control[actuator_controls_s::INDEX_THROTTLE];
+		vehicle_thrust_setpoint_s vehicle_thrust_setpoint{};
+		_vehicle_thrust_setpoint_0_sub.copy(&vehicle_thrust_setpoint);
+		const matrix::Vector3f thrust_setpoint = matrix::Vector3f(vehicle_thrust_setpoint.xyz);
+		const float throttle = thrust_setpoint.length();
+
 		_throttle_filter.update(throttle);
 
 		if (!_battery_initialized) {
@@ -215,8 +228,11 @@ void Battery::estimateStateOfCharge(const float voltage_v, const float current_a
 		cell_voltage += throttle * _params.v_load_drop;
 	}
 
-	_state_of_charge_volt_based = math::gradual(cell_voltage, _params.v_empty, _params.v_charged, 0.f, 1.f);
+	return math::interpolate(cell_voltage, _params.v_empty, _params.v_charged, 0.f, 1.f);
+}
 
+void Battery::estimateStateOfCharge()
+{
 	// choose which quantity we're using for final reporting
 	if (_params.capacity > 0.f && _battery_initialized) {
 		// if battery capacity is known, fuse voltage measurement with used capacity

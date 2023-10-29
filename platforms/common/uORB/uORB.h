@@ -42,16 +42,17 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+typedef uint16_t orb_id_size_t;
 
 /**
  * Object metadata.
  */
 struct orb_metadata {
-	const char *o_name;		/**< unique object name */
-	const uint16_t o_size;		/**< object size */
-	const uint16_t o_size_no_padding;	/**< object size w/o padding at the end (for logger) */
-	const char *o_fields;		/**< semicolon separated list of fields (with type) */
-	uint8_t o_id;			/**< ORB_ID enum */
+	const char    *o_name;              /**< unique object name */
+	const uint16_t o_size;              /**< object size */
+	const uint16_t o_size_no_padding;   /**< object size w/o padding at the end (for logger) */
+	const char    *o_fields;            /**< semicolon separated list of fields (with type) */
+	orb_id_size_t  o_id;                /**< ORB_ID enum */
 };
 
 typedef const struct orb_metadata *orb_id_t;
@@ -251,7 +252,6 @@ void orb_print_message_internal(const struct orb_metadata *meta, const void *dat
 __END_DECLS
 
 /* Diverse uORB header defines */ //XXX: move to better location
-#define ORB_ID_VEHICLE_ATTITUDE_CONTROLS    ORB_ID(actuator_controls_0)
 typedef uint8_t arming_state_t;
 typedef uint8_t main_state_t;
 typedef uint8_t hil_state_t;

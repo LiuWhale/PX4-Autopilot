@@ -33,7 +33,7 @@
 ############################################################################
 
 #
-# PX4 paramaters processor (main executable file)
+# PX4 parameters processor (main executable file)
 #
 # This tool scans the PX4 source code for declarations of tunable parameters
 # and outputs the list in various formats.
@@ -50,9 +50,7 @@ import argparse
 from px4params import srcscanner, srcparser, injectxmlparams, xmlout, markdownout, jsonout
 
 import lzma #to create .xz file
-import re
 import json
-import codecs
 
 def save_compressed(filename):
     #create lzma compressed version

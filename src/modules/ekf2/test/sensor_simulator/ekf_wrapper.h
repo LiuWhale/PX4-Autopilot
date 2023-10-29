@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2019 ECL Development Team. All rights reserved.
+ *   Copyright (c) 2019-2023 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -49,17 +49,29 @@ public:
 	~EkfWrapper();
 
 
-	void setBaroHeight();
+	void setBaroHeightRef();
+	void enableBaroHeightFusion();
+	void disableBaroHeightFusion();
 	bool isIntendingBaroHeightFusion() const;
 
-	void setGpsHeight();
+	void setGpsHeightRef();
+	void enableGpsHeightFusion();
+	void disableGpsHeightFusion();
 	bool isIntendingGpsHeightFusion() const;
 
-	void setRangeHeight();
+	void setRangeHeightRef();
+	void enableRangeHeightFusion();
+	void disableRangeHeightFusion();
 	bool isIntendingRangeHeightFusion() const;
 
-	void setVisionHeight();
-	bool isIntendingVisionHeightFusion() const;
+	void setExternalVisionHeightRef();
+	void enableExternalVisionHeightFusion();
+	/* void disableExternalVisionHeightFusion(); */
+	bool isIntendingExternalVisionHeightFusion() const;
+
+	void enableBetaFusion();
+	void disableBetaFusion();
+	bool isIntendingBetaFusion() const;
 
 	void enableGpsFusion();
 	void disableGpsFusion();
@@ -88,10 +100,11 @@ public:
 
 	bool isIntendingMagHeadingFusion() const;
 	bool isIntendingMag3DFusion() const;
+	bool isMagHeadingConsistent() const;
 	void setMagFuseTypeNone();
-
-	void enableExternalVisionAlignment();
-	void disableExternalVisionAlignment();
+	void enableMagStrengthCheck();
+	void enableMagInclinationCheck();
+	void enableMagCheckForceWMM();
 
 	bool isWindVelocityEstimated() const;
 
@@ -105,10 +118,13 @@ public:
 
 	Eulerf getEulerAngles() const;
 	float getYawAngle() const;
-	matrix::Vector<float, 4> getQuaternionVariance() const;
 	int getQuaternionResetCounter() const;
 
-	matrix::Vector3f getDeltaVelBiasVariance() const;
+	void enableDragFusion();
+	void disableDragFusion();
+	void setDragFusionParameters(const float &bcoef_x, const float &bcoef_y, const float &mcoef);
+
+	float getMagHeadingNoise() const;
 
 private:
 	std::shared_ptr<Ekf> _ekf;

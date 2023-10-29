@@ -42,10 +42,13 @@
 #pragma once
 
 #include <px4_platform_common/px4_config.h>
+#include <px4_platform_common/log.h>
 
 #include <lib/parameters/param.h>
 #include <containers/List.hpp>
 
+#include <cmath>
+using std::isfinite;
 #include <uavcan/_register/Access_1_0.h>
 
 #include "../CanardHandle.hpp"

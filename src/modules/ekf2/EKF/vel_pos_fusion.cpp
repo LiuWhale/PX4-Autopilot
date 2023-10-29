@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2015 Estimation and Control Library (ECL). All rights reserved.
+ *   Copyright (c) 2015-2023 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -12,7 +12,7 @@
  *    notice, this list of conditions and the following disclaimer in
  *    the documentation and/or other materials provided with the
  *    distribution.
- * 3. Neither the name ECL nor the names of its contributors may be
+ * 3. Neither the name PX4 nor the names of its contributors may be
  *    used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -33,7 +33,6 @@
 
 /**
  * @file vel_pos_fusion.cpp
- * Function for fusing gps and baro measurements/
  *
  * @author Roman Bast <bapstroman@gmail.com>
  * @author Siddharth Bharat Purohit <siddharthbharatpurohit@gmail.com>
@@ -44,154 +43,178 @@
 #include <mathlib/mathlib.h>
 #include "ekf.h"
 
-bool Ekf::fuseHorizontalVelocity(const Vector3f &innov, const float innov_gate, const Vector3f &obs_var,
-				 Vector3f &innov_var, Vector2f &test_ratio)
+void Ekf::updateVelocityAidSrcStatus(const uint64_t &time_us, const Vector2f &obs, const Vector2f &obs_var,
+				     const float innov_gate, estimator_aid_source2d_s &aid_src) const
 {
-	innov_var(0) = P(4, 4) + obs_var(0);
-	innov_var(1) = P(5, 5) + obs_var(1);
-	test_ratio(0) = fmaxf(sq(innov(0)) / (sq(innov_gate) * innov_var(0)),
-			      sq(innov(1)) / (sq(innov_gate) * innov_var(1)));
+	resetEstimatorAidStatus(aid_src);
 
-	const bool innov_check_pass = (test_ratio(0) <= 1.0f);
+	for (int i = 0; i < 2; i++) {
+		aid_src.observation[i] = obs(i);
+		aid_src.innovation[i] = _state.vel(i) - aid_src.observation[i];
 
-	if (innov_check_pass) {
-		_innov_check_fail_status.flags.reject_hor_vel = false;
-
-		bool fuse_vx = fuseVelPosHeight(innov(0), innov_var(0), 0);
-		bool fuse_vy = fuseVelPosHeight(innov(1), innov_var(1), 1);
-
-		return fuse_vx && fuse_vy;
-
-	} else {
-		_innov_check_fail_status.flags.reject_hor_vel = true;
-		return false;
+		aid_src.observation_variance[i] = math::max(sq(0.01f), obs_var(i));
+		const int state_index = State::vel.idx + i;
+		aid_src.innovation_variance[i] = P(state_index, state_index) + aid_src.observation_variance[i];
 	}
+
+	setEstimatorAidStatusTestRatio(aid_src, innov_gate);
+
+	aid_src.timestamp_sample = time_us;
 }
 
-bool Ekf::fuseVerticalVelocity(const Vector3f &innov, const float innov_gate, const Vector3f &obs_var,
-			       Vector3f &innov_var, Vector2f &test_ratio)
+void Ekf::updateVelocityAidSrcStatus(const uint64_t &time_us, const Vector3f &obs, const Vector3f &obs_var,
+				     const float innov_gate, estimator_aid_source3d_s &aid_src) const
 {
-	innov_var(2) = P(6, 6) + obs_var(2);
-	test_ratio(1) = sq(innov(2)) / (sq(innov_gate) * innov_var(2));
-	_vert_vel_innov_ratio = innov(2) / sqrtf(innov_var(2));
-	_vert_vel_fuse_time_us = _time_last_imu;
-	bool innov_check_pass = (test_ratio(1) <= 1.0f);
+	resetEstimatorAidStatus(aid_src);
 
-	// if there is bad vertical acceleration data, then don't reject measurement,
+	for (int i = 0; i < 3; i++) {
+		aid_src.observation[i] = obs(i);
+		aid_src.innovation[i] = _state.vel(i) - aid_src.observation[i];
+
+		aid_src.observation_variance[i] = math::max(sq(0.01f), obs_var(i));
+		const int state_index = State::vel.idx + i;
+		aid_src.innovation_variance[i] = P(state_index, state_index) + aid_src.observation_variance[i];
+	}
+
+	setEstimatorAidStatusTestRatio(aid_src, innov_gate);
+
+	// vz special case if there is bad vertical acceleration data, then don't reject measurement,
 	// but limit innovation to prevent spikes that could destabilise the filter
-	float innovation;
-
-	if (_fault_status.flags.bad_acc_vertical && !innov_check_pass) {
-		const float innov_limit = innov_gate * sqrtf(innov_var(2));
-		innovation = math::constrain(innov(2), -innov_limit, innov_limit);
-		innov_check_pass = true;
-
-	} else {
-		innovation = innov(2);
+	if (_fault_status.flags.bad_acc_vertical && aid_src.innovation_rejected) {
+		const float innov_limit = innov_gate * sqrtf(aid_src.innovation_variance[2]);
+		aid_src.innovation[2] = math::constrain(aid_src.innovation[2], -innov_limit, innov_limit);
+		aid_src.innovation_rejected = false;
 	}
 
-	if (innov_check_pass) {
-		_innov_check_fail_status.flags.reject_ver_vel = false;
-
-		return fuseVelPosHeight(innovation, innov_var(2), 2);
-
-	} else {
-		_innov_check_fail_status.flags.reject_ver_vel = true;
-		return false;
-	}
+	aid_src.timestamp_sample = time_us;
 }
 
-bool Ekf::fuseHorizontalPosition(const Vector3f &innov, const float innov_gate, const Vector3f &obs_var,
-				 Vector3f &innov_var, Vector2f &test_ratio)
+void Ekf::updateVerticalPositionAidSrcStatus(const uint64_t &time_us, const float obs, const float obs_var,
+		const float innov_gate, estimator_aid_source1d_s &aid_src) const
 {
+	resetEstimatorAidStatus(aid_src);
 
-	innov_var(0) = P(7, 7) + obs_var(0);
-	innov_var(1) = P(8, 8) + obs_var(1);
-	test_ratio(0) = fmaxf(sq(innov(0)) / (sq(innov_gate) * innov_var(0)),
-			      sq(innov(1)) / (sq(innov_gate) * innov_var(1)));
+	aid_src.observation = obs;
+	aid_src.innovation = _state.pos(2) - aid_src.observation;
 
-	const bool innov_check_pass = test_ratio(0) <= 1.0f;
+	aid_src.observation_variance = math::max(sq(0.01f), obs_var);
+	aid_src.innovation_variance = P(State::pos.idx + 2, State::pos.idx + 2) + aid_src.observation_variance;
 
-	if (innov_check_pass) {
-		_innov_check_fail_status.flags.reject_hor_pos = false;
+	setEstimatorAidStatusTestRatio(aid_src, innov_gate);
 
-		bool fuse_x = fuseVelPosHeight(innov(0), innov_var(0), 3);
-		bool fuse_y = fuseVelPosHeight(innov(1), innov_var(1), 4);
-
-		return fuse_x && fuse_y;
-
-	} else {
-		_innov_check_fail_status.flags.reject_hor_pos = true;
-		return false;
-	}
-}
-
-bool Ekf::fuseVerticalPosition(const float innov, const float innov_gate, const float obs_var,
-			       float &innov_var, float &test_ratio)
-{
-	innov_var = P(9, 9) + obs_var;
-	test_ratio = sq(innov) / (sq(innov_gate) * innov_var);
-	_vert_pos_innov_ratio = innov / sqrtf(innov_var);
-	_vert_pos_fuse_attempt_time_us = _time_last_imu;
-	bool innov_check_pass = test_ratio <= 1.0f;
-
-	// if there is bad vertical acceleration data, then don't reject measurement,
+	// z special case if there is bad vertical acceleration data, then don't reject measurement,
 	// but limit innovation to prevent spikes that could destabilise the filter
-	float innovation;
-
-	if (_fault_status.flags.bad_acc_vertical && !innov_check_pass) {
-		const float innov_limit = innov_gate * sqrtf(innov_var);
-		innovation = math::constrain(innov, -innov_limit, innov_limit);
-		innov_check_pass = true;
-
-	} else {
-		innovation = innov;
+	if (_fault_status.flags.bad_acc_vertical && aid_src.innovation_rejected) {
+		const float innov_limit = innov_gate * sqrtf(aid_src.innovation_variance);
+		aid_src.innovation = math::constrain(aid_src.innovation, -innov_limit, innov_limit);
+		aid_src.innovation_rejected = false;
 	}
 
-	if (innov_check_pass) {
-		_innov_check_fail_status.flags.reject_ver_pos = false;
+	aid_src.timestamp_sample = time_us;
+}
 
-		return fuseVelPosHeight(innovation, innov_var, 5);
+void Ekf::updateHorizontalPositionAidSrcStatus(const uint64_t &time_us, const Vector2f &obs, const Vector2f &obs_var,
+		const float innov_gate, estimator_aid_source2d_s &aid_src) const
+{
+	resetEstimatorAidStatus(aid_src);
 
-	} else {
-		_innov_check_fail_status.flags.reject_ver_pos = true;
-		return false;
+	for (int i = 0; i < 2; i++) {
+		aid_src.observation[i] = obs(i);
+		aid_src.innovation[i] = _state.pos(i) - aid_src.observation[i];
+
+		aid_src.observation_variance[i] = math::max(sq(0.01f), obs_var(i));
+		const int state_index = State::pos.idx + i;
+		aid_src.innovation_variance[i] = P(state_index, state_index) + aid_src.observation_variance[i];
+	}
+
+	setEstimatorAidStatusTestRatio(aid_src, innov_gate);
+
+	aid_src.timestamp_sample = time_us;
+}
+
+void Ekf::fuseVelocity(estimator_aid_source2d_s &aid_src)
+{
+	if (!aid_src.innovation_rejected) {
+		// vx, vy
+		if (fuseVelPosHeight(aid_src.innovation[0], aid_src.innovation_variance[0], State::vel.idx)
+		    && fuseVelPosHeight(aid_src.innovation[1], aid_src.innovation_variance[1], State::vel.idx + 1)
+		   ) {
+			aid_src.fused = true;
+			aid_src.time_last_fuse = _time_delayed_us;
+
+		} else {
+			aid_src.fused = false;
+		}
+	}
+}
+
+void Ekf::fuseVelocity(estimator_aid_source3d_s &aid_src)
+{
+	if (!aid_src.innovation_rejected) {
+		// vx, vy, vz
+		if (fuseVelPosHeight(aid_src.innovation[0], aid_src.innovation_variance[0], State::vel.idx)
+		    && fuseVelPosHeight(aid_src.innovation[1], aid_src.innovation_variance[1], State::vel.idx + 1)
+		    && fuseVelPosHeight(aid_src.innovation[2], aid_src.innovation_variance[2], State::vel.idx + 2)
+		   ) {
+			aid_src.fused = true;
+			aid_src.time_last_fuse = _time_delayed_us;
+
+		} else {
+			aid_src.fused = false;
+		}
+	}
+}
+
+void Ekf::fuseHorizontalPosition(estimator_aid_source2d_s &aid_src)
+{
+	// x & y
+	if (!aid_src.innovation_rejected) {
+		if (fuseVelPosHeight(aid_src.innovation[0], aid_src.innovation_variance[0], State::pos.idx)
+		    && fuseVelPosHeight(aid_src.innovation[1], aid_src.innovation_variance[1], State::pos.idx + 1)
+		   ) {
+			aid_src.fused = true;
+			aid_src.time_last_fuse = _time_delayed_us;
+
+		} else {
+			aid_src.fused = false;
+		}
+	}
+}
+
+void Ekf::fuseVerticalPosition(estimator_aid_source1d_s &aid_src)
+{
+	// z
+	if (!aid_src.innovation_rejected) {
+		if (fuseVelPosHeight(aid_src.innovation, aid_src.innovation_variance, State::pos.idx + 2)) {
+			aid_src.fused = true;
+			aid_src.time_last_fuse = _time_delayed_us;
+		}
 	}
 }
 
 // Helper function that fuses a single velocity or position measurement
-bool Ekf::fuseVelPosHeight(const float innov, const float innov_var, const int obs_index)
+bool Ekf::fuseVelPosHeight(const float innov, const float innov_var, const int state_index)
 {
-	Vector24f Kfusion;  // Kalman gain vector for any single observation - sequential fusion is used.
-	const unsigned state_index = obs_index + 4;  // we start with vx and this is the 4. state
+	VectorState Kfusion;  // Kalman gain vector for any single observation - sequential fusion is used.
 
 	// calculate kalman gain K = PHS, where S = 1/innovation variance
-	for (int row = 0; row < _k_num_states; row++) {
+	for (int row = 0; row < State::size; row++) {
 		Kfusion(row) = P(row, state_index) / innov_var;
 	}
 
-	SquareMatrix24f KHP;
+	clearInhibitedStateKalmanGains(Kfusion);
 
-	for (unsigned row = 0; row < _k_num_states; row++) {
-		for (unsigned column = 0; column < _k_num_states; column++) {
+	SquareMatrixState KHP;
+
+	for (unsigned row = 0; row < State::size; row++) {
+		for (unsigned column = 0; column < State::size; column++) {
 			KHP(row, column) = Kfusion(row) * P(state_index, column);
 		}
 	}
 
-	// if the covariance correction will result in a negative variance, then
-	// the covariance matrix is unhealthy and must be corrected
-	bool healthy = true;
+	const bool healthy = checkAndFixCovarianceUpdate(KHP);
 
-	for (int i = 0; i < _k_num_states; i++) {
-		if (P(i, i) < KHP(i, i)) {
-			// zero rows and columns
-			P.uncorrelateCovarianceSetVariance<1>(i, 0.0f);
-
-			healthy = false;
-		}
-	}
-
-	setVelPosStatus(obs_index, healthy);
+	setVelPosStatus(state_index, healthy);
 
 	if (healthy) {
 		// apply the covariance corrections
@@ -208,13 +231,13 @@ bool Ekf::fuseVelPosHeight(const float innov, const float innov_var, const int o
 	return false;
 }
 
-void Ekf::setVelPosStatus(const int index, const bool healthy)
+void Ekf::setVelPosStatus(const int state_index, const bool healthy)
 {
-	switch (index) {
-	case 0:
+	switch (state_index) {
+	case State::vel.idx:
 		if (healthy) {
 			_fault_status.flags.bad_vel_N = false;
-			_time_last_hor_vel_fuse = _time_last_imu;
+			_time_last_hor_vel_fuse = _time_delayed_us;
 
 		} else {
 			_fault_status.flags.bad_vel_N = true;
@@ -222,10 +245,10 @@ void Ekf::setVelPosStatus(const int index, const bool healthy)
 
 		break;
 
-	case 1:
+	case State::vel.idx + 1:
 		if (healthy) {
 			_fault_status.flags.bad_vel_E = false;
-			_time_last_hor_vel_fuse = _time_last_imu;
+			_time_last_hor_vel_fuse = _time_delayed_us;
 
 		} else {
 			_fault_status.flags.bad_vel_E = true;
@@ -233,10 +256,10 @@ void Ekf::setVelPosStatus(const int index, const bool healthy)
 
 		break;
 
-	case 2:
+	case State::vel.idx + 2:
 		if (healthy) {
 			_fault_status.flags.bad_vel_D = false;
-			_time_last_ver_vel_fuse = _time_last_imu;
+			_time_last_ver_vel_fuse = _time_delayed_us;
 
 		} else {
 			_fault_status.flags.bad_vel_D = true;
@@ -244,10 +267,10 @@ void Ekf::setVelPosStatus(const int index, const bool healthy)
 
 		break;
 
-	case 3:
+	case State::pos.idx:
 		if (healthy) {
 			_fault_status.flags.bad_pos_N = false;
-			_time_last_hor_pos_fuse = _time_last_imu;
+			_time_last_hor_pos_fuse = _time_delayed_us;
 
 		} else {
 			_fault_status.flags.bad_pos_N = true;
@@ -255,10 +278,10 @@ void Ekf::setVelPosStatus(const int index, const bool healthy)
 
 		break;
 
-	case 4:
+	case State::pos.idx + 1:
 		if (healthy) {
 			_fault_status.flags.bad_pos_E = false;
-			_time_last_hor_pos_fuse = _time_last_imu;
+			_time_last_hor_pos_fuse = _time_delayed_us;
 
 		} else {
 			_fault_status.flags.bad_pos_E = true;
@@ -266,10 +289,10 @@ void Ekf::setVelPosStatus(const int index, const bool healthy)
 
 		break;
 
-	case 5:
+	case State::pos.idx + 2:
 		if (healthy) {
 			_fault_status.flags.bad_pos_D = false;
-			_time_last_hgt_fuse = _time_last_imu;
+			_time_last_hgt_fuse = _time_delayed_us;
 
 		} else {
 			_fault_status.flags.bad_pos_D = true;

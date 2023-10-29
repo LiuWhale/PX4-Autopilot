@@ -45,7 +45,7 @@
 
 #pragma once
 
-#include <dataman/dataman.h>
+#include <dataman_client/DatamanClient.hpp>
 #include <uORB/Publication.hpp>
 #include <uORB/Subscription.hpp>
 #include <uORB/topics/mission_result.h>
@@ -95,6 +95,8 @@ private:
 	enum MAVLINK_WPM_STATES _state {MAVLINK_WPM_STATE_IDLE};	///< Current state
 	enum MAV_MISSION_TYPE _mission_type {MAV_MISSION_TYPE_MISSION};	///< mission type of current transmission (only one at a time possible)
 
+	DatamanClient _dataman_client{};
+
 	uint64_t		_time_last_recv{0};
 	uint64_t		_time_last_sent{0};
 
@@ -123,16 +125,21 @@ private:
 
 	uint8_t			_transfer_partner_sysid{0};		///< Partner system ID for current transmission
 	uint8_t			_transfer_partner_compid{0};		///< Partner component ID for current transmission
+	int32_t 		_transfer_land_start_marker{-1}; 	///< index of land start mission item in current transmission (if unavailable, index of land mission item, -1 otherwise)
+	int32_t 		_transfer_land_marker{-1}; 		///< index of land mission item in current transmission (-1 if unavailable)
 
 	static bool		_transfer_in_progress;			///< Global variable checking for current transmission
 
 	uORB::Subscription	_mission_result_sub{ORB_ID(mission_result)};
+	uORB::SubscriptionData<mission_s> 	_mission_sub{ORB_ID(mission)};
 
 	uORB::Publication<mission_s>	_offboard_mission_pub{ORB_ID(mission)};
 
+	static uint16_t		_mission_update_counter;
 	static uint16_t		_geofence_update_counter;
 	static uint16_t		_safepoint_update_counter;
-	bool			_geofence_locked{false};		///< if true, we currently hold the dm_lock for the geofence (transaction in progress)
+	int32_t 		_land_start_marker{-1}; 	///< index of loaded land start mission item (if unavailable, index of land mission item, -1 otherwise)
+	int32_t 		_land_marker{-1}; 		///< index of loaded land mission item (-1 if unavailable)
 
 	MavlinkRateLimiter	_slow_rate_limiter{100 * 1000};		///< Rate limit sending of the current WP sequence to 10 Hz
 
@@ -157,9 +164,9 @@ private:
 	MavlinkMissionManager(MavlinkMissionManager &);
 	MavlinkMissionManager &operator = (const MavlinkMissionManager &);
 
-	void init_offboard_mission();
+	void init_offboard_mission(mission_s mission_state);
 
-	int update_active_mission(dm_item_t dataman_id, uint16_t count, int32_t seq);
+	void update_active_mission(dm_item_t dataman_id, uint16_t count, int32_t seq, bool write_to_dataman = true);
 
 	/** store the geofence count to dataman */
 	int update_geofence_count(unsigned count);
@@ -168,10 +175,10 @@ private:
 	int update_safepoint_count(unsigned count);
 
 	/** load geofence stats from dataman */
-	int load_geofence_stats();
+	bool load_geofence_stats();
 
 	/** load safe point stats from dataman */
-	int load_safepoint_stats();
+	bool load_safepoint_stats();
 
 	/**
 	 *  @brief Sends an waypoint ack message
@@ -245,4 +252,19 @@ private:
 	 * set _state to idle (and do necessary cleanup)
 	 */
 	void switch_to_idle_state();
+
+	/**
+	 * Copies the specified range [1, 7] of param of MAVLink mission to params[] array of
+	 * the Mission item struct (Very useful for mission items for non-navigation
+	 * like MAV_CMD_DO*, as they use a parameter mapping 1 ~ 7, which directly
+	 * gets the value from MAVlink's Mission Item parameters.
+	 *
+	 * @param start_idx [1, 7] Start index of Param to copy from Mavlink Mission Item
+	 * @param end_idx [1, 7] End index of Param to copy from Mavlink Mission Item
+	 *
+	 * Note: The Index is in range [1, 7], so if you want to copy param2 ~ param5 into
+	 * params[1] and params[4], you need to call with 'start_idx = 2' and 'end_idx = 5'!
+	 */
+	void copy_params_from_mavlink_to_mission_item(struct mission_item_s *mission_item,
+			const mavlink_mission_item_t *mavlink_mission_item, int8_t start_idx = 1, int8_t end_idx = 7);
 };

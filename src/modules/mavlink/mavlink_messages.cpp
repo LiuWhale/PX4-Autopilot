@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2012-2020 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2012-2022 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -56,7 +56,6 @@
 #include <uORB/SubscriptionMultiArray.hpp>
 #include <uORB/topics/vehicle_status.h>
 
-#include "streams/ACTUATOR_CONTROL_TARGET.hpp"
 #include "streams/ACTUATOR_OUTPUT_STATUS.hpp"
 #include "streams/ALTITUDE.hpp"
 #include "streams/ATTITUDE.hpp"
@@ -95,6 +94,9 @@
 #include "streams/MOUNT_ORIENTATION.hpp"
 #include "streams/NAV_CONTROLLER_OUTPUT.hpp"
 #include "streams/OBSTACLE_DISTANCE.hpp"
+#include "streams/OPEN_DRONE_ID_BASIC_ID.hpp"
+#include "streams/OPEN_DRONE_ID_LOCATION.hpp"
+#include "streams/OPEN_DRONE_ID_SYSTEM.hpp"
 #include "streams/OPTICAL_FLOW_RAD.hpp"
 #include "streams/ORBIT_EXECUTION_STATUS.hpp"
 #include "streams/PING.hpp"
@@ -112,6 +114,7 @@
 #include "streams/STORAGE_INFORMATION.hpp"
 #include "streams/SYS_STATUS.hpp"
 #include "streams/SYSTEM_TIME.hpp"
+#include "streams/TIME_ESTIMATE_TO_TARGET.hpp"
 #include "streams/TIMESYNC.hpp"
 #include "streams/TRAJECTORY_REPRESENTATION_WAYPOINTS.hpp"
 #include "streams/VFR_HUD.hpp"
@@ -120,7 +123,6 @@
 
 #if !defined(CONSTRAINED_FLASH)
 # include "streams/ADSB_VEHICLE.hpp"
-# include "streams/ATT_POS_MOCAP.hpp"
 # include "streams/AUTOPILOT_STATE_FOR_GIMBAL_DEVICE.hpp"
 # include "streams/DEBUG.hpp"
 # include "streams/DEBUG_FLOAT_ARRAY.hpp"
@@ -137,6 +139,8 @@
 # include "streams/SCALED_PRESSURE2.hpp"
 # include "streams/SCALED_PRESSURE3.hpp"
 # include "streams/SMART_BATTERY_INFO.hpp"
+# include "streams/UAVIONIX_ADSB_OUT_CFG.hpp"
+# include "streams/UAVIONIX_ADSB_OUT_DYNAMIC.hpp"
 # include "streams/UTM_GLOBAL_POSITION.hpp"
 #endif // !CONSTRAINED_FLASH
 
@@ -224,96 +228,13 @@ static_assert(MAV_SENSOR_ROTATION_ROLL_90_PITCH_68_YAW_293 == static_cast<MAV_SE
 static_assert(MAV_SENSOR_ROTATION_PITCH_315 == static_cast<MAV_SENSOR_ORIENTATION>(ROTATION_PITCH_315), "Pitch: 315");
 static_assert(MAV_SENSOR_ROTATION_ROLL_90_PITCH_315 == static_cast<MAV_SENSOR_ORIENTATION>(ROTATION_ROLL_90_PITCH_315),
 	      "Roll: 90, Pitch: 315");
+
+// Note: Update the number (41, as of writing) below to the number of 'normal' rotation enums in MAVLink spec:
+// https://mavlink.io/en/messages/common.html#MAV_SENSOR_ORIENTATION
 static_assert(41 == ROTATION_MAX, "Keep MAV_SENSOR_ROTATION and PX4 Rotation in sync");
 
+static_assert(MAV_SENSOR_ROTATION_CUSTOM == static_cast<MAV_SENSOR_ORIENTATION>(ROTATION_CUSTOM), "Custom Rotation");
 
-union px4_custom_mode get_px4_custom_mode(uint8_t nav_state)
-{
-	union px4_custom_mode custom_mode;
-	custom_mode.data = 0;
-
-	switch (nav_state) {
-	case vehicle_status_s::NAVIGATION_STATE_MANUAL:
-		custom_mode.main_mode = PX4_CUSTOM_MAIN_MODE_MANUAL;
-		break;
-
-	case vehicle_status_s::NAVIGATION_STATE_ALTCTL:
-		custom_mode.main_mode = PX4_CUSTOM_MAIN_MODE_ALTCTL;
-		break;
-
-	case vehicle_status_s::NAVIGATION_STATE_POSCTL:
-		custom_mode.main_mode = PX4_CUSTOM_MAIN_MODE_POSCTL;
-		break;
-
-	case vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION:
-		custom_mode.main_mode = PX4_CUSTOM_MAIN_MODE_AUTO;
-		custom_mode.sub_mode = PX4_CUSTOM_SUB_MODE_AUTO_MISSION;
-		break;
-
-	case vehicle_status_s::NAVIGATION_STATE_AUTO_LOITER:
-		custom_mode.main_mode = PX4_CUSTOM_MAIN_MODE_AUTO;
-		custom_mode.sub_mode = PX4_CUSTOM_SUB_MODE_AUTO_LOITER;
-		break;
-
-	case vehicle_status_s::NAVIGATION_STATE_AUTO_RTL:
-		custom_mode.main_mode = PX4_CUSTOM_MAIN_MODE_AUTO;
-		custom_mode.sub_mode = PX4_CUSTOM_SUB_MODE_AUTO_RTL;
-		break;
-
-	case vehicle_status_s::NAVIGATION_STATE_ACRO:
-		custom_mode.main_mode = PX4_CUSTOM_MAIN_MODE_ACRO;
-		break;
-
-	case vehicle_status_s::NAVIGATION_STATE_DESCEND:
-		custom_mode.main_mode = PX4_CUSTOM_MAIN_MODE_AUTO;
-		custom_mode.sub_mode = PX4_CUSTOM_SUB_MODE_AUTO_LAND;
-		break;
-
-	case vehicle_status_s::NAVIGATION_STATE_TERMINATION:
-		custom_mode.main_mode = PX4_CUSTOM_MAIN_MODE_MANUAL;
-		break;
-
-	case vehicle_status_s::NAVIGATION_STATE_OFFBOARD:
-		custom_mode.main_mode = PX4_CUSTOM_MAIN_MODE_OFFBOARD;
-		break;
-
-	case vehicle_status_s::NAVIGATION_STATE_STAB:
-		custom_mode.main_mode = PX4_CUSTOM_MAIN_MODE_STABILIZED;
-		break;
-
-	case vehicle_status_s::NAVIGATION_STATE_AUTO_TAKEOFF:
-		custom_mode.main_mode = PX4_CUSTOM_MAIN_MODE_AUTO;
-		custom_mode.sub_mode = PX4_CUSTOM_SUB_MODE_AUTO_TAKEOFF;
-		break;
-
-	case vehicle_status_s::NAVIGATION_STATE_AUTO_LAND:
-		custom_mode.main_mode = PX4_CUSTOM_MAIN_MODE_AUTO;
-		custom_mode.sub_mode = PX4_CUSTOM_SUB_MODE_AUTO_LAND;
-		break;
-
-	case vehicle_status_s::NAVIGATION_STATE_AUTO_FOLLOW_TARGET:
-		custom_mode.main_mode = PX4_CUSTOM_MAIN_MODE_AUTO;
-		custom_mode.sub_mode = PX4_CUSTOM_SUB_MODE_AUTO_FOLLOW_TARGET;
-		break;
-
-	case vehicle_status_s::NAVIGATION_STATE_AUTO_PRECLAND:
-		custom_mode.main_mode = PX4_CUSTOM_MAIN_MODE_AUTO;
-		custom_mode.sub_mode = PX4_CUSTOM_SUB_MODE_AUTO_PRECLAND;
-		break;
-
-	case vehicle_status_s::NAVIGATION_STATE_ORBIT:
-		custom_mode.main_mode = PX4_CUSTOM_MAIN_MODE_POSCTL;
-		custom_mode.sub_mode = PX4_CUSTOM_SUB_MODE_POSCTL_ORBIT;
-		break;
-
-	case vehicle_status_s::NAVIGATION_STATE_AUTO_VTOL_TAKEOFF:
-		custom_mode.main_mode = PX4_CUSTOM_MAIN_MODE_AUTO;
-		custom_mode.sub_mode = PX4_CUSTOM_SUB_MODE_AUTO_VTOL_TAKEOFF;
-		break;
-	}
-
-	return custom_mode;
-}
 
 static const StreamListItem streams_list[] = {
 #if defined(HEARTBEAT_HPP)
@@ -325,9 +246,9 @@ static const StreamListItem streams_list[] = {
 #if defined(COMMAND_LONG_HPP)
 	create_stream_list_item<MavlinkStreamCommandLong>(),
 #endif // COMMAND_LONG_HPP
-#if defined(SYSTEM_TIME_HPP)
+#if defined(SYS_STATUS_HPP)
 	create_stream_list_item<MavlinkStreamSysStatus>(),
-#endif // SYSTEM_TIME_HPP
+#endif // SYS_STATUS_HPP
 	create_stream_list_item<MavlinkStreamBatteryStatus>(),
 #if defined(SMART_BATTERY_INFO_HPP)
 	create_stream_list_item<MavlinkStreamSmartBatteryInfo>(),
@@ -344,13 +265,13 @@ static const StreamListItem streams_list[] = {
 #if defined(SCALED_IMU3_HPP)
 	create_stream_list_item<MavlinkStreamScaledIMU3>(),
 #endif // SCALED_IMU3_HPP
-#if defined(SCALED_PRESSURE)
+#if defined(SCALED_PRESSURE_HPP)
 	create_stream_list_item<MavlinkStreamScaledPressure>(),
 #endif // SCALED_PRESSURE
-#if defined(SCALED_PRESSURE2)
+#if defined(SCALED_PRESSURE2_HPP)
 	create_stream_list_item<MavlinkStreamScaledPressure2>(),
 #endif // SCALED_PRESSURE2
-#if defined(SCALED_PRESSURE3)
+#if defined(SCALED_PRESSURE3_HPP)
 	create_stream_list_item<MavlinkStreamScaledPressure3>(),
 #endif // SCALED_PRESSURE3
 #if defined(ACTUATOR_OUTPUT_STATUS_HPP)
@@ -377,6 +298,9 @@ static const StreamListItem streams_list[] = {
 #if defined(SYSTEM_TIME_HPP)
 	create_stream_list_item<MavlinkStreamSystemTime>(),
 #endif // SYSTEM_TIME_HPP
+#if defined(TIME_ESTIMATE_TO_TARGET_HPP)
+	create_stream_list_item<MavlinkStreamTimeEstimateToTarget>(),
+#endif // TIME_ESTIMATE_TO_TARGET_HPP
 #if defined(TIMESYNC_HPP)
 	create_stream_list_item<MavlinkStreamTimesync>(),
 #endif // TIMESYNC_HPP
@@ -401,9 +325,6 @@ static const StreamListItem streams_list[] = {
 #if defined(VIBRATION_HPP)
 	create_stream_list_item<MavlinkStreamVibration>(),
 #endif // VIBRATION_HPP
-#if defined(ATT_POS_MOCAP_HPP)
-	create_stream_list_item<MavlinkStreamAttPosMocap>(),
-#endif // ATT_POS_MOCAP_HPP
 #if defined(AUTOPILOT_STATE_FOR_GIMBAL_DEVICE_HPP)
 	create_stream_list_item<MavlinkStreamAutopilotStateForGimbalDevice>(),
 #endif // AUTOPILOT_STATE_FOR_GIMBAL_DEVICE_HPP
@@ -453,10 +374,6 @@ static const StreamListItem streams_list[] = {
 #if defined(OPTICAL_FLOW_RAD_HPP)
 	create_stream_list_item<MavlinkStreamOpticalFlowRad>(),
 #endif // OPTICAL_FLOW_RAD_HPP
-#if defined(ACTUATOR_CONTROL_TARGET_HPP)
-	create_stream_list_item<MavlinkStreamActuatorControlTarget<0> >(),
-	create_stream_list_item<MavlinkStreamActuatorControlTarget<1> >(),
-#endif // ACTUATOR_CONTROL_TARGET_HPP
 #if defined(NAMED_VALUE_FLOAT_HPP)
 	create_stream_list_item<MavlinkStreamNamedValueFloat>(),
 #endif // NAMED_VALUE_FLOAT_HPP
@@ -517,6 +434,15 @@ static const StreamListItem streams_list[] = {
 #if defined(OBSTACLE_DISTANCE_HPP)
 	create_stream_list_item<MavlinkStreamObstacleDistance>(),
 #endif // OBSTACLE_DISTANCE_HPP
+#if defined(OPEN_DRONE_ID_BASIC_ID_HPP)
+	create_stream_list_item<MavlinkStreamOpenDroneIdBasicId>(),
+#endif // OPEN_DRONE_ID_BASIC_ID_HPP
+#if defined(OPEN_DRONE_ID_LOCATION_HPP)
+	create_stream_list_item<MavlinkStreamOpenDroneIdLocation>(),
+#endif // OPEN_DRONE_ID_LOCATION_HPP
+#if defined(OPEN_DRONE_ID_SYSTEM_HPP)
+	create_stream_list_item<MavlinkStreamOpenDroneIdSystem>(),
+#endif // OPEN_DRONE_ID_SYSTEM_HPP
 #if defined(ESC_INFO_HPP)
 	create_stream_list_item<MavlinkStreamESCInfo>(),
 #endif // ESC_INFO_HPP
@@ -554,8 +480,14 @@ static const StreamListItem streams_list[] = {
 	create_stream_list_item<MavlinkStreamEfiStatus>(),
 #endif // EFI_STATUS_HPP
 #if defined(GPS_RTCM_DATA_HPP)
-	create_stream_list_item<MavlinkStreamGPSRTCMData>()
+	create_stream_list_item<MavlinkStreamGPSRTCMData>(),
 #endif // GPS_RTCM_DATA_HPP
+#if defined(UAVIONIX_ADSB_OUT_CFG_HPP)
+	create_stream_list_item<MavlinkStreamUavionixADSBOutCfg>(),
+#endif // UAVIONIX_ADSB_OUT_CFG_HPP
+#if defined(UAVIONIX_ADSB_OUT_DYNAMIC_HPP)
+	create_stream_list_item<MavlinkStreamUavionixADSBOutDynamic>()
+#endif // UAVIONIX_ADSB_OUT_DYNAMIC_HPP
 };
 
 const char *get_stream_name(const uint16_t msg_id)

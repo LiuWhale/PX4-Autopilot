@@ -55,7 +55,6 @@
 #include <uORB/topics/vehicle_trajectory_waypoint.h>
 #include <uORB/topics/home_position.h>
 #include <lib/geo/geo.h>
-#include <lib/weather_vane/WeatherVane.hpp>
 
 struct ekf_reset_counters_s {
 	uint8_t xy;
@@ -92,9 +91,10 @@ public:
 	/**
 	 * To be called to adopt parameters from an arrived vehicle command
 	 * @param command received command message containing the parameters
-	 * @return true if accepted, false if declined
+	 * @param success set to true if it was successfully applied, false on error
+	 * @return true if handled
 	 */
-	virtual bool applyCommandParameters(const vehicle_command_s &command) { return false; }
+	virtual bool applyCommandParameters(const vehicle_command_s &command, bool &success) { return false; }
 
 	/**
 	 * Call before activate() or update()
@@ -139,14 +139,12 @@ public:
 	const vehicle_trajectory_waypoint_s &getAvoidanceWaypoint() { return _desired_waypoint; }
 
 	/**
-	 * Empty setpoint.
-	 * All setpoints are set to NAN.
+	 * All setpoints are set to NAN (uncontrolled), timestamp to zero
 	 */
-	static const trajectory_setpoint_s empty_setpoint;
+	static const trajectory_setpoint_s empty_trajectory_setpoint;
 
 	/**
-	 * Empty constraints.
-	 * All constraints are set to NAN.
+	 * All constraints are set to NAN, timestamp to zero
 	 */
 	static const vehicle_constraints_s empty_constraints;
 
@@ -163,11 +161,6 @@ public:
 		updateParams();
 	}
 
-	/**
-	 * Sets an external yaw handler which can be used by any flight task to implement a different yaw control strategy.
-	 * This method does nothing, each flighttask which wants to use the yaw handler needs to override this method.
-	 */
-	virtual void setYawHandler(WeatherVane *ext_yaw_handler) {}
 	virtual void overrideCruiseSpeed(const float cruise_speed_m_s) {}
 
 	void updateVelocityControllerFeedback(const matrix::Vector3f &vel_sp,
@@ -225,9 +218,10 @@ protected:
 	matrix::Vector3f _velocity; /**< current vehicle velocity */
 
 	float _yaw{}; /**< current vehicle yaw heading */
+	float _unaided_yaw{};
 	bool _is_yaw_good_for_control{}; /**< true if the yaw estimate can be used for yaw control */
-	float _dist_to_bottom{}; /**< current height above ground level */
-	float _dist_to_ground{}; /**< equals _dist_to_bottom if valid, height above home otherwise */
+	float _dist_to_bottom{}; /**< current height above ground level if dist_bottom is valid */
+	float _dist_to_ground{}; /**< equals _dist_to_bottom if available, height above home otherwise */
 
 	/**
 	 * Setpoints which the position controller has to execute.

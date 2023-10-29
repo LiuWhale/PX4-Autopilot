@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2013-2017 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2013-2022 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -42,42 +42,32 @@
 
 #pragma once
 
-#include <dataman/dataman.h>
+#include <dataman_client/DatamanClient.hpp>
 #include <uORB/topics/mission.h>
+#include <px4_platform_common/module_params.h>
+#include "MissionFeasibility/FeasibilityChecker.hpp"
 
 class Geofence;
 class Navigator;
 
-class MissionFeasibilityChecker
+class MissionFeasibilityChecker: public ModuleParams
 {
 private:
 	Navigator *_navigator{nullptr};
+	DatamanClient &_dataman_client;
+	FeasibilityChecker _feasibility_checker;
 
-	/* Checks for all airframes */
 	bool checkGeofence(const mission_s &mission, float home_alt, bool home_valid);
 
-	bool checkHomePositionAltitude(const mission_s &mission, float home_alt, bool home_alt_valid);
-
-	bool checkMissionItemValidity(const mission_s &mission);
-
-	bool checkDistanceToFirstWaypoint(const mission_s &mission, float max_distance);
-	bool checkDistancesBetweenWaypoints(const mission_s &mission, float max_distance);
-
-	bool checkTakeoff(const mission_s &mission, float home_alt);
-
-	/* Checks specific to fixedwing airframes */
-	bool checkFixedwing(const mission_s &mission, float home_alt, bool land_start_req);
-	bool checkFixedWingLanding(const mission_s &mission, bool land_start_req);
-
-	/* Checks specific to rotarywing airframes */
-	bool checkRotarywing(const mission_s &mission, float home_alt);
-
-	/* Checks specific to VTOL airframes */
-	bool checkVTOL(const mission_s &mission, float home_alt, bool land_start_req);
-	bool checkVTOLLanding(const mission_s &mission, bool land_start_req);
-
 public:
-	MissionFeasibilityChecker(Navigator *navigator) : _navigator(navigator) {}
+	MissionFeasibilityChecker(Navigator *navigator, DatamanClient &dataman_client) :
+		ModuleParams(nullptr),
+		_navigator(navigator),
+		_dataman_client(dataman_client),
+		_feasibility_checker()
+	{
+
+	}
 	~MissionFeasibilityChecker() = default;
 
 	MissionFeasibilityChecker(const MissionFeasibilityChecker &) = delete;
@@ -86,8 +76,5 @@ public:
 	/*
 	 * Returns true if mission is feasible and false otherwise
 	 */
-	bool checkMissionFeasible(const mission_s &mission,
-				  float max_distance_to_1st_waypoint, float max_distance_between_waypoints,
-				  bool land_start_req);
-
+	bool checkMissionFeasible(const mission_s &mission);
 };

@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2017 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2017-2022 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -149,7 +149,7 @@ const T expo_deadzone(const T &value, const T &e, const T &dz)
  *         x_low   x_high
  */
 template<typename T>
-const T gradual(const T &value, const T &x_low, const T &x_high, const T &y_low, const T &y_high)
+const T interpolate(const T &value, const T &x_low, const T &x_high, const T &y_low, const T &y_high)
 {
 	if (value <= x_low) {
 		return y_low;
@@ -160,34 +160,53 @@ const T gradual(const T &value, const T &x_low, const T &x_high, const T &y_low,
 	} else {
 		/* linear function between the two points */
 		T a = (y_high - y_low) / (x_high - x_low);
-		T b = y_low - a * x_low;
-		return  a * value + b;
+		T b = y_low - (a * x_low);
+		return (a * value) + b;
 	}
 }
 
 /*
- * Constant, linear, linear, constant function with the three corner points as parameters
- *  y_high               -------
- *                      /
- *                    /
- *  y_middle        /
- *                /
+ * Constant, piecewise linear, constant function with 1/N size intervalls and N corner points as parameters
+ * y[N-1]               -------
+ *                     /
+ *                   /
+ * y[1]            /
  *               /
  *              /
- * y_low -------
- *         x_low x_middle x_high
+ *             /
+ * y[0] -------
+ *        0 1/(N-1) 2/(N-1) ... 1
  */
-template<typename T>
-const T gradual3(const T &value,
-		 const T &x_low, const T &x_middle, const T &x_high,
-		 const T &y_low, const T &y_middle, const T &y_high)
+template<typename T, size_t N>
+const T interpolateN(const T &value, const T(&y)[N])
 {
-	if (value < x_middle) {
-		return gradual(value, x_low, x_middle, y_low, y_middle);
+	size_t index = constrain((int)(value * (N - 1)), 0, (int)(N - 2));
+	return interpolate(value, (T)index / (T)(N - 1), (T)(index + 1) / (T)(N - 1), y[index], y[index + 1]);
+}
 
-	} else {
-		return gradual(value, x_middle, x_high, y_middle, y_high);
+/*
+ * Constant, piecewise linear, constant function with N corner points as parameters
+ * y[N-1]               -------
+ *                     /
+ *                   /
+ * y[1]            /
+ *               /
+ *              /
+ *             /
+ * y[0] -------
+ *          x[0] x[1] ... x[N-1]
+ * Note: x[N] corner coordinates have to be sorted in ascending order
+ */
+template<typename T, size_t N>
+const T interpolateNXY(const T &value, const T(&x)[N], const T(&y)[N])
+{
+	size_t index = 0;
+
+	while ((value > x[index + 1]) && (index < (N - 2))) {
+		index++;
 	}
+
+	return interpolate(value, x[index], x[index + 1], y[index], y[index + 1]);
 }
 
 /*
@@ -273,7 +292,7 @@ inline bool isFinite(const float &value)
 
 inline bool isFinite(const matrix::Vector3f &value)
 {
-	return PX4_ISFINITE(value(0)) && PX4_ISFINITE(value(1)) && PX4_ISFINITE(value(2));
+	return value.isAllFinite();
 }
 
 } /* namespace math */

@@ -192,9 +192,10 @@
 #define GPIO_HW_VER_REV_DRIVE /* GPIO_AD_B0_01 GPIO1_IO01   */  (GPIO_PORT1 | GPIO_PIN1 | GPIO_OUTPUT | GPIO_OUTPUT_ONE | HW_IOMUX)
 #define GPIO_HW_REV_SENSE     /* GPIO_AD_B1_08 GPIO1 Pin 24 */  ADC1_GPIO(13, 24)
 #define GPIO_HW_VER_SENSE     /* GPIO_AD_B1_04 GPIO1 Pin 20 */  ADC1_GPIO(9,  20)
-#define HW_INFO_INIT          {'V','5','x', 'x',0}
-#define HW_INFO_INIT_VER      2
-#define HW_INFO_INIT_REV      3
+#define HW_INFO_INIT_PREFIX   "V5"
+#define V500   HW_VER_REV(0x0,0x0) // FMUV5,                    Rev 0
+#define V540   HW_VER_REV(0x4,0x0) // mini no can 2,3,          Rev 0
+
 /* CAN Silence
  *
  * Silent mode control \ ESC Mux select
@@ -235,6 +236,7 @@
  */
 
 #define DIRECT_PWM_OUTPUT_CHANNELS  8
+#define BOARD_NUM_IO_TIMERS         8
 
 // Input Capture not supported on MVP
 
@@ -361,11 +363,11 @@
 /* SD card bringup does not work if performed on the IDLE thread because it
  * will cause waiting.  Use either:
  *
- *  CONFIG_LIB_BOARDCTL=y, OR
+ *  CONFIG_BOARDCTL=y, OR
  *  CONFIG_BOARD_INITIALIZE=y && CONFIG_BOARD_INITTHREAD=y
  */
 
-#if defined(CONFIG_BOARD_INITIALIZE) && !defined(CONFIG_LIB_BOARDCTL) && \
+#if defined(CONFIG_BOARD_INITIALIZE) && !defined(CONFIG_BOARDCTL) && \
    !defined(CONFIG_BOARD_INITTHREAD)
 #  warning SDIO initialization cannot be perfomed on the IDLE thread
 #endif

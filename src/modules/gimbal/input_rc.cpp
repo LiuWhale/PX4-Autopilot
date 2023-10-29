@@ -40,7 +40,7 @@
 #include <matrix/matrix/math.hpp>
 #include <px4_platform_common/posix.h>
 #include <px4_platform_common/defines.h>
-
+#include <px4_platform_common/log.h>
 
 namespace gimbal
 {
@@ -160,8 +160,6 @@ InputRC::UpdateResult InputRC::_read_control_data_from_subscription(ControlData 
 			// We always use follow mode with RC input for now.
 			_last_set_aux_values[i] = new_aux_values[i];
 		}
-
-		control_data.gimbal_shutter_retract = false;
 
 		return UpdateResult::UpdatedActive;
 

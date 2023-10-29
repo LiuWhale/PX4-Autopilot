@@ -18,7 +18,6 @@ set(tests
 	List
 	mathlib
 	matrix
-	mixer
 	param
 	parameters
 	perf
@@ -48,7 +47,6 @@ endforeach()
 
 # standalone tests
 set(cmd_tests
-	commander_tests
 	controllib_test
 	lightware_laser_test
 	rc_tests
@@ -121,16 +119,9 @@ sanitizer_fail_test_on_error(sitl-imu_filtering)
 
 # Dynamic module loading test
 add_test(NAME dyn
-	COMMAND ${PX4_SOURCE_DIR}/Tools/sitl_run.sh
-		$<TARGET_FILE:px4>
-		none
-		none
-		test_dyn_hello
-		none
-		${PX4_SOURCE_DIR}
-		${PX4_BINARY_DIR}
-		$<TARGET_FILE:examples__dyn_hello>
-	WORKING_DIRECTORY ${SITL_WORKING_DIR})
+	COMMAND $<TARGET_FILE:px4> -s "${PX4_SOURCE_DIR}/posix-configs/SITL/init/test/test_dyn_hello"
+	WORKING_DIRECTORY ${PX4_BINARY_DIR}/src/examples/dyn_hello
+)
 set_tests_properties(dyn PROPERTIES PASS_REGULAR_EXPRESSION "1: PASSED")
 sanitizer_fail_test_on_error(dyn)
 

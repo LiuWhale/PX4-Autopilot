@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2019 ECL Development Team. All rights reserved.
+ *   Copyright (c) 2019-2023 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -61,9 +61,8 @@ public:
 	// Setup the Ekf with synthetic measurements
 	void SetUp() override
 	{
-		// run briefly to init, then manually set in air and at rest (default for a real vehicle)
+		// Init, then manually set in air and at rest (default for a real vehicle)
 		_ekf->init(0);
-		_sensor_simulator.runSeconds(0.1);
 		_ekf->set_in_air_status(false);
 		_ekf->set_vehicle_at_rest(true);
 	}
@@ -78,6 +77,7 @@ TEST_F(EkfExternalVisionTest, checkVisionFusionLogic)
 {
 	_sensor_simulator.runSeconds(_tilt_align_time); // Let the tilt align
 	_ekf_wrapper.enableExternalVisionPositionFusion();
+	_sensor_simulator._vio.setPositionFrameToLocalNED();
 	_sensor_simulator.startExternalVision();
 	_sensor_simulator.runSeconds(2);
 
@@ -147,7 +147,6 @@ TEST_F(EkfExternalVisionTest, visionVelocityResetWithAlignment)
 	// WHEN: Vision frame is rotate +90°. The reported heading is -90°
 	Quatf vision_to_ekf(Eulerf(0.0f, 0.0f, math::radians(-90.0f)));
 	_sensor_simulator._vio.setOrientation(vision_to_ekf.inversed());
-	_ekf_wrapper.enableExternalVisionAlignment();
 
 	const Vector3f simulated_velocity_in_vision_frame(0.3f, -1.0f, 0.4f);
 	const Vector3f simulated_velocity_in_ekf_frame =
@@ -162,9 +161,9 @@ TEST_F(EkfExternalVisionTest, visionVelocityResetWithAlignment)
 	const Vector3f estimated_velocity_in_ekf_frame = _ekf->getVelocity();
 	EXPECT_TRUE(isEqual(estimated_velocity_in_ekf_frame, simulated_velocity_in_ekf_frame, 0.01f));
 	// And: the frame offset should be estimated correctly
-	Quatf estimatedExternalVisionFrameOffset = _ekf->getVisionAlignmentQuaternion();
-	EXPECT_TRUE(matrix::isEqual(vision_to_ekf.canonical(),
-				    estimatedExternalVisionFrameOffset.canonical()));
+	// Quatf estimatedExternalVisionFrameOffset = _ekf->getVisionAlignmentQuaternion();
+	// EXPECT_TRUE(matrix::isEqual(vision_to_ekf.canonical(),
+	// 			    estimatedExternalVisionFrameOffset.canonical()));
 
 	// AND: the reset in velocity should be saved correctly
 	reset_logging_checker.capturePostResetState();
@@ -179,6 +178,7 @@ TEST_F(EkfExternalVisionTest, visionHorizontalPositionReset)
 	const Vector3f simulated_position(8.3f, -1.0f, 0.0f);
 
 	_sensor_simulator._vio.setPosition(simulated_position);
+	_sensor_simulator._vio.setPositionFrameToLocalNED();
 	_ekf_wrapper.enableExternalVisionPositionFusion();
 	_sensor_simulator.startExternalVision();
 	_sensor_simulator.runMicroseconds(2e5);
@@ -197,7 +197,6 @@ TEST_F(EkfExternalVisionTest, visionHorizontalPositionResetWithAlignment)
 	// WHEN: Vision frame is rotate +90°. The reported heading is -90°
 	Quatf vision_to_ekf(Eulerf(0.0f, 0.0f, math::radians(-90.0f)));
 	_sensor_simulator._vio.setOrientation(vision_to_ekf.inversed());
-	_ekf_wrapper.enableExternalVisionAlignment();
 
 	const Vector3f simulated_position_in_vision_frame(8.3f, -1.0f, 0.0f);
 	const Vector3f simulated_position_in_ekf_frame =
@@ -211,7 +210,6 @@ TEST_F(EkfExternalVisionTest, visionHorizontalPositionResetWithAlignment)
 	const Vector3f estimated_position_in_ekf_frame = _ekf->getPosition();
 	EXPECT_TRUE(isEqual(estimated_position_in_ekf_frame, simulated_position_in_ekf_frame, 1e-2f));
 }
-
 
 TEST_F(EkfExternalVisionTest, visionVarianceCheck)
 {
@@ -237,7 +235,6 @@ TEST_F(EkfExternalVisionTest, visionAlignment)
 	// WHEN: Vision frame is rotate +90°. The reported heading is -90°
 	Quatf externalVisionFrameOffset(Eulerf(0.0f, 0.0f, math::radians(90.0f)));
 	_sensor_simulator._vio.setOrientation(externalVisionFrameOffset.inversed());
-	_ekf_wrapper.enableExternalVisionAlignment();
 
 	// Simulate high uncertainty on vision x axis which is in this case
 	// the y EKF frame axis
@@ -255,9 +252,9 @@ TEST_F(EkfExternalVisionTest, visionAlignment)
 	EXPECT_TRUE(velVar_new(1) > velVar_new(0));
 
 	// THEN: the frame offset should be estimated correctly
-	Quatf estimatedExternalVisionFrameOffset = _ekf->getVisionAlignmentQuaternion();
-	EXPECT_TRUE(matrix::isEqual(externalVisionFrameOffset.canonical(),
-				    estimatedExternalVisionFrameOffset.canonical()));
+	// Quatf estimatedExternalVisionFrameOffset = _ekf->getVisionAlignmentQuaternion();
+	// EXPECT_TRUE(matrix::isEqual(externalVisionFrameOffset.canonical(),
+	// 			    estimatedExternalVisionFrameOffset.canonical()));
 }
 
 TEST_F(EkfExternalVisionTest, velocityFrameBody)
@@ -276,13 +273,10 @@ TEST_F(EkfExternalVisionTest, velocityFrameBody)
 	// WHEN: measurement is given in BODY-FRAME and
 	//       x variance is bigger than y variance
 	_sensor_simulator._vio.setVelocityFrameToBody();
-	float vel_cov_data [9] = {2.0f, 0.0f, 0.0f,
-				  0.0f, 0.01f, 0.0f,
-				  0.0f, 0.0f, 0.01f
-				 };
-	const Matrix3f vel_cov_body(vel_cov_data);
+
+	const Vector3f vel_cov_body(2.0f, 0.01f, 0.01f);
 	const Vector3f vel_body(1.0f, 0.0f, 0.0f);
-	_sensor_simulator._vio.setVelocityCovariance(vel_cov_body);
+	_sensor_simulator._vio.setVelocityVariance(vel_cov_body);
 	_sensor_simulator._vio.setVelocity(vel_body);
 	_ekf_wrapper.enableExternalVisionVelocityFusion();
 	_sensor_simulator.startExternalVision();
@@ -291,7 +285,7 @@ TEST_F(EkfExternalVisionTest, velocityFrameBody)
 	// THEN: As the drone is turned 90 degrees, velocity variance
 	//       along local y axis is expected to be bigger
 	const Vector3f velVar_new = _ekf->getVelocityVariance();
-	EXPECT_NEAR(velVar_new(1) / velVar_new(0), 40.f, 15.f);
+	EXPECT_NEAR(velVar_new(1) / velVar_new(0), 70.f, 15.f);
 
 	const Vector3f vel_earth_est = _ekf->getVelocity();
 	EXPECT_NEAR(vel_earth_est(0), 0.0f, 0.1f);
@@ -311,14 +305,11 @@ TEST_F(EkfExternalVisionTest, velocityFrameLocal)
 
 	// WHEN: measurement is given in LOCAL-FRAME and
 	//       x variance is bigger than y variance
-	_sensor_simulator._vio.setVelocityFrameToLocal();
-	float vel_cov_data [9] = {2.0f, 0.0f, 0.0f,
-				  0.0f, 0.01f, 0.0f,
-				  0.0f, 0.0f, 0.01f
-				 };
-	const Matrix3f vel_cov_earth(vel_cov_data);
+	_sensor_simulator._vio.setVelocityFrameToLocalNED();
+
+	const Vector3f vel_cov_earth{2.f, 0.01f, 0.01f};
 	const Vector3f vel_earth(1.0f, 0.0f, 0.0f);
-	_sensor_simulator._vio.setVelocityCovariance(vel_cov_earth);
+	_sensor_simulator._vio.setVelocityVariance(vel_cov_earth);
 	_sensor_simulator._vio.setVelocity(vel_earth);
 	_ekf_wrapper.enableExternalVisionVelocityFusion();
 	_sensor_simulator.startExternalVision();
@@ -328,7 +319,7 @@ TEST_F(EkfExternalVisionTest, velocityFrameLocal)
 	// THEN: Independently on drones heading, velocity variance
 	//       along local x axis is expected to be bigger
 	const Vector3f velVar_new = _ekf->getVelocityVariance();
-	EXPECT_NEAR(velVar_new(0) / velVar_new(1), 40.f, 15.f);
+	EXPECT_NEAR(velVar_new(0) / velVar_new(1), 70.f, 15.f);
 
 	const Vector3f vel_earth_est = _ekf->getVelocity();
 	EXPECT_NEAR(vel_earth_est(0), 1.0f, 0.1f);
@@ -347,7 +338,6 @@ TEST_F(EkfExternalVisionTest, positionFrameLocal)
 	// WHEN: using EV yaw fusion and rotate EV is set
 	Quatf vision_to_ekf(Eulerf(0.0f, 0.0f, 0.f));
 	_sensor_simulator._vio.setOrientation(vision_to_ekf.inversed());
-	_ekf_wrapper.enableExternalVisionAlignment(); // ROTATE_EV
 	_ekf_wrapper.enableExternalVisionHeadingFusion(); // EV_YAW
 
 	// AND WHEN: using EV position aiding

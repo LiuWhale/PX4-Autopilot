@@ -195,7 +195,7 @@ def get_actuator_output(yaml_config, output_functions, timer_config_file, verbos
             else:
                 raise Exception('unknown generator {:}'.format(group['generator']))
             continue
-        
+
         subgroup = {}
 
         # supported actions
@@ -264,7 +264,18 @@ def get_actuator_output(yaml_config, output_functions, timer_config_file, verbos
             }
         per_channel_params.append(param)
 
-        # TODO: support non-standard per-channel parameters
+        custom_params = group.get('custom_params', [])
+        for custom_param in custom_params:
+            # Simply pulls all custom params, assuming they are valid ones
+            param = {
+                'name': param_prefix+'_'+custom_param['name'],
+            }
+            # TODO: check and match the custom params in output_groups with module-level parameters
+            del custom_param['name']
+            for param_key in custom_param:
+                # '-' is used in actuators.schema.json, while '_' is used in module_schema.yml
+                param[param_key.replace('_', '-')] = custom_param[param_key]
+            per_channel_params.append(param)
 
         subgroup['per-channel-parameters'] = per_channel_params
 
@@ -330,7 +341,7 @@ def get_mixers(yaml_config, output_functions, verbose):
         option = select_param + '==' + str(type_index)
         mixer_config = {
                 'option': option,
-                'help-url': 'https://docs.px4.io/master/en/config/actuators.html',
+                'help-url': 'https://docs.px4.io/main/en/config/actuators.html',
             }
         for optional in ['type', 'title']:
             if optional in current_type:
@@ -442,7 +453,7 @@ def get_mixers(yaml_config, output_functions, verbose):
 
     if verbose:
         print('Mixer rules: {}'.format(rules))
-    
+
     mixers = {
             'actuator-types': actuator_types,
             'config': config,
@@ -482,7 +493,6 @@ if mixers is None:
 
 actuators = {
     'version': 1,
-    'show-ui-if': 'SYS_CTRL_ALLOC==1',
     'outputs_v1': outputs,
     'functions_v1': functions,
     'mixer_v1': mixers,
@@ -490,7 +500,7 @@ actuators = {
 
 with open(output_file, 'w') as outfile:
     indent = 2 if verbose else None
-    json.dump(actuators, outfile, indent=indent)
+    json.dump(actuators, outfile, indent=indent, sort_keys=True)
 
 if compress:
     save_compressed(output_file)

@@ -31,6 +31,8 @@
  *
  ****************************************************************************/
 
+#include <cmath>
+
 #include <gtest/gtest.h>
 #include <matrix/math.hpp>
 
@@ -65,11 +67,12 @@ TEST(MatrixAssignmentTest, Assignment)
 
 	for (size_t i = 0; i < 3; i++) {
 		for (size_t j = 0; j < 3; j++) {
-			EXPECT_TRUE(isnan(m_nan(i, j)));
+			EXPECT_TRUE(std::isnan(m_nan(i, j)));
 		}
 	}
 
 	EXPECT_TRUE(m_nan.isAllNan());
+	EXPECT_FALSE(m_nan.isAllFinite());
 
 	float data2d[3][3] = {
 		{1, 2, 3},
@@ -85,6 +88,7 @@ TEST(MatrixAssignmentTest, Assignment)
 	}
 
 	EXPECT_FALSE(m2.isAllNan());
+	EXPECT_TRUE(m2.isAllFinite());
 
 	float data_times_2[9] = {2, 4, 6, 8, 10, 12, 14, 16, 18};
 	Matrix3f m3(data_times_2);

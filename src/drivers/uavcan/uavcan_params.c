@@ -78,15 +78,6 @@ PARAM_DEFINE_INT32(UAVCAN_NODE_ID, 1);
 PARAM_DEFINE_INT32(UAVCAN_BITRATE, 1000000);
 
 /**
- * UAVCAN ESC will spin at idle throttle when armed, even if the mixer outputs zero setpoints.
- *
- * @boolean
- * @reboot_required true
- * @group UAVCAN
- */
-PARAM_DEFINE_INT32(UAVCAN_ESC_IDLT, 1);
-
-/**
  * UAVCAN rangefinder minimum range
  *
  * This parameter defines the minimum valid range for a rangefinder connected via UAVCAN.
@@ -195,6 +186,42 @@ PARAM_DEFINE_INT32(UAVCAN_LGT_NAV, 3);
 PARAM_DEFINE_INT32(UAVCAN_LGT_LAND, 0);
 
 /**
+ * publish Arming Status stream
+ *
+ * Enable UAVCAN Arming Status stream publication
+ *  uavcan::equipment::safety::ArmingStatus
+ *
+ * @boolean
+ * @reboot_required true
+ * @group UAVCAN
+ */
+PARAM_DEFINE_INT32(UAVCAN_PUB_ARM, 0);
+
+/**
+ * publish RTCM stream
+ *
+ * Enable UAVCAN RTCM stream publication
+ *  uavcan::equipment::gnss::RTCMStream
+ *
+ * @boolean
+ * @reboot_required true
+ * @group UAVCAN
+ */
+PARAM_DEFINE_INT32(UAVCAN_PUB_RTCM, 0);
+
+/**
+ * publish moving baseline data RTCM stream
+ *
+ * Enable UAVCAN RTCM stream publication
+ *  ardupilot::gnss::MovingBaselineData
+ *
+ * @boolean
+ * @reboot_required true
+ * @group UAVCAN
+ */
+PARAM_DEFINE_INT32(UAVCAN_PUB_MBD, 0);
+
+/**
  * subscription airspeed
  *
  * Enable UAVCAN airspeed subscriptions.
@@ -228,7 +255,15 @@ PARAM_DEFINE_INT32(UAVCAN_SUB_BARO, 0);
  *  uavcan::equipment::power::BatteryInfo
  *  ardupilot::equipment::power::BatteryInfoAux
  *
- * @boolean
+ *  0 - Disable
+ *  1 - Use raw data. Recommended for Smart battery
+ *  2 - Filter the data with internal battery library
+ *
+ * @min 0
+ * @max 2
+ * @value 0 Disable
+ * @value 1 Raw data
+ * @value 2 Filter data
  * @reboot_required true
  * @group UAVCAN
  */
@@ -286,7 +321,7 @@ PARAM_DEFINE_INT32(UAVCAN_SUB_HYGRO, 0);
 /**
  * subscription ICE
  *
- * Enable UAVCAN internal combusion engine (ICE) subscription.
+ * Enable UAVCAN internal combustion engine (ICE) subscription.
  *  uavcan::equipment::ice::reciprocating::Status
  *
  * @boolean

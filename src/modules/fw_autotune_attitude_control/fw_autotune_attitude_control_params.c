@@ -46,7 +46,7 @@
  * and can be dangerous. Only activate if you know what you
  * are doing, and in a safe environment.
  *
- * Any motion of the remote stick will abord the signal
+ * Any motion of the remote stick will abort the signal
  * injection and reset this parameter
  * Best is to perform the identification in position or
  * hold mode.
@@ -103,3 +103,21 @@ PARAM_DEFINE_INT32(FW_AT_APPLY, 2);
  * @group Autotune
  */
 PARAM_DEFINE_INT32(FW_AT_AXES, 3);
+
+/**
+ * Enable/disable auto tuning using an RC AUX input
+ *
+ * Defines which RC_MAP_AUXn parameter maps the RC channel used to enable/disable auto tuning.
+ *
+ * @value 0 Disable
+ * @value 1 Aux1
+ * @value 2 Aux2
+ * @value 3 Aux3
+ * @value 4 Aux4
+ * @value 5 Aux5
+ * @value 6 Aux6
+ * @min 0
+ * @max 6
+ * @group Autotune
+ */
+PARAM_DEFINE_INT32(FW_AT_MAN_AUX, 0);

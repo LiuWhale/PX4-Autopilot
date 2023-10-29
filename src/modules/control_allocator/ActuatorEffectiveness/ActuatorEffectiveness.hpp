@@ -41,7 +41,10 @@
 
 #pragma once
 
+#include <cstdint>
+
 #include <matrix/matrix/math.hpp>
+#include <uORB/topics/control_allocator_status.h>
 
 enum class AllocationMethod {
 	NONE = -1,
@@ -179,6 +182,13 @@ public:
 	 */
 	virtual const char *name() const = 0;
 
+	/**
+	 * Callback from the control allocation, allowing to manipulate the setpoint.
+	 * Used to allocate auxiliary controls to actuators (e.g. flaps and spoilers).
+	 *
+	 * @param actuator_sp input & output setpoint
+	 */
+	virtual void allocateAuxilaryControls(const float dt, int matrix_index, ActuatorVector &actuator_sp) {}
 
 	/**
 	 * Callback from the control allocation, allowing to manipulate the setpoint.
@@ -187,13 +197,29 @@ public:
 	 * @param actuator_sp input & output setpoint
 	 */
 	virtual void updateSetpoint(const matrix::Vector<float, NUM_AXES> &control_sp,
-				    int matrix_index, ActuatorVector &actuator_sp) {}
+				    int matrix_index, ActuatorVector &actuator_sp, const matrix::Vector<float, NUM_ACTUATORS> &actuator_min,
+				    const matrix::Vector<float, NUM_ACTUATORS> &actuator_max) {}
 
 	/**
 	 * Get a bitmask of motors to be stopped
 	 */
-	virtual uint32_t getStoppedMotors() const { return 0; }
+	virtual uint32_t getStoppedMotors() const { return _stopped_motors_mask; }
+
+	/**
+	 * Fill in the unallocated torque and thrust, customized by effectiveness type.
+	 * Can be implemented for every type separately. If not implemented then the effectivenes matrix is used instead.
+	 */
+	virtual void getUnallocatedControl(int matrix_index, control_allocator_status_s &status) {}
+
+	/**
+	 * Stops motors which are masked by stoppable_motors_mask and whose demanded thrust is zero
+	 *
+	 * @param stoppable_motors_mask mask of motors that should be stopped if there's no thrust demand
+	 * @param actuator_sp outcome of the allocation to determine if the motor should be stopped
+	 */
+	virtual void stopMaskedMotorsWithZeroThrust(uint32_t stoppable_motors_mask, ActuatorVector &actuator_sp);
 
 protected:
-	FlightPhase _flight_phase{FlightPhase::HOVER_FLIGHT};		///< Current flight phase
+	FlightPhase _flight_phase{FlightPhase::HOVER_FLIGHT};
+	uint32_t _stopped_motors_mask{0};
 };

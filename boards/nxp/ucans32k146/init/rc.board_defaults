@@ -3,7 +3,14 @@
 # board specific defaults
 #------------------------------------------------------------------------------
 
-pwm_out mode_pwm1 start
+pwm_out start
 
 ifup can0
-cyphal start
+
+# Start Cyphal when enabled
+if param compare -s CYPHAL_ENABLE 1
+then
+    cyphal start
+fi
+
+rgbled_ncp5623c start -X -a 56

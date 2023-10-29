@@ -139,14 +139,15 @@
 #define GPIO_HW_VER_REV_DRIVE  /* PE12 */ (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_SET|GPIO_PORTE|GPIO_PIN12)
 #define GPIO_HW_REV_SENSE      /* PC0 */  GPIO_ADC123_INP10
 #define GPIO_HW_VER_SENSE      /* PC1 */  GPIO_ADC123_INP11
-#define HW_INFO_INIT           {'V','6','C','x', 'x',0}
-#define HW_INFO_INIT_VER       3 /* Offset in above string of the VER */
-#define HW_INFO_INIT_REV       4 /* Offset in above string of the REV */
+#define HW_INFO_INIT_PREFIX    "V6C"
 
-#define BOARD_NUM_SPI_CFG_HW_VERSIONS 2 // Rev 0, 10 Sensor sets
+#define BOARD_NUM_SPI_CFG_HW_VERSIONS 3 // Rev 0, 10 and Mini Sensor sets
 //                 Base/FMUM
-#define V6C00   HW_VER_REV(0x0,0x0) // FMUV6C,                 Rev 0
-#define V6C10   HW_VER_REV(0x1,0x0) // NO PX4IO,               Rev 0
+#define V6C00   HW_VER_REV(0x0,0x0) // FMUV6C,                 Rev 0  I2C4 External but with Internal devices
+#define V6C01   HW_VER_REV(0x0,0x1) // FMUV6C,                 Rev 1  I2C4 Internal I2C2 External
+#define V6C10   HW_VER_REV(0x1,0x0) // NO PX4IO,               Rev 0  I2C4 External but with Internal devices
+#define V6C11   HW_VER_REV(0x1,0x1) // NO PX4IO,               Rev 1  I2C4 Internal I2C2 External
+#define V6C21   HW_VER_REV(0x2,0x1) // FMUV6CMini,             Rev 1  I2C4 Internal I2C2 External
 
 
 /* HEATER
@@ -214,11 +215,11 @@
 /* SD card bringup does not work if performed on the IDLE thread because it
  * will cause waiting.  Use either:
  *
- *  CONFIG_LIB_BOARDCTL=y, OR
+ *  CONFIG_BOARDCTL=y, OR
  *  CONFIG_BOARD_INITIALIZE=y && CONFIG_BOARD_INITTHREAD=y
  */
 
-#if defined(CONFIG_BOARD_INITIALIZE) && !defined(CONFIG_LIB_BOARDCTL) && \
+#if defined(CONFIG_BOARD_INITIALIZE) && !defined(CONFIG_BOARDCTL) && \
    !defined(CONFIG_BOARD_INITTHREAD)
 #  warning SDIO initialization cannot be perfomed on the IDLE thread
 #endif
@@ -270,6 +271,8 @@
 #define BOARD_ENABLE_CONSOLE_BUFFER
 
 #define PX4_I2C_BUS_MTD      4,5
+
+#define BOARD_OVERRIDE_I2C_DEVICE_EXTERNAL
 
 
 #define BOARD_NUM_IO_TIMERS 5

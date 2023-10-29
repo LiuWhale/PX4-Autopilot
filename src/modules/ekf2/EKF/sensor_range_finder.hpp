@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2020 Estimation and Control Library (ECL). All rights reserved.
+ *   Copyright (c) 2020-2023 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -12,7 +12,7 @@
  *    notice, this list of conditions and the following disclaimer in
  *    the documentation and/or other materials provided with the
  *    distribution.
- * 3. Neither the name ECL nor the names of its contributors may be
+ * 3. Neither the name PX4 nor the names of its contributors may be
  *    used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -106,7 +106,7 @@ public:
 	float getValidMinVal() const { return _rng_valid_min_val; }
 	float getValidMaxVal() const { return _rng_valid_max_val; }
 
-	void setFaulty() { _is_faulty = true; }
+	void setFaulty(bool faulty = true) { _is_faulty = faulty; }
 
 private:
 	void updateSensorToEarthRotation(const matrix::Dcmf &R_to_earth);

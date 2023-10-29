@@ -39,7 +39,6 @@
 #include <lib/matrix/matrix/math.hpp>
 
 #include <uORB/Subscription.hpp>
-#include <uORB/topics/actuator_controls.h>
 #include <uORB/topics/airspeed.h>
 #include <uORB/topics/battery_status.h>
 #include <uORB/topics/estimator_selector_status.h>
@@ -51,10 +50,14 @@
 #include <uORB/topics/wind.h>
 #include <uORB/topics/vehicle_attitude_setpoint.h>
 #include <uORB/topics/vehicle_global_position.h>
-#include <uORB/topics/vehicle_gps_position.h>
+#include <uORB/topics/vehicle_thrust_setpoint.h>
+#include <uORB/topics/sensor_gps.h>
 #include <uORB/topics/vehicle_local_position.h>
 #include <uORB/topics/vehicle_status.h>
-#include <uORB/topics/vehicle_status_flags.h>
+#include <uORB/topics/failsafe_flags.h>
+#include <uORB/topics/health_report.h>
+
+#include <px4_platform_common/events.h>
 
 class MavlinkStreamHighLatency2 : public MavlinkStream
 {
@@ -132,7 +135,7 @@ private:
 			updated |= write_mission_result(&msg);
 			updated |= write_tecs_status(&msg);
 			updated |= write_vehicle_status(&msg);
-			updated |= write_vehicle_status_flags(&msg);
+			updated |= write_failsafe_flags(&msg);
 			updated |= write_wind(&msg);
 
 			if (updated) {
@@ -307,6 +310,10 @@ private:
 				msg->failure_flags |= HL_FAILURE_FLAG_ESTIMATOR;
 			}
 
+			if (estimator_status.gps_check_fail_flags > 0) {
+				msg->failure_flags |= HL_FAILURE_FLAG_GPS;
+			}
+
 			return true;
 		}
 
@@ -332,7 +339,7 @@ private:
 		geofence_result_s geofence;
 
 		if (_geofence_sub.update(&geofence)) {
-			if (geofence.geofence_violated) {
+			if (geofence.primary_geofence_breached) {
 				msg->failure_flags |= HL_FAILURE_FLAG_GEOFENCE;
 			}
 
@@ -402,47 +409,32 @@ private:
 		vehicle_status_s status;
 
 		if (_status_sub.update(&status)) {
-			if ((status.onboard_control_sensors_enabled & MAV_SYS_STATUS_SENSOR_ABSOLUTE_PRESSURE)
-			    && !(status.onboard_control_sensors_health & MAV_SYS_STATUS_SENSOR_ABSOLUTE_PRESSURE)) {
-				msg->failure_flags |= HL_FAILURE_FLAG_ABSOLUTE_PRESSURE;
-			}
+			health_report_s health_report;
 
-			if (((status.onboard_control_sensors_enabled & MAV_SYS_STATUS_SENSOR_3D_ACCEL)
-			     && !(status.onboard_control_sensors_health & MAV_SYS_STATUS_SENSOR_3D_ACCEL)) ||
-			    ((status.onboard_control_sensors_enabled & MAV_SYS_STATUS_SENSOR_3D_ACCEL2) &&
-			     !(status.onboard_control_sensors_health & MAV_SYS_STATUS_SENSOR_3D_ACCEL2))) {
-				msg->failure_flags |= HL_FAILURE_FLAG_3D_ACCEL;
-			}
+			if (_health_report_sub.copy(&health_report)) {
+				if ((health_report.arming_check_error_flags | health_report.health_error_flags) & (uint64_t)
+				    events::px4::enums::health_component_t::absolute_pressure) {
+					msg->failure_flags |= HL_FAILURE_FLAG_ABSOLUTE_PRESSURE;
+				}
 
-			if (((status.onboard_control_sensors_enabled & MAV_SYS_STATUS_SENSOR_3D_GYRO)
-			     && !(status.onboard_control_sensors_health & MAV_SYS_STATUS_SENSOR_3D_GYRO)) ||
-			    ((status.onboard_control_sensors_enabled & MAV_SYS_STATUS_SENSOR_3D_GYRO2) &&
-			     !(status.onboard_control_sensors_health & MAV_SYS_STATUS_SENSOR_3D_GYRO2))) {
-				msg->failure_flags |= HL_FAILURE_FLAG_3D_GYRO;
-			}
+				if ((health_report.arming_check_error_flags | health_report.health_error_flags) & (uint64_t)
+				    events::px4::enums::health_component_t::accel) {
+					msg->failure_flags |= HL_FAILURE_FLAG_3D_ACCEL;
+				}
 
-			if (((status.onboard_control_sensors_enabled & MAV_SYS_STATUS_SENSOR_3D_MAG)
-			     && !(status.onboard_control_sensors_health & MAV_SYS_STATUS_SENSOR_3D_MAG)) ||
-			    ((status.onboard_control_sensors_enabled & MAV_SYS_STATUS_SENSOR_3D_MAG2) &&
-			     !(status.onboard_control_sensors_health & MAV_SYS_STATUS_SENSOR_3D_MAG2))) {
-				msg->failure_flags |= HL_FAILURE_FLAG_3D_MAG;
-			}
+				if ((health_report.arming_check_error_flags | health_report.health_error_flags) & (uint64_t)
+				    events::px4::enums::health_component_t::gyro) {
+					msg->failure_flags |= HL_FAILURE_FLAG_3D_GYRO;
+				}
 
-			if ((status.onboard_control_sensors_enabled & MAV_SYS_STATUS_TERRAIN)
-			    && !(status.onboard_control_sensors_health & MAV_SYS_STATUS_TERRAIN)) {
-				msg->failure_flags |= HL_FAILURE_FLAG_TERRAIN;
-			}
-
-			if (status.rc_signal_lost) {
-				msg->failure_flags |= HL_FAILURE_FLAG_RC_RECEIVER;
+				if ((health_report.arming_check_error_flags | health_report.health_error_flags) & (uint64_t)
+				    events::px4::enums::health_component_t::magnetometer) {
+					msg->failure_flags |= HL_FAILURE_FLAG_3D_MAG;
+				}
 			}
 
 			if (status.failure_detector_status & vehicle_status_s::FAILURE_MOTOR) {
 				msg->failure_flags |= HL_FAILURE_FLAG_ENGINE;
-			}
-
-			if (status.mission_failure) {
-				msg->failure_flags |= HL_FAILURE_FLAG_MISSION;
 			}
 
 			// flight mode
@@ -455,18 +447,23 @@ private:
 		return false;
 	}
 
-	bool write_vehicle_status_flags(mavlink_high_latency2_t *msg)
+	bool write_failsafe_flags(mavlink_high_latency2_t *msg)
 	{
-		vehicle_status_flags_s status_flags;
+		failsafe_flags_s failsafe_flags;
 
-		if (_status_flags_sub.update(&status_flags)) {
-			if (!status_flags.global_position_valid) { //TODO check if there is a better way to get only GPS failure
-				msg->failure_flags |= HL_FAILURE_FLAG_GPS;
-			}
-
-			if (status_flags.offboard_control_signal_lost) {
+		if (_failsafe_flags_sub.update(&failsafe_flags)) {
+			if (failsafe_flags.offboard_control_signal_lost) {
 				msg->failure_flags |= HL_FAILURE_FLAG_OFFBOARD_LINK;
 			}
+
+			if (failsafe_flags.mission_failure) {
+				msg->failure_flags |= HL_FAILURE_FLAG_MISSION;
+			}
+
+			if (failsafe_flags.manual_control_signal_lost) {
+				msg->failure_flags |= HL_FAILURE_FLAG_RC_RECEIVER;
+			}
+
 
 			return true;
 		}
@@ -550,7 +547,7 @@ private:
 
 	void update_gps()
 	{
-		vehicle_gps_position_s gps;
+		sensor_gps_s gps;
 
 		if (_gps_sub.update(&gps)) {
 			_eph.add_value(gps.eph, _update_rate_filtered);
@@ -564,16 +561,16 @@ private:
 
 		if (_status_sub.update(&status)) {
 			if (status.arming_state == vehicle_status_s::ARMING_STATE_ARMED) {
-				actuator_controls_s actuator{};
+				vehicle_thrust_setpoint_s vehicle_thrust_setpoint{};
 
 				if (status.is_vtol && status.vehicle_type == vehicle_status_s::VEHICLE_TYPE_FIXED_WING) {
-					if (_actuator_1_sub.copy(&actuator)) {
-						_throttle.add_value(actuator.control[actuator_controls_s::INDEX_THROTTLE], _update_rate_filtered);
+					if (_vehicle_thrust_setpoint_1_sub.copy(&vehicle_thrust_setpoint)) {
+						_throttle.add_value(vehicle_thrust_setpoint.xyz[0], _update_rate_filtered);
 					}
 
 				} else {
-					if (_actuator_0_sub.copy(&actuator)) {
-						_throttle.add_value(actuator.control[actuator_controls_s::INDEX_THROTTLE], _update_rate_filtered);
+					if (_vehicle_thrust_setpoint_0_sub.copy(&vehicle_thrust_setpoint)) {
+						_throttle.add_value(-vehicle_thrust_setpoint.xyz[2], _update_rate_filtered);
 					}
 				}
 
@@ -624,8 +621,8 @@ private:
 		msg.wp_num = UINT16_MAX;
 	}
 
-	uORB::Subscription _actuator_0_sub{ORB_ID(actuator_controls_0)};
-	uORB::Subscription _actuator_1_sub{ORB_ID(actuator_controls_1)};
+	uORB::Subscription _vehicle_thrust_setpoint_0_sub{ORB_ID(vehicle_thrust_setpoint), 0};
+	uORB::Subscription _vehicle_thrust_setpoint_1_sub{ORB_ID(vehicle_thrust_setpoint), 1};
 	uORB::Subscription _airspeed_sub{ORB_ID(airspeed)};
 	uORB::Subscription _attitude_sp_sub{ORB_ID(vehicle_attitude_setpoint)};
 	uORB::Subscription _estimator_selector_status_sub{ORB_ID(estimator_selector_status)};
@@ -637,9 +634,10 @@ private:
 	uORB::Subscription _gps_sub{ORB_ID(vehicle_gps_position)};
 	uORB::Subscription _mission_result_sub{ORB_ID(mission_result)};
 	uORB::Subscription _status_sub{ORB_ID(vehicle_status)};
-	uORB::Subscription _status_flags_sub{ORB_ID(vehicle_status_flags)};
+	uORB::Subscription _failsafe_flags_sub{ORB_ID(failsafe_flags)};
 	uORB::Subscription _tecs_status_sub{ORB_ID(tecs_status)};
 	uORB::Subscription _wind_sub{ORB_ID(wind)};
+	uORB::Subscription _health_report_sub{ORB_ID(health_report)};
 
 	SimpleAnalyzer _airspeed;
 	SimpleAnalyzer _airspeed_sp;

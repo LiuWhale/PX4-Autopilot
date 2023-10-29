@@ -55,9 +55,9 @@
 #include <lib/mathlib/math/filter/AlphaFilter.hpp>
 #include <uORB/PublicationMulti.hpp>
 #include <uORB/Subscription.hpp>
-#include <uORB/topics/actuator_controls.h>
 #include <uORB/topics/battery_status.h>
 #include <uORB/topics/vehicle_status.h>
+#include <uORB/topics/vehicle_thrust_setpoint.h>
 
 /**
  * BatteryBase is a base class for any type of battery.
@@ -88,6 +88,7 @@ public:
 
 	void setPriority(const uint8_t priority) { _priority = priority; }
 	void setConnected(const bool connected) { _connected = connected; }
+	void setStateOfCharge(const float soc) { _state_of_charge = soc; _external_state_of_charge = true; }
 	void updateVoltage(const float voltage_v);
 	void updateCurrent(const float current_a);
 
@@ -109,6 +110,8 @@ public:
 	void updateAndPublishBatteryStatus(const hrt_abstime &timestamp);
 
 protected:
+	static constexpr float LITHIUM_BATTERY_RECOGNITION_VOLTAGE = 2.1f;
+
 	struct {
 		param_t v_empty;
 		param_t v_charged;
@@ -144,14 +147,17 @@ protected:
 
 private:
 	void sumDischarged(const hrt_abstime &timestamp, float current_a);
-	void estimateStateOfCharge(const float voltage_v, const float current_a);
+	float calculateStateOfChargeVoltageBased(const float voltage_v, const float current_a);
+	void estimateStateOfCharge();
 	uint8_t determineWarning(float state_of_charge);
 	void computeScale();
 	float computeRemainingTime(float current_a);
 
-	uORB::Subscription _actuator_controls_0_sub{ORB_ID(actuator_controls_0)};
+	uORB::Subscription _vehicle_thrust_setpoint_0_sub{ORB_ID(vehicle_thrust_setpoint)};
 	uORB::Subscription _vehicle_status_sub{ORB_ID(vehicle_status)};
 	uORB::PublicationMulti<battery_status_s> _battery_status_pub{ORB_ID(battery_status)};
+
+	bool _external_state_of_charge{false}; ///< inticates that the soc is injected and not updated by this library
 
 	bool _connected{false};
 	const uint8_t _source;
@@ -171,4 +177,5 @@ private:
 	uint8_t _warning{battery_status_s::BATTERY_WARNING_NONE};
 	hrt_abstime _last_timestamp{0};
 	bool _armed{false};
+	hrt_abstime _last_unconnected_timestamp{0};
 };

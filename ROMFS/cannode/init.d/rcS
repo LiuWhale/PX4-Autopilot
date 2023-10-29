@@ -31,6 +31,11 @@ then
 	set PARAM_FILE /dev/eeeprom0
 fi
 
+if mft query -q -k MTD -s MTD_PARAMETERS -v /mnt/qspi/params
+then
+	set PARAM_FILE /mnt/qspi/params
+fi
+
 #
 # Load parameters.
 #
@@ -86,10 +91,28 @@ unset BOARD_RC_SENSORS
 . ${R}etc/init.d/rc.serial
 
 # Check for flow sensor
-if param compare SENS_EN_PX4FLOW 1
+if param compare -s SENS_EN_PX4FLOW 1
 then
 	px4flow start -X &
 fi
+
+if param compare -s IMU_GYRO_CAL_EN 1
+then
+	gyro_calibration start
+fi
+
+
+if param compare -s MBE_ENABLE 1
+then
+	# conservative mag bias estimation
+	param set-default MBE_LEARN_GAIN 5
+	param set-default IMU_GYRO_CUTOFF 20
+	mag_bias_estimator start
+fi
+
+param set-default SENS_MAG_RATE 100
+
+sensors start
 
 uavcannode start
 unset R

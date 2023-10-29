@@ -31,17 +31,13 @@
  *
  ****************************************************************************/
 
+#include <cmath>
+
 #include <gtest/gtest.h>
 #include <matrix/math.hpp>
 #include <iostream>
 
 using namespace matrix;
-
-template <typename Scalar, size_t N>
-bool isEqualAll(Dual<Scalar, N> a, Dual<Scalar, N> b)
-{
-	return isEqualF(a.value, b.value) && a.derivative == b.derivative;
-}
 
 template <typename T>
 T testFunction(const Vector<T, 3> &point)
@@ -81,9 +77,9 @@ TEST(MatrixDualTest, Dual)
 		EXPECT_FLOAT_EQ(c.derivative(0), 2.f);
 
 		Dual<float, 1> d = +a;
-		EXPECT_TRUE(isEqualAll(d, a));
+		EXPECT_EQ(d, a);
 		d += b;
-		EXPECT_TRUE(isEqualAll(d, c));
+		EXPECT_EQ(d, c);
 
 		Dual<float, 1> e = a;
 		e += b.value;
@@ -91,7 +87,7 @@ TEST(MatrixDualTest, Dual)
 		EXPECT_EQ(e.derivative, a.derivative);
 
 		Dual<float, 1> f = b.value + a;
-		EXPECT_TRUE(isEqualAll(f, e));
+		EXPECT_EQ(f, e);
 	}
 
 	{
@@ -101,9 +97,9 @@ TEST(MatrixDualTest, Dual)
 		EXPECT_FLOAT_EQ(c.derivative(0), 0.f);
 
 		Dual<float, 1> d = b;
-		EXPECT_TRUE(isEqualAll(d, b));
+		EXPECT_EQ(d, b);
 		d -= a;
-		EXPECT_TRUE(isEqualAll(d, c));
+		EXPECT_EQ(d, c);
 
 		Dual<float, 1> e = b;
 		e -= a.value;
@@ -111,7 +107,7 @@ TEST(MatrixDualTest, Dual)
 		EXPECT_EQ(e.derivative, b.derivative);
 
 		Dual<float, 1> f = a.value - b;
-		EXPECT_TRUE(isEqualAll(f, -e));
+		EXPECT_EQ(f, -e);
 	}
 
 	{
@@ -121,9 +117,9 @@ TEST(MatrixDualTest, Dual)
 		EXPECT_FLOAT_EQ(c.derivative(0), 9.f);
 
 		Dual<float, 1> d = a;
-		EXPECT_TRUE(isEqualAll(d, a));
+		EXPECT_EQ(d, a);
 		d *= b;
-		EXPECT_TRUE(isEqualAll(d, c));
+		EXPECT_EQ(d, c);
 
 		Dual<float, 1> e = a;
 		e *= b.value;
@@ -131,7 +127,7 @@ TEST(MatrixDualTest, Dual)
 		EXPECT_EQ(e.derivative, a.derivative * b.value);
 
 		Dual<float, 1> f = b.value * a;
-		EXPECT_TRUE(isEqualAll(f, e));
+		EXPECT_EQ(f, e);
 	}
 
 	{
@@ -141,9 +137,9 @@ TEST(MatrixDualTest, Dual)
 		EXPECT_FLOAT_EQ(c.derivative(0), -1.f / 3.f);
 
 		Dual<float, 1> d = b;
-		EXPECT_TRUE(isEqualAll(d, b));
+		EXPECT_EQ(d, b);
 		d /= a;
-		EXPECT_TRUE(isEqualAll(d, c));
+		EXPECT_EQ(d, c);
 
 		Dual<float, 1> e = b;
 		e /= a.value;
@@ -151,7 +147,7 @@ TEST(MatrixDualTest, Dual)
 		EXPECT_EQ(e.derivative, b.derivative / a.value);
 
 		Dual<float, 1> f = a.value / b;
-		EXPECT_TRUE(isEqualAll(f, 1.f / e));
+		EXPECT_EQ(f, 1.f / e);
 	}
 
 	{
@@ -162,15 +158,15 @@ TEST(MatrixDualTest, Dual)
 
 	{
 		// sqrt
-		EXPECT_FLOAT_EQ(sqrt(a).value, sqrt(a.value));
+		EXPECT_FLOAT_EQ(sqrt(a).value, std::sqrt(a.value));
 		EXPECT_FLOAT_EQ(sqrt(a).derivative(0), 1.f / sqrt(12.f));
 	}
 
 	{
 		// abs
-		EXPECT_TRUE(isEqualAll(a, abs(-a)));
-		EXPECT_FALSE(isEqualAll(-a, abs(a)));
-		EXPECT_TRUE(isEqualAll(-a, -abs(a)));
+		EXPECT_EQ(a, abs(-a));
+		EXPECT_NE(-a, abs(a));
+		EXPECT_EQ(-a, -abs(a));
 	}
 
 	{
@@ -195,14 +191,14 @@ TEST(MatrixDualTest, Dual)
 
 	{
 		// max/min
-		EXPECT_TRUE(isEqualAll(b, max(a, b)));
-		EXPECT_TRUE(isEqualAll(a, min(a, b)));
+		EXPECT_EQ(b, max(a, b));
+		EXPECT_EQ(a, min(a, b));
 	}
 
 	{
 		// isnan
 		EXPECT_FALSE(IsNan(a));
-		Dual<float, 1> c(sqrt(-1.f), 0);
+		Dual<float, 1> c(std::sqrt(-1.f), 0);
 		EXPECT_TRUE(IsNan(c));
 	}
 
@@ -210,7 +206,7 @@ TEST(MatrixDualTest, Dual)
 		// isfinite/isinf
 		EXPECT_TRUE(IsFinite(a));
 		EXPECT_FALSE(IsInf(a));
-		Dual<float, 1> c(sqrt(-1.f), 0);
+		Dual<float, 1> c(std::sqrt(-1.f), 0);
 		EXPECT_FALSE(IsFinite(c));
 		EXPECT_FALSE(IsInf(c));
 		Dual<float, 1> d(INFINITY, 0);
@@ -221,32 +217,32 @@ TEST(MatrixDualTest, Dual)
 	{
 		// sin/cos/tan
 		EXPECT_FLOAT_EQ(sin(a).value, sin(a.value));
-		EXPECT_FLOAT_EQ(sin(a).derivative(0), cos(a.value)); // sin'(x) = cos(x)
+		EXPECT_FLOAT_EQ(sin(a).derivative(0), std::cos(a.value)); // sin'(x) = cos(x)
 
 		EXPECT_FLOAT_EQ(cos(a).value, cos(a.value));
-		EXPECT_FLOAT_EQ(cos(a).derivative(0), -sin(a.value)); // cos'(x) = -sin(x)
+		EXPECT_FLOAT_EQ(cos(a).derivative(0), -std::sin(a.value)); // cos'(x) = -sin(x)
 
 		EXPECT_FLOAT_EQ(tan(a).value, tan(a.value));
-		EXPECT_FLOAT_EQ(tan(a).derivative(0), 1.f + tan(a.value)*tan(a.value)); // tan'(x) = 1 + tan^2(x)
+		EXPECT_FLOAT_EQ(tan(a).derivative(0), 1.f + std::tan(a.value)*std::tan(a.value)); // tan'(x) = 1 + tan^2(x)
 	}
 
 	{
 		// asin/acos/atan
 		Dual<float, 1> c(0.3f, 0);
-		EXPECT_FLOAT_EQ(asin(c).value, asin(c.value));
-		EXPECT_FLOAT_EQ(asin(c).derivative(0), 1.f / sqrt(1.f - 0.3f * 0.3f)); // asin'(x) = 1/sqrt(1-x^2)
+		EXPECT_FLOAT_EQ(asin(c).value, std::asin(c.value));
+		EXPECT_FLOAT_EQ(asin(c).derivative(0), 1.f / std::sqrt(1.f - 0.3f * 0.3f)); // asin'(x) = 1/sqrt(1-x^2)
 
-		EXPECT_FLOAT_EQ(acos(c).value, acos(c.value));
-		EXPECT_FLOAT_EQ(acos(c).derivative(0), -1.f / sqrt(1.f - 0.3f * 0.3f)); // acos'(x) = -1/sqrt(1-x^2)
+		EXPECT_FLOAT_EQ(acos(c).value, std::acos(c.value));
+		EXPECT_FLOAT_EQ(acos(c).derivative(0), -1.f / std::sqrt(1.f - 0.3f * 0.3f)); // acos'(x) = -1/sqrt(1-x^2)
 
-		EXPECT_FLOAT_EQ(atan(c).value, atan(c.value));
+		EXPECT_FLOAT_EQ(atan(c).value, std::atan(c.value));
 		EXPECT_FLOAT_EQ(atan(c).derivative(0), 1.f / (1.f + 0.3f * 0.3f)); // tan'(x) = 1 + x^2
 	}
 
 	{
 		// atan2
 		EXPECT_FLOAT_EQ(atan2(a, b).value, atan2(a.value, b.value));
-		EXPECT_TRUE(isEqualAll(atan2(a, Dual<float, 1>(b.value)), atan(a / b.value))); // atan2'(y, x) = atan'(y/x)
+		EXPECT_EQ(atan2(a, Dual<float, 1>(b.value)), atan(a / b.value)); // atan2'(y, x) = atan'(y/x)
 	}
 
 	{

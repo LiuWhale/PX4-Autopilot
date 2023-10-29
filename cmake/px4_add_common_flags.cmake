@@ -144,7 +144,6 @@ function(px4_add_common_flags)
 	list(APPEND c_flags
 		-fno-common
 
-		-Wbad-function-cast
 		-Wnested-externs
 		-Wstrict-prototypes
 	)
@@ -156,16 +155,13 @@ function(px4_add_common_flags)
 	# CXX only flags
 	set(cxx_flags)
 	list(APPEND cxx_flags
-		-fno-exceptions
-		-fno-threadsafe-statics
-
 		-Wreorder
 
 		# disabled warnings
 		-Wno-overloaded-virtual # TODO: fix and remove
 	)
 
-	if(NOT CMAKE_BUILD_TYPE STREQUAL FuzzTesting)
+	if((NOT CMAKE_BUILD_TYPE STREQUAL FuzzTesting) AND (NOT PX4_CONFIG MATCHES "px4_sitl"))
 		list(APPEND cxx_flags
 			-fno-rtti
 		)

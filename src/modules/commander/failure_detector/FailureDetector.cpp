@@ -124,8 +124,8 @@ void FailureInjector::update()
 			ack.command = vehicle_command.command;
 			ack.from_external = false;
 			ack.result = supported ?
-				     vehicle_command_ack_s::VEHICLE_RESULT_ACCEPTED :
-				     vehicle_command_ack_s::VEHICLE_RESULT_UNSUPPORTED;
+				     vehicle_command_ack_s::VEHICLE_CMD_RESULT_ACCEPTED :
+				     vehicle_command_ack_s::VEHICLE_CMD_RESULT_UNSUPPORTED;
 			ack.timestamp = hrt_absolute_time();
 			_command_ack_pub.publish(ack);
 		}
@@ -171,7 +171,7 @@ bool FailureDetector::update(const vehicle_status_s &vehicle_status, const vehic
 	failure_detector_status_u status_prev = _status;
 
 	if (vehicle_control_mode.flag_control_attitude_enabled) {
-		updateAttitudeStatus();
+		updateAttitudeStatus(vehicle_status);
 
 		if (_param_fd_ext_ats_en.get()) {
 			updateExternalAtsStatus();
@@ -206,15 +206,31 @@ bool FailureDetector::update(const vehicle_status_s &vehicle_status, const vehic
 	return _status.value != status_prev.value;
 }
 
-void FailureDetector::updateAttitudeStatus()
+void FailureDetector::updateAttitudeStatus(const vehicle_status_s &vehicle_status)
 {
 	vehicle_attitude_s attitude;
 
 	if (_vehicle_attitude_sub.update(&attitude)) {
 
 		const matrix::Eulerf euler(matrix::Quatf(attitude.q));
-		const float roll(euler.phi());
-		const float pitch(euler.theta());
+		float roll(euler.phi());
+		float pitch(euler.theta());
+
+		// special handling for tailsitter
+		if (vehicle_status.is_vtol_tailsitter) {
+			if (vehicle_status.in_transition_mode) {
+				// disable attitude check during tailsitter transition
+				roll = 0.f;
+				pitch = 0.f;
+
+			} else if (vehicle_status.vehicle_type == vehicle_status_s::VEHICLE_TYPE_FIXED_WING) {
+				// in FW flight rotate the attitude by 90° around pitch (level FW flight = 0° pitch)
+				const matrix::Eulerf euler_rotated = matrix::Eulerf(matrix::Quatf(attitude.q) * matrix::Quatf(matrix::Eulerf(0.f,
+								     M_PI_2_F, 0.f)));
+				roll = euler_rotated.phi();
+				pitch = euler_rotated.theta();
+			}
+		}
 
 		const float max_roll_deg = _param_fd_fail_r.get();
 		const float max_pitch_deg = _param_fd_fail_p.get();
@@ -269,7 +285,7 @@ void FailureDetector::updateEscsStatus(const vehicle_status_s &vehicle_status, c
 		bool is_esc_failure = !is_all_escs_armed;
 
 		for (int i = 0; i < limited_esc_count; i++) {
-			is_esc_failure = is_esc_failure | (esc_status.esc[i].failures > 0);
+			is_esc_failure = is_esc_failure || (esc_status.esc[i].failures > 0);
 		}
 
 		_esc_failure_hysteresis.set_hysteresis_time_from(false, 300_ms);
@@ -324,14 +340,14 @@ void FailureDetector::updateImbalancedPropStatus()
 
 			if ((imu_status.accel_device_id != 0)
 			    && (imu_status.accel_device_id == _selected_accel_device_id)) {
-				const float dt = math::constrain((float)(imu_status.timestamp - _imu_status_timestamp_prev), 0.01f, 1.f);
+				const float dt = math::constrain((imu_status.timestamp - _imu_status_timestamp_prev) * 1e-6f, 0.01f, 1.f);
 				_imu_status_timestamp_prev = imu_status.timestamp;
 
 				_imbalanced_prop_lpf.setParameters(dt, _imbalanced_prop_lpf_time_constant);
 
-				const float std_x = sqrtf(imu_status.var_accel[0]);
-				const float std_y = sqrtf(imu_status.var_accel[1]);
-				const float std_z = sqrtf(imu_status.var_accel[2]);
+				const float std_x = sqrtf(math::max(imu_status.var_accel[0], 0.f));
+				const float std_y = sqrtf(math::max(imu_status.var_accel[1], 0.f));
+				const float std_z = sqrtf(math::max(imu_status.var_accel[2], 0.f));
 
 				// Note: the metric is done using standard deviations instead of variances to be linear
 				const float metric = (std_x + std_y) / 2.f - std_z;

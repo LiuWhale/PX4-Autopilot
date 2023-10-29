@@ -53,7 +53,7 @@ else()
 	set(comp_metadata_param_uri_fallback ${comp_metadata_param_uri_board})
 endif()
 # arguments: type, metadata file, uri, fallback uri, optional translation uri
-list(APPEND comp_metadata_types "--type" "1,${PX4_BINARY_DIR}/parameters.json.xz,${comp_metadata_param_uri},${comp_metadata_param_uri_fallback},")
+list(APPEND comp_metadata_types "--type" "1,${PX4_BINARY_DIR}/parameters.json.xz,${comp_metadata_param_uri},${comp_metadata_param_uri_fallback},https://raw.githubusercontent.com/PX4/PX4-Metadata-Translations/main/translated/parameters_summary.json")
 
 
 set(comp_metadata_events_uri_board "${s3_url}/Firmware/{version}/${comp_metadata_board}/all_events.json.xz")
@@ -66,7 +66,7 @@ else()
 	set(comp_metadata_events_uri "mftp://etc/extras/all_events.json.xz")
 	set(comp_metadata_events_uri_fallback ${comp_metadata_events_uri_board})
 endif()
-list(APPEND comp_metadata_types "--type" "4,${PX4_BINARY_DIR}/events/all_events.json.xz,${comp_metadata_events_uri},${comp_metadata_events_uri_fallback},")
+list(APPEND comp_metadata_types "--type" "4,${PX4_BINARY_DIR}/events/all_events.json.xz,${comp_metadata_events_uri},${comp_metadata_events_uri_fallback},https://raw.githubusercontent.com/PX4/PX4-Metadata-Translations/main/translated/events_summary.json")
 
 set(comp_metadata_actuators_uri_board "${s3_url}/Firmware/{version}/${comp_metadata_board}/actuators.json.xz")
 list(FIND config_romfs_extra_dependencies "actuators_json" index)
@@ -90,6 +90,7 @@ add_custom_command(OUTPUT ${component_general_json} ${component_general_json}.xz
 		--version-file ${PX4_BINARY_DIR}/src/lib/version/build_git_version.h
 	COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/generate_crc.py
 		${component_general_json}
+		${PX4_BINARY_DIR}/events/all_events.json.xz
 		--output ${component_information_header}
 	DEPENDS
 		generate_component_general.py

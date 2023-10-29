@@ -146,7 +146,7 @@ MavlinkLogHandler::_log_request_list(const mavlink_message_t *msg)
 	//-- Check for re-requests (data loss) or new request
 	if (_current_status != LogHandlerState::Inactive) {
 		//-- Is this a new request?
-		if ((request.end - request.start) > _log_count) {
+		if (request.start == 0) {
 			_current_status = LogHandlerState::Inactive;
 			_close_and_unlink_files();
 
@@ -275,7 +275,7 @@ MavlinkLogHandler::_log_send_listing()
 	mavlink_msg_log_entry_send_struct(_mavlink->get_channel(), &response);
 
 	//-- If we're done listing, flag it.
-	if (_next_entry == _last_entry) {
+	if (_next_entry >= _last_entry) {
 		_current_status = LogHandlerState::Idle;
 
 	} else {

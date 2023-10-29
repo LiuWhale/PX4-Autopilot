@@ -33,10 +33,11 @@
 
 #pragma once
 
-#include "Integrator.hpp"
+#include <Integrator.hpp>
 
 #include <lib/mathlib/math/Limits.hpp>
 #include <lib/mathlib/math/WelfordMean.hpp>
+#include <lib/mathlib/math/WelfordMeanVector.hpp>
 #include <lib/matrix/matrix/math.hpp>
 #include <lib/perf/perf_counter.h>
 #include <lib/sensor_calibration/Accelerometer.hpp>
@@ -92,8 +93,13 @@ private:
 	void SensorCalibrationSaveAccel();
 	void SensorCalibrationSaveGyro();
 
+	// return the square of two floating point numbers
+	static constexpr float sq(float var) { return var * var; }
+
 	uORB::PublicationMulti<vehicle_imu_s> _vehicle_imu_pub{ORB_ID(vehicle_imu)};
 	uORB::PublicationMulti<vehicle_imu_status_s> _vehicle_imu_status_pub{ORB_ID(vehicle_imu_status)};
+
+	static constexpr hrt_abstime kIMUStatusPublishingInterval{100_ms};
 
 	uORB::SubscriptionInterval _parameter_update_sub{ORB_ID(parameter_update), 1_s};
 
@@ -108,8 +114,8 @@ private:
 	calibration::Accelerometer _accel_calibration{};
 	calibration::Gyroscope _gyro_calibration{};
 
-	Integrator       _accel_integrator{};
-	IntegratorConing _gyro_integrator{};
+	sensors::Integrator       _accel_integrator{};
+	sensors::IntegratorConing _gyro_integrator{};
 
 	uint32_t _imu_integration_interval_us{5000};
 
@@ -117,16 +123,17 @@ private:
 	hrt_abstime _gyro_timestamp_sample_last{0};
 	hrt_abstime _gyro_timestamp_last{0};
 
-	math::WelfordMean<matrix::Vector3f> _raw_accel_mean{};
-	math::WelfordMean<matrix::Vector3f> _raw_gyro_mean{};
+	math::WelfordMeanVector<float, 3> _raw_accel_mean{};
+	math::WelfordMeanVector<float, 3> _raw_gyro_mean{};
 
-	math::WelfordMean<matrix::Vector2f> _accel_interval_mean{};
-	math::WelfordMean<matrix::Vector2f> _gyro_interval_mean{};
+	math::WelfordMean<float> _accel_mean_interval_us{};
+	math::WelfordMean<float> _accel_fifo_mean_interval_us{};
 
-	math::WelfordMean<matrix::Vector2f> _gyro_update_latency_mean{};
+	math::WelfordMean<float> _gyro_mean_interval_us{};
+	math::WelfordMean<float> _gyro_fifo_mean_interval_us{};
 
-	float _accel_interval_best_variance{(float)INFINITY};
-	float _gyro_interval_best_variance{(float)INFINITY};
+	math::WelfordMean<float> _gyro_update_latency_mean_us{};
+	math::WelfordMean<float> _gyro_publish_latency_mean_us{};
 
 	float _accel_interval_us{NAN};
 	float _gyro_interval_us{NAN};
@@ -164,7 +171,7 @@ private:
 	bool _data_gap{false};
 	bool _update_integrator_config{true};
 	bool _intervals_configured{false};
-	bool _publish_status{false};
+	bool _publish_status{true};
 
 	const uint8_t _instance;
 

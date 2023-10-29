@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2019 ECL Development Team. All rights reserved.
+ *   Copyright (c) 2019-2023 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -66,6 +66,10 @@ public:
 		_ekf->set_vehicle_at_rest(true);
 
 		_sensor_simulator.runSeconds(7);
+
+		// When at rest, the strong zero velocity update keeps the local position
+		// valid. Deactivate this to test the change of validity without zvup
+		_ekf->set_vehicle_at_rest(false);
 	}
 
 	// Use this method to clean up any memory, network etc. after each test
@@ -178,7 +182,6 @@ TEST_F(EkfFusionLogicTest, fallbackFromGpsToFlow)
 	const float min_ground_distance = 0.f;
 	const float max_ground_distance = 50.f;
 	_ekf->set_optical_flow_limits(max_flow_rate, min_ground_distance, max_ground_distance);
-	_sensor_simulator.startFlow();
 	_sensor_simulator.startFlow();
 	_ekf_wrapper.enableFlowFusion();
 
@@ -358,6 +361,7 @@ TEST_F(EkfFusionLogicTest, doBaroHeightFusion)
 	// GIVEN: EKF that receives baro and GPS data
 	_sensor_simulator.startGps();
 	_sensor_simulator.runSeconds(11);
+	_ekf_wrapper.enableGpsHeightFusion();
 
 	// THEN: EKF should intend to fuse baro by default
 	EXPECT_TRUE(_ekf_wrapper.isIntendingBaroHeightFusion());
@@ -396,26 +400,28 @@ TEST_F(EkfFusionLogicTest, doBaroHeightFusionTimeout)
 
 	// BUT WHEN: GPS height data is also available
 	_sensor_simulator.startGps();
+	_ekf_wrapper.enableGpsHeightFusion();
 	_sensor_simulator.runSeconds(11);
 	reset_logging_checker.capturePostResetState();
 	EXPECT_TRUE(reset_logging_checker.isVerticalVelocityResetCounterIncreasedBy(2));
+	EXPECT_TRUE(reset_logging_checker.isVerticalPositionResetCounterIncreasedBy(1));
 
 	// AND: the baro data jumps by a lot
 	_sensor_simulator._baro.setData(800.f);
 	_sensor_simulator.runSeconds(20);
 	reset_logging_checker.capturePostResetState();
 
-	// THEN: EKF should fallback to GPS height
+	// THEN: EKF should fallback to GPS height (without reset)
 	EXPECT_FALSE(_ekf_wrapper.isIntendingBaroHeightFusion());
 	EXPECT_TRUE(_ekf_wrapper.isIntendingGpsHeightFusion());
-	EXPECT_TRUE(reset_logging_checker.isVerticalVelocityResetCounterIncreasedBy(3));
-	EXPECT_TRUE(reset_logging_checker.isVerticalPositionResetCounterIncreasedBy(2));
+	EXPECT_TRUE(reset_logging_checker.isVerticalVelocityResetCounterIncreasedBy(2));
+	EXPECT_TRUE(reset_logging_checker.isVerticalPositionResetCounterIncreasedBy(1));
 }
 
 TEST_F(EkfFusionLogicTest, doGpsHeightFusion)
 {
 	// WHEN: commanding GPS height and sending GPS data
-	_ekf_wrapper.setGpsHeight();
+	_ekf_wrapper.enableGpsHeightFusion();
 	_sensor_simulator.startGps();
 	_sensor_simulator.runSeconds(11);
 
@@ -434,7 +440,7 @@ TEST_F(EkfFusionLogicTest, doGpsHeightFusion)
 TEST_F(EkfFusionLogicTest, doRangeHeightFusion)
 {
 	// WHEN: commanding range height and sending range data
-	_ekf_wrapper.setRangeHeight();
+	_ekf_wrapper.enableRangeHeightFusion();
 	_sensor_simulator.startRangeFinder();
 	_sensor_simulator.runSeconds(2.5f);
 	// THEN: EKF should intend to fuse range height
@@ -462,12 +468,12 @@ TEST_F(EkfFusionLogicTest, doRangeHeightFusion)
 TEST_F(EkfFusionLogicTest, doVisionHeightFusion)
 {
 	// WHEN: commanding vision height and sending vision data
-	_ekf_wrapper.setVisionHeight();
+	_ekf_wrapper.enableExternalVisionHeightFusion();
 	_sensor_simulator.startExternalVision();
 	_sensor_simulator.runSeconds(2);
 
 	// THEN: EKF should intend to fuse vision height
-	EXPECT_TRUE(_ekf_wrapper.isIntendingVisionHeightFusion());
+	EXPECT_TRUE(_ekf_wrapper.isIntendingExternalVisionHeightFusion());
 
 	// WHEN: stop sending vision data
 	_sensor_simulator.stopExternalVision();
@@ -475,6 +481,6 @@ TEST_F(EkfFusionLogicTest, doVisionHeightFusion)
 
 	// THEN: EKF should stop to intend to use vision height
 
-	EXPECT_FALSE(_ekf_wrapper.isIntendingVisionHeightFusion());
+	EXPECT_FALSE(_ekf_wrapper.isIntendingExternalVisionHeightFusion());
 	EXPECT_TRUE(_ekf_wrapper.isIntendingBaroHeightFusion());
 }

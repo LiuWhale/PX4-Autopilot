@@ -197,7 +197,7 @@ int TemperatureCalibrationGyro::finish_sensor_instance(PerSensorData &data, int 
 
 	for (unsigned axis_index = 0; axis_index < 3; axis_index++) {
 		for (unsigned coef_index = 0; coef_index <= 3; coef_index++) {
-			sprintf(str, "TC_G%d_X%d_%d", sensor_index, 3 - coef_index, axis_index);
+			snprintf(str, sizeof(str), "TC_G%d_X%d_%d", sensor_index, 3 - coef_index, axis_index);
 			param = (float)res[axis_index][coef_index];
 			result = param_set_no_notification(param_find(str), &param);
 
@@ -210,6 +210,12 @@ int TemperatureCalibrationGyro::finish_sensor_instance(PerSensorData &data, int 
 	set_parameter("TC_G%d_TMAX", sensor_index, &data.high_temp);
 	set_parameter("TC_G%d_TMIN", sensor_index, &data.low_temp);
 	set_parameter("TC_G%d_TREF", sensor_index, &data.ref_temp);
+
+	// reset current calibration (covered by TC parameters)
+	float offset = 0.0f;
+	set_parameter("CAL_GYRO%u_XOFF", sensor_index, &offset);
+	set_parameter("CAL_GYRO%u_YOFF", sensor_index, &offset);
+	set_parameter("CAL_GYRO%u_ZOFF", sensor_index, &offset);
 
 	return 0;
 }

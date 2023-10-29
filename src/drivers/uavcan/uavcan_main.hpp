@@ -46,14 +46,36 @@
 #include <px4_platform_common/atomic.h>
 #include <px4_platform_common/px4_work_queue/ScheduledWorkItem.hpp>
 
+#if defined(CONFIG_UAVCAN_OUTPUTS_CONTROLLER)
 #include "actuators/esc.hpp"
-#include "actuators/hardpoint.hpp"
 #include "actuators/servo.hpp"
+#endif
+
+#if defined(CONFIG_UAVCAN_HARDPOINT_CONTROLLER)
+#include "actuators/hardpoint.hpp"
+#endif
+
+
 #include "allocator.hpp"
+
+#if defined(CONFIG_UAVCAN_ARMING_CONTROLLER)
+#include "arming_status.hpp"
+#endif
+
+#if defined(CONFIG_UAVCAN_BEEP_CONTROLLER)
 #include "beep.hpp"
+#endif
+
 #include "logmessage.hpp"
+
+#if defined(CONFIG_UAVCAN_RGB_CONTROLLER)
 #include "rgbled.hpp"
+#endif
+
+#if defined(CONFIG_UAVCAN_SAFETY_STATE_CONTROLLER)
 #include "safety_state.hpp"
+#endif
+
 #include "sensors/sensor_bridge.hpp"
 #include "uavcan_driver.hpp"
 #include "uavcan_servers.hpp"
@@ -90,6 +112,8 @@ class UavcanNode;
  * a fixed rate or upon bus updates).
  * All work items are expected to run on the same work queue.
  */
+
+#if defined(CONFIG_UAVCAN_OUTPUTS_CONTROLLER)
 class UavcanMixingInterfaceESC : public OutputModuleInterface
 {
 public:
@@ -142,11 +166,12 @@ private:
 	UavcanServoController &_servo_controller;
 	MixingOutput _mixing_output{"UAVCAN_SV", UavcanServoController::MAX_ACTUATORS, *this, MixingOutput::SchedulingPolicy::Auto, false, false};
 };
+#endif
 
 /**
  * A UAVCAN node.
  */
-class UavcanNode : public cdev::CDev, public px4::ScheduledWorkItem, public ModuleParams
+class UavcanNode : public px4::ScheduledWorkItem, public ModuleParams
 {
 	static constexpr unsigned MaxBitRatePerSec	= 1000000;
 	static constexpr unsigned bitPerFrame		= 148;
@@ -177,8 +202,6 @@ public:
 	UavcanNode(uavcan::ICanDriver &can_driver, uavcan::ISystemClock &system_clock);
 
 	virtual		~UavcanNode();
-
-	virtual int	ioctl(file *filp, int cmd, unsigned long arg);
 
 	static int	start(uavcan::NodeID node_id, uint32_t bitrate);
 
@@ -214,8 +237,6 @@ private:
 	void		set_setget_response(uavcan::protocol::param::GetSet::Response *resp) { _setget_response = resp; }
 	void		free_setget_response(void) { _setget_response = nullptr; }
 
-	void enable_idle_throttle_when_armed(bool value);
-
 	px4::atomic_bool	_task_should_exit{false};	///< flag to indicate to tear down the CAN driver
 
 	unsigned		_output_count{0};		///< number of actuators currently available
@@ -224,18 +245,34 @@ private:
 
 	uavcan_node::Allocator	 _pool_allocator;
 
+	bool                    _node_init{false};
 	uavcan::Node<>			_node;				///< library instance
 	pthread_mutex_t			_node_mutex;
 
+#if defined(CONFIG_UAVCAN_ARMING_CONTROLLER)
+	UavcanArmingStatus		_arming_status_controller;
+#endif
+#if defined(CONFIG_UAVCAN_BEEP_CONTROLLER)
 	UavcanBeepController		_beep_controller;
+#endif
+#if defined(CONFIG_UAVCAN_OUTPUTS_CONTROLLER)
 	UavcanEscController		_esc_controller;
-	UavcanServoController		_servo_controller;
 	UavcanMixingInterfaceESC 	_mixing_interface_esc{_node_mutex, _esc_controller};
+
+	UavcanServoController		_servo_controller;
 	UavcanMixingInterfaceServo 	_mixing_interface_servo{_node_mutex, _servo_controller};
+#endif
+#if defined(CONFIG_UAVCAN_HARDPOINT_CONTROLLER)
 	UavcanHardpointController	_hardpoint_controller;
+#endif
+#if defined(CONFIG_UAVCAN_SAFETY_STATE_CONTROLLER)
 	UavcanSafetyState         	_safety_state_controller;
-	UavcanLogMessage                _log_message_controller;
+#endif
+#if defined(CONFIG_UAVCAN_RGB_CONTROLLER)
 	UavcanRGBController             _rgbled_controller;
+#endif
+
+	UavcanLogMessage                _log_message_controller;
 
 	uavcan::GlobalTimeSyncMaster	_time_sync_master;
 	uavcan::GlobalTimeSyncSlave	_time_sync_slave;
@@ -244,9 +281,6 @@ private:
 	uavcan::NodeInfoRetriever   _node_info_retriever;
 
 	List<IUavcanSensorBridge *>	_sensor_bridges;		///< List of active sensor bridges
-
-	bool 				_idle_throttle_when_armed{false};
-	int32_t 			_idle_throttle_when_armed_param{0};
 
 	perf_counter_t			_cycle_perf{perf_alloc(PC_ELAPSED, MODULE_NAME": cycle time")};
 	perf_counter_t			_interval_perf{perf_alloc(PC_INTERVAL, MODULE_NAME": cycle interval")};

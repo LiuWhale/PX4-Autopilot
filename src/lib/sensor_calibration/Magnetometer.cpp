@@ -65,13 +65,53 @@ void Magnetometer::set_device_id(uint32_t device_id)
 		Reset();
 
 		ParametersUpdate();
+		SensorCorrectionsUpdate(true);
+	}
+}
+
+void Magnetometer::SensorCorrectionsUpdate(bool force)
+{
+	// check if the selected sensor has updated
+	if (_sensor_correction_sub.updated() || force) {
+
+		// valid device id required
+		if (_device_id == 0) {
+			return;
+		}
+
+		sensor_correction_s corrections;
+
+		if (_sensor_correction_sub.copy(&corrections)) {
+			// find sensor_corrections index
+			for (int i = 0; i < MAX_SENSOR_COUNT; i++) {
+				if (corrections.mag_device_ids[i] == _device_id) {
+					switch (i) {
+					case 0:
+						_thermal_offset = Vector3f{corrections.mag_offset_0};
+						return;
+					case 1:
+						_thermal_offset = Vector3f{corrections.mag_offset_1};
+						return;
+					case 2:
+						_thermal_offset = Vector3f{corrections.mag_offset_2};
+						return;
+					case 3:
+						_thermal_offset = Vector3f{corrections.mag_offset_3};
+						return;
+					}
+				}
+			}
+		}
+
+		// zero thermal offset if not found
+		_thermal_offset.zero();
 	}
 }
 
 bool Magnetometer::set_offset(const Vector3f &offset)
 {
-	if (Vector3f(_offset - offset).longerThan(0.01f)) {
-		if (PX4_ISFINITE(offset(0)) && PX4_ISFINITE(offset(1)) && PX4_ISFINITE(offset(2))) {
+	if (Vector3f(_offset - offset).longerThan(0.005f)) {
+		if (offset.isAllFinite()) {
 			_offset = offset;
 			_calibration_count++;
 			return true;
@@ -84,9 +124,7 @@ bool Magnetometer::set_offset(const Vector3f &offset)
 bool Magnetometer::set_scale(const Vector3f &scale)
 {
 	if (Vector3f(_scale.diag() - scale).longerThan(0.01f)) {
-		if ((scale(0) > 0.f) && (scale(1) > 0.f) && (scale(2) > 0.f) &&
-		    PX4_ISFINITE(scale(0)) && PX4_ISFINITE(scale(1)) && PX4_ISFINITE(scale(2))) {
-
+		if (scale.isAllFinite() && (scale(0) > 0.f) && (scale(1) > 0.f) && (scale(2) > 0.f)) {
 			_scale(0, 0) = scale(0);
 			_scale(1, 1) = scale(1);
 			_scale(2, 2) = scale(2);
@@ -102,7 +140,7 @@ bool Magnetometer::set_scale(const Vector3f &scale)
 bool Magnetometer::set_offdiagonal(const Vector3f &offdiagonal)
 {
 	if (Vector3f(Vector3f{_scale(0, 1), _scale(0, 2), _scale(1, 2)} - offdiagonal).longerThan(0.01f)) {
-		if (PX4_ISFINITE(offdiagonal(0)) && PX4_ISFINITE(offdiagonal(1)) && PX4_ISFINITE(offdiagonal(2))) {
+		if (offdiagonal.isAllFinite()) {
 
 			_scale(0, 1) = offdiagonal(0);
 			_scale(1, 0) = offdiagonal(0);
@@ -121,12 +159,39 @@ bool Magnetometer::set_offdiagonal(const Vector3f &offdiagonal)
 	return false;
 }
 
-void Magnetometer::set_rotation(Rotation rotation)
+void Magnetometer::set_rotation(const Rotation rotation)
 {
-	_rotation_enum = rotation;
+	if (rotation < ROTATION_MAX) {
+		_rotation_enum = rotation;
+
+	} else {
+		// invalid rotation, resetting
+		_rotation_enum = ROTATION_NONE;
+	}
+
+	// always apply level adjustments
+	_rotation = Dcmf(GetSensorLevelAdjustment()) * get_rot_matrix(_rotation_enum);
+
+	// clear any custom rotation
+	_rotation_custom_euler.zero();
+}
+
+void Magnetometer::set_custom_rotation(const Eulerf &rotation)
+{
+	_rotation_enum = ROTATION_CUSTOM;
+
+	// store custom rotation
+	_rotation_custom_euler = rotation;
 
 	// always apply board level adjustments
-	_rotation = Dcmf(GetSensorLevelAdjustment()) * get_rot_matrix(rotation);
+	_rotation = Dcmf(GetSensorLevelAdjustment()) * Dcmf(_rotation_custom_euler);
+
+	// TODO: Note that ideally this shouldn't be necessary for an external sensors, as the definition of *rotation
+	// between sensor frame & vehicle's body frame isn't affected by the rotation of the Autopilot.
+	// however, since while doing the 'level-calibration', users don't put the vehicle truly *horizontal, the
+	// measured board roll/pitch offset isn't true. So this affects external sensors as well (which is why we apply
+	// internal SensorLevelAdjustment to all the sensors). We need to figure out how to set the sensor board offset
+	// values properly (i.e. finding Vehicle's true Forward-Right-Down frame in a user's perspective)
 }
 
 bool Magnetometer::set_calibration_index(int calibration_index)
@@ -162,13 +227,39 @@ bool Magnetometer::ParametersLoad()
 		// CAL_MAGx_ROT
 		int32_t rotation_value = GetCalibrationParamInt32(SensorString(), "ROT", _calibration_index);
 
+		const float euler_roll_deg = GetCalibrationParamFloat(SensorString(), "ROLL", _calibration_index);
+		const float euler_pitch_deg = GetCalibrationParamFloat(SensorString(), "PITCH", _calibration_index);
+		const float euler_yaw_deg = GetCalibrationParamFloat(SensorString(), "YAW", _calibration_index);
+
 		if (_external) {
-			if ((rotation_value >= ROTATION_MAX) || (rotation_value < 0)) {
+			if (((rotation_value >= ROTATION_MAX) && (rotation_value != ROTATION_CUSTOM)) || (rotation_value < 0)) {
 				// invalid rotation, resetting
 				rotation_value = ROTATION_NONE;
 			}
 
-			set_rotation(static_cast<Rotation>(rotation_value));
+			// if CAL_MAGx_{ROLL,PITCH,YAW} manually set then CAL_MAGx_ROT needs to be ROTATION_CUSTOM
+			if ((rotation_value != ROTATION_CUSTOM)
+			    && ((fabsf(euler_roll_deg) > FLT_EPSILON)
+				|| (fabsf(euler_pitch_deg) > FLT_EPSILON)
+				|| (fabsf(euler_yaw_deg) > FLT_EPSILON))) {
+
+				rotation_value = ROTATION_CUSTOM;
+				SetCalibrationParam(SensorString(), "ROT", _calibration_index, rotation_value);
+			}
+
+			// Handle custom specified euler angle
+			if (rotation_value == ROTATION_CUSTOM) {
+
+				const matrix::Eulerf rotation_custom_euler{
+					math::radians(euler_roll_deg),
+					math::radians(euler_pitch_deg),
+					math::radians(euler_yaw_deg)};
+
+				set_custom_rotation(rotation_custom_euler);
+
+			} else {
+				set_rotation(static_cast<Rotation>(rotation_value));
+			}
 
 		} else {
 			// internal sensors follow board rotation
@@ -272,6 +363,10 @@ bool Magnetometer::ParametersSave(int desired_calibration_index, bool force)
 		} else {
 			success &= SetCalibrationParam(SensorString(), "ROT", _calibration_index, -1); // internal
 		}
+
+		success &= SetCalibrationParam(SensorString(), "ROLL", _calibration_index, math::degrees(_rotation_custom_euler(0)));
+		success &= SetCalibrationParam(SensorString(), "PITCH", _calibration_index, math::degrees(_rotation_custom_euler(1)));
+		success &= SetCalibrationParam(SensorString(), "YAW", _calibration_index, math::degrees(_rotation_custom_euler(2)));
 
 		return success;
 	}

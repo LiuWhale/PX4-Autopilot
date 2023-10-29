@@ -47,7 +47,7 @@
 #include <nuttx/spi/spi.h>
 #include <arch/board/board.h>
 
-#include "arm_arch.h"
+#include "arm_internal.h"
 #include "chip.h"
 #include <systemlib/px4_macros.h>
 
@@ -63,7 +63,7 @@
 constexpr px4_spi_bus_t px4_spi_buses[SPI_BUS_MAX_BUS_ITEMS] = {
 	initSPIBusExternal(SPI::Bus::SPI0, {
 		// Going to assume PTB5 means PortB, Pin5
-		initSPIConfigExternal(SPI::CS{GPIO::PortB, GPIO::Pin5})
+		initSPIConfigExternal(SPI::CS{GPIO::PortB, GPIO::Pin5}, SPI::DRDY{GPIO::PortE, GPIO::Pin0}),
 	}),
 };
 
@@ -93,7 +93,7 @@ __EXPORT void board_spi_reset(int ms, int bus_mask)
 		}
 	}
 
-	/* Restore all the CS to ouputs inactive */
+	/* Restore all the CS to outputs inactive */
 	for (int bus = 0; bus < SPI_BUS_MAX_BUS_ITEMS; ++bus) {
 		if (px4_spi_buses[bus].bus == PX4_BUS_NUMBER_TO_PX4(1)) {
 			for (int i = 0; i < SPI_BUS_MAX_DEVICES; ++i) {

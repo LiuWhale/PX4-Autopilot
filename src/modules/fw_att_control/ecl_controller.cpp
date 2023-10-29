@@ -61,9 +61,8 @@ ECL_Controller::ECL_Controller() :
 	_max_rate(0.0f),
 	_last_output(0.0f),
 	_integrator(0.0f),
-	_rate_error(0.0f),
-	_rate_setpoint(0.0f),
-	_bodyrate_setpoint(0.0f)
+	_euler_rate_setpoint(0.0f),
+	_body_rate_setpoint(0.0f)
 {
 }
 
@@ -104,42 +103,17 @@ void ECL_Controller::set_max_rate(float max_rate)
 	_max_rate = max_rate;
 }
 
-void ECL_Controller::set_bodyrate_setpoint(float rate)
+float ECL_Controller::get_euler_rate_setpoint()
 {
-	_bodyrate_setpoint = math::constrain(rate, -_max_rate, _max_rate);
+	return _euler_rate_setpoint;
 }
 
-float ECL_Controller::get_rate_error()
+float ECL_Controller::get_body_rate_setpoint()
 {
-	return _rate_error;
-}
-
-float ECL_Controller::get_desired_rate()
-{
-	return _rate_setpoint;
-}
-
-float ECL_Controller::get_desired_bodyrate()
-{
-	return _bodyrate_setpoint;
+	return _body_rate_setpoint;
 }
 
 float ECL_Controller::get_integrator()
 {
 	return _integrator;
-}
-
-float ECL_Controller::constrain_airspeed(float airspeed, float minspeed, float maxspeed)
-{
-	float airspeed_result = airspeed;
-
-	if (!PX4_ISFINITE(airspeed)) {
-		/* airspeed is NaN, +- INF or not available, pick center of band */
-		airspeed_result = 0.5f * (minspeed + maxspeed);
-
-	} else if (airspeed < minspeed) {
-		airspeed_result = minspeed;
-	}
-
-	return airspeed_result;
 }

@@ -226,17 +226,18 @@ ActuatorEffectivenessRotors::computeEffectivenessMatrix(const Geometry &geometry
 
 			effectiveness(0 + 3, i + actuator_start_index) = 0.f;
 			effectiveness(1 + 3, i + actuator_start_index) = 0.f;
-			effectiveness(2 + 3, i + actuator_start_index) = ct;
+			effectiveness(2 + 3, i + actuator_start_index) = -ct;
 		}
 	}
 
 	return num_actuators;
 }
 
-uint32_t ActuatorEffectivenessRotors::updateAxisFromTilts(const ActuatorEffectivenessTilts &tilts, float tilt_control)
+uint32_t ActuatorEffectivenessRotors::updateAxisFromTilts(const ActuatorEffectivenessTilts &tilts,
+		float collective_tilt_control)
 {
-	if (!PX4_ISFINITE(tilt_control)) {
-		tilt_control = -1.f;
+	if (!PX4_ISFINITE(collective_tilt_control)) {
+		collective_tilt_control = -1.f;
 	}
 
 	uint32_t nontilted_motors = 0;
@@ -250,8 +251,8 @@ uint32_t ActuatorEffectivenessRotors::updateAxisFromTilts(const ActuatorEffectiv
 		}
 
 		const ActuatorEffectivenessTilts::Params &tilt = tilts.config(tilt_index);
-		float tilt_angle = math::lerp(tilt.min_angle, tilt.max_angle, (tilt_control + 1.f) / 2.f);
-		float tilt_direction = math::radians((float)tilt.tilt_direction);
+		const float tilt_angle = math::lerp(tilt.min_angle, tilt.max_angle, (collective_tilt_control + 1.f) / 2.f);
+		const float tilt_direction = math::radians((float)tilt.tilt_direction);
 		_geometry.rotors[i].axis = tiltedAxis(tilt_angle, tilt_direction);
 	}
 
@@ -262,6 +263,17 @@ Vector3f ActuatorEffectivenessRotors::tiltedAxis(float tilt_angle, float tilt_di
 {
 	Vector3f axis{0.f, 0.f, -1.f};
 	return Dcmf{Eulerf{0.f, -tilt_angle, tilt_direction}} * axis;
+}
+
+uint32_t ActuatorEffectivenessRotors::getMotors() const
+{
+	uint32_t motors = 0;
+
+	for (int i = 0; i < _geometry.num_rotors; ++i) {
+		motors |= 1u << i;
+	}
+
+	return motors;
 }
 
 uint32_t ActuatorEffectivenessRotors::getUpwardsMotors() const
@@ -277,6 +289,21 @@ uint32_t ActuatorEffectivenessRotors::getUpwardsMotors() const
 	}
 
 	return upwards_motors;
+}
+
+uint32_t ActuatorEffectivenessRotors::getForwardsMotors() const
+{
+	uint32_t forward_motors = 0;
+
+	for (int i = 0; i < _geometry.num_rotors; ++i) {
+		const Vector3f &axis = _geometry.rotors[i].axis;
+
+		if (axis(0) > 0.5f && fabsf(axis(1)) < 0.1f && fabsf(axis(2)) < 0.1f) {
+			forward_motors |= 1u << i;
+		}
+	}
+
+	return forward_motors;
 }
 
 bool

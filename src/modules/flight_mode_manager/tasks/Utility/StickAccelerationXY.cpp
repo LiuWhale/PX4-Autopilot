@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2020 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2020-2023 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -14,7 +14,7 @@
  *    distribution.
  * 3. Neither the name PX4 nor the names of its contributors may be
  *    used to endorse or promote products derived from this software
- *    without spec{fic prior written permission.
+ *    without specific prior written permission.
  *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
  * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
@@ -30,10 +30,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  *
  ****************************************************************************/
-
-/**
- * @file StickAccelerationXY.cpp
- */
 
 #include "StickAccelerationXY.hpp"
 
@@ -61,13 +57,17 @@ void StickAccelerationXY::resetPosition(const matrix::Vector2f &position)
 
 void StickAccelerationXY::resetVelocity(const matrix::Vector2f &velocity)
 {
-	_velocity_setpoint = velocity;
+	if (velocity.isAllFinite()) {
+		_velocity_setpoint = velocity;
+	}
 }
 
 void StickAccelerationXY::resetAcceleration(const matrix::Vector2f &acceleration)
 {
-	_acceleration_slew_rate_x.setForcedValue(acceleration(0));
-	_acceleration_slew_rate_y.setForcedValue(acceleration(1));
+	if (acceleration.isAllFinite()) {
+		_acceleration_slew_rate_x.setForcedValue(acceleration(0));
+		_acceleration_slew_rate_y.setForcedValue(acceleration(1));
+	}
 }
 
 void StickAccelerationXY::generateSetpoints(Vector2f stick_xy, const float yaw, const float yaw_sp, const Vector3f &pos,
@@ -75,29 +75,42 @@ void StickAccelerationXY::generateSetpoints(Vector2f stick_xy, const float yaw, 
 {
 	// maximum commanded acceleration and velocity
 	Vector2f acceleration_scale(_param_mpc_acc_hor.get(), _param_mpc_acc_hor.get());
-	Vector2f velocity_scale(_param_mpc_vel_manual.get(), _param_mpc_vel_manual.get());
+	const float velocity_sc = fminf(_param_mpc_vel_manual.get(), _velocity_constraint);
+	Vector2f velocity_scale(velocity_sc, velocity_sc);
 
 	acceleration_scale *= 2.f; // because of drag the average acceleration is half
 
 	// Map stick input to acceleration
 	Sticks::limitStickUnitLengthXY(stick_xy);
+
+	if (_param_mpc_vel_man_side.get() >= 0.f) {
+		stick_xy(1) *= _param_mpc_vel_man_side.get() / _param_mpc_vel_manual.get();
+	}
+
+	if ((_param_mpc_vel_man_back.get() >= 0.f) && (stick_xy(0) < 0.f)) {
+		stick_xy(0) *= _param_mpc_vel_man_back.get() / _param_mpc_vel_manual.get();
+	}
+
 	Sticks::rotateIntoHeadingFrameXY(stick_xy, yaw, yaw_sp);
 	_acceleration_setpoint = stick_xy.emult(acceleration_scale);
-	applyJerkLimit(dt);
 
 	// Add drag to limit speed and brake again
 	Vector2f drag = calculateDrag(acceleration_scale.edivide(velocity_scale), dt, stick_xy, _velocity_setpoint);
 
 	// Don't allow the drag to change the sign of the velocity, otherwise we might get into oscillations around 0, due
 	// to discretization
-	if (_acceleration_setpoint.norm_squared() < FLT_EPSILON
-	    && _velocity_setpoint.norm_squared() < drag.norm_squared() * dt * dt) {
+	if (((_acceleration_setpoint.norm_squared() < FLT_EPSILON)
+	     || (sign(_acceleration_setpoint_prev(0)) != sign(_acceleration_setpoint(0)))
+	     || (sign(_acceleration_setpoint_prev(1)) != sign(_acceleration_setpoint(1))))
+	    && (_velocity_setpoint.norm_squared() < (drag.norm_squared() * dt * dt))) {
+
 		drag.setZero();
 		_velocity_setpoint.setZero();
 	}
 
 	_acceleration_setpoint -= drag;
 
+	applyJerkLimit(dt);
 	applyTiltLimit(_acceleration_setpoint);
 
 	// Generate velocity setpoint by forward integrating commanded acceleration
@@ -142,7 +155,7 @@ Vector2f StickAccelerationXY::calculateDrag(Vector2f drag_coefficient, const flo
 
 	drag_coefficient *= _brake_boost_filter.getState();
 
-	// increase drag with sqareroot function when velocity is lower than 1m/s
+	// increase drag with squareroot function when velocity is lower than 1m/s
 	const Vector2f velocity_with_sqrt_boost = vel_sp.unit_or_zero() * math::sqrt_linear(vel_sp.norm());
 	return drag_coefficient.emult(velocity_with_sqrt_boost);
 }
@@ -165,7 +178,7 @@ void StickAccelerationXY::applyTiltLimit(Vector2f &acceleration)
 void StickAccelerationXY::lockPosition(const Vector3f &pos, const matrix::Vector2f &vel_sp_feedback, const float dt)
 {
 	const bool moving = _velocity_setpoint.norm_squared() > FLT_EPSILON;
-	const bool position_locked = PX4_ISFINITE(_position_setpoint(0)) || PX4_ISFINITE(_position_setpoint(1));
+	const bool position_locked = Vector2f(_position_setpoint).isAllFinite();
 
 	// lock position
 	if (!moving && !position_locked) {
@@ -177,7 +190,7 @@ void StickAccelerationXY::lockPosition(const Vector3f &pos, const matrix::Vector
 		_position_setpoint.setNaN();
 
 		// avoid velocity setpoint jump caused by ignoring remaining position error
-		if (PX4_ISFINITE(vel_sp_feedback(0)) && PX4_ISFINITE(vel_sp_feedback(1))) {
+		if (vel_sp_feedback.isAllFinite()) {
 			_velocity_setpoint = vel_sp_feedback;
 		}
 	}

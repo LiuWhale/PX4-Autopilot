@@ -3,9 +3,7 @@
 #include <lib/geo/geo.h>
 
 constexpr uint64_t FlightTask::_timeout;
-// First index of empty_setpoint corresponds to time-stamp and requires a finite number.
-const trajectory_setpoint_s FlightTask::empty_setpoint = {0, {NAN, NAN, NAN}, {NAN, NAN, NAN}, {NAN, NAN, NAN}, {NAN, NAN, NAN}, NAN, NAN};
-
+const trajectory_setpoint_s FlightTask::empty_trajectory_setpoint = {0, {NAN, NAN, NAN}, {NAN, NAN, NAN}, {NAN, NAN, NAN}, {NAN, NAN, NAN}, NAN, NAN};
 const vehicle_constraints_s FlightTask::empty_constraints = {0, NAN, NAN, false, {}};
 const landing_gear_s FlightTask::empty_landing_gear_default_keep = {0, landing_gear_s::GEAR_KEEP, {}};
 
@@ -21,7 +19,7 @@ bool FlightTask::activate(const trajectory_setpoint_s &last_setpoint)
 void FlightTask::reActivate()
 {
 	// Preserve vertical velocity while on the ground to allow descending by stick for reliable land detection
-	trajectory_setpoint_s setpoint_preserve_vertical{empty_setpoint};
+	trajectory_setpoint_s setpoint_preserve_vertical{empty_trajectory_setpoint};
 	setpoint_preserve_vertical.velocity[2] = _velocity_setpoint(2);
 	activate(setpoint_preserve_vertical);
 }
@@ -114,6 +112,7 @@ void FlightTask::_evaluateVehicleLocalPosition()
 
 		// yaw
 		_yaw = _sub_vehicle_local_position.get().heading;
+		_unaided_yaw = _sub_vehicle_local_position.get().unaided_heading;
 		_is_yaw_good_for_control = _sub_vehicle_local_position.get().heading_good_for_control;
 
 		// position

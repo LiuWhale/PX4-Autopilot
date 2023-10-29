@@ -59,7 +59,7 @@ typedef int px4_task_t;
 
 #define px4_task_exit(x) _exit(x)
 
-#elif defined(__PX4_POSIX) || defined(__PX4_QURT)
+#elif defined(__PX4_POSIX)
 
 #include <pthread.h>
 #include <sched.h>
@@ -67,7 +67,7 @@ typedef int px4_task_t;
 /** Default scheduler type */
 #define SCHED_DEFAULT	SCHED_FIFO
 
-#if defined(__PX4_LINUX) || defined(__PX4_DARWIN) || defined(__PX4_CYGWIN)
+#if defined(__PX4_LINUX) || defined(__PX4_DARWIN) || defined(__PX4_CYGWIN) || defined(__PX4_ROS2)
 
 #define SCHED_PRIORITY_MAX sched_get_priority_max(SCHED_FIFO)
 #define SCHED_PRIORITY_MIN sched_get_priority_min(SCHED_FIFO)
@@ -123,6 +123,13 @@ typedef struct {
 // priority ensures that the estimator runs first if it can, but will
 // wait for the sensor hub if its data is coming from it.
 #define SCHED_PRIORITY_ESTIMATOR		(PX4_WQ_HP_BASE - 5)
+
+// Logger watchdog priority, triggered when a task busy-loops (and
+// restored after a short time).
+// The priority is a trade-off between:
+// - ability to capture any busy-looping task below this priority
+// - not having a negative impact on the system itself
+#define SCHED_PRIORITY_LOG_WATCHDOG		(PX4_WQ_HP_BASE - 6)
 
 // Position controllers typically are in a blocking wait on estimator data
 // so when new sensor data is available they will run last. Keeping them

@@ -54,7 +54,9 @@ ControlAllocator::ControlAllocator() :
 	ScheduledWorkItem(MODULE_NAME, px4::wq_configurations::rate_ctrl),
 	_loop_perf(perf_alloc(PC_ELAPSED, MODULE_NAME": cycle"))
 {
-	_control_allocator_status_pub.advertise();
+	_control_allocator_status_pub[0].advertise();
+	_control_allocator_status_pub[1].advertise();
+
 	_actuator_motors_pub.advertise();
 	_actuator_servos_pub.advertise();
 	_actuator_servos_trim_pub.advertise();
@@ -245,7 +247,7 @@ ControlAllocator::update_effectiveness_source()
 			break;
 
 		case EffectivenessSource::MOTORS_6DOF: // just a different UI from MULTIROTOR
-			tmp = new ActuatorEffectivenessRotors(this);
+			tmp = new ActuatorEffectivenessUUV(this);
 			break;
 
 		case EffectivenessSource::MULTIROTOR_WITH_TILT:
@@ -256,8 +258,16 @@ ControlAllocator::update_effectiveness_source()
 			tmp = new ActuatorEffectivenessCustom(this);
 			break;
 
-		case EffectivenessSource::HELICOPTER:
-			tmp = new ActuatorEffectivenessHelicopter(this);
+		case EffectivenessSource::HELICOPTER_TAIL_ESC:
+			tmp = new ActuatorEffectivenessHelicopter(this, ActuatorType::MOTORS);
+			break;
+
+		case EffectivenessSource::HELICOPTER_TAIL_SERVO:
+			tmp = new ActuatorEffectivenessHelicopter(this, ActuatorType::SERVOS);
+			break;
+
+		case EffectivenessSource::HELICOPTER_COAXIAL:
+			tmp = new ActuatorEffectivenessHelicopterCoaxial(this);
 			break;
 
 		default:
@@ -353,6 +363,14 @@ ControlAllocator::Run()
 		}
 	}
 
+	{
+		vehicle_control_mode_s vehicle_control_mode;
+
+		if (_vehicle_control_mode_sub.update(&vehicle_control_mode)) {
+			_publish_controls = vehicle_control_mode.flag_control_allocation_enabled;
+		}
+	}
+
 	// Guard against too small (< 0.2ms) and too large (> 20ms) dt's.
 	const hrt_abstime now = hrt_absolute_time();
 	const float dt = math::constrain(((now - _last_run) / 1e6f), 0.0002f, 0.02f);
@@ -398,14 +416,17 @@ ControlAllocator::Run()
 		c[0](5) = _thrust_sp(2);
 
 		if (_num_control_allocation > 1) {
-			_vehicle_torque_setpoint1_sub.copy(&vehicle_torque_setpoint);
-			_vehicle_thrust_setpoint1_sub.copy(&vehicle_thrust_setpoint);
-			c[1](0) = vehicle_torque_setpoint.xyz[0];
-			c[1](1) = vehicle_torque_setpoint.xyz[1];
-			c[1](2) = vehicle_torque_setpoint.xyz[2];
-			c[1](3) = vehicle_thrust_setpoint.xyz[0];
-			c[1](4) = vehicle_thrust_setpoint.xyz[1];
-			c[1](5) = vehicle_thrust_setpoint.xyz[2];
+			if (_vehicle_torque_setpoint1_sub.copy(&vehicle_torque_setpoint)) {
+				c[1](0) = vehicle_torque_setpoint.xyz[0];
+				c[1](1) = vehicle_torque_setpoint.xyz[1];
+				c[1](2) = vehicle_torque_setpoint.xyz[2];
+			}
+
+			if (_vehicle_thrust_setpoint1_sub.copy(&vehicle_thrust_setpoint)) {
+				c[1](3) = vehicle_thrust_setpoint.xyz[0];
+				c[1](4) = vehicle_thrust_setpoint.xyz[1];
+				c[1](5) = vehicle_thrust_setpoint.xyz[2];
+			}
 		}
 
 		for (int i = 0; i < _num_control_allocation; ++i) {
@@ -414,7 +435,9 @@ ControlAllocator::Run()
 
 			// Do allocation
 			_control_allocation[i]->allocate();
-			_actuator_effectiveness->updateSetpoint(c[i], i, _control_allocation[i]->_actuator_sp);
+			_actuator_effectiveness->allocateAuxilaryControls(dt, i, _control_allocation[i]->_actuator_sp); //flaps and spoilers
+			_actuator_effectiveness->updateSetpoint(c[i], i, _control_allocation[i]->_actuator_sp,
+								_control_allocation[i]->getActuatorMin(), _control_allocation[i]->getActuatorMax());
 
 			if (_has_slew_rate) {
 				_control_allocation[i]->applySlewRateLimit(dt);
@@ -430,7 +453,12 @@ ControlAllocator::Run()
 	// Publish status at limited rate, as it's somewhat expensive and we use it for slower dynamics
 	// (i.e. anti-integrator windup)
 	if (now - _last_status_pub >= 5_ms) {
-		publish_control_allocator_status();
+		publish_control_allocator_status(0);
+
+		if (_num_control_allocation > 1) {
+			publish_control_allocator_status(1);
+		}
+
 		_last_status_pub = now;
 	}
 
@@ -571,24 +599,18 @@ ControlAllocator::update_effectiveness_matrix_if_needed(EffectivenessUpdateReaso
 }
 
 void
-ControlAllocator::publish_control_allocator_status()
+ControlAllocator::publish_control_allocator_status(int matrix_index)
 {
 	control_allocator_status_s control_allocator_status{};
 	control_allocator_status.timestamp = hrt_absolute_time();
 
-	// TODO: handle multiple matrices & disabled motors (?)
+	// TODO: disabled motors (?)
 
 	// Allocated control
-	const matrix::Vector<float, NUM_AXES> &allocated_control = _control_allocation[0]->getAllocatedControl();
-	control_allocator_status.allocated_torque[0] = allocated_control(0);
-	control_allocator_status.allocated_torque[1] = allocated_control(1);
-	control_allocator_status.allocated_torque[2] = allocated_control(2);
-	control_allocator_status.allocated_thrust[0] = allocated_control(3);
-	control_allocator_status.allocated_thrust[1] = allocated_control(4);
-	control_allocator_status.allocated_thrust[2] = allocated_control(5);
+	const matrix::Vector<float, NUM_AXES> &allocated_control = _control_allocation[matrix_index]->getAllocatedControl();
 
 	// Unallocated control
-	const matrix::Vector<float, NUM_AXES> unallocated_control = _control_allocation[0]->getControlSetpoint() -
+	const matrix::Vector<float, NUM_AXES> unallocated_control = _control_allocation[matrix_index]->getControlSetpoint() -
 			allocated_control;
 	control_allocator_status.unallocated_torque[0] = unallocated_control(0);
 	control_allocator_status.unallocated_torque[1] = unallocated_control(1);
@@ -597,16 +619,21 @@ ControlAllocator::publish_control_allocator_status()
 	control_allocator_status.unallocated_thrust[1] = unallocated_control(4);
 	control_allocator_status.unallocated_thrust[2] = unallocated_control(5);
 
+	// override control_allocator_status in customized saturation logic for certain effectiveness types
+	_actuator_effectiveness->getUnallocatedControl(matrix_index, control_allocator_status);
+
 	// Allocation success flags
-	control_allocator_status.torque_setpoint_achieved = (Vector3f(unallocated_control(0), unallocated_control(1),
-			unallocated_control(2)).norm_squared() < 1e-6f);
-	control_allocator_status.thrust_setpoint_achieved = (Vector3f(unallocated_control(3), unallocated_control(4),
-			unallocated_control(5)).norm_squared() < 1e-6f);
+	control_allocator_status.torque_setpoint_achieved = (Vector3f(control_allocator_status.unallocated_torque[0],
+			control_allocator_status.unallocated_torque[1],
+			control_allocator_status.unallocated_torque[2]).norm_squared() < 1e-6f);
+	control_allocator_status.thrust_setpoint_achieved = (Vector3f(control_allocator_status.unallocated_thrust[0],
+			control_allocator_status.unallocated_thrust[1],
+			control_allocator_status.unallocated_thrust[2]).norm_squared() < 1e-6f);
 
 	// Actuator saturation
-	const matrix::Vector<float, NUM_ACTUATORS> &actuator_sp = _control_allocation[0]->getActuatorSetpoint();
-	const matrix::Vector<float, NUM_ACTUATORS> &actuator_min = _control_allocation[0]->getActuatorMin();
-	const matrix::Vector<float, NUM_ACTUATORS> &actuator_max = _control_allocation[0]->getActuatorMax();
+	const matrix::Vector<float, NUM_ACTUATORS> &actuator_sp = _control_allocation[matrix_index]->getActuatorSetpoint();
+	const matrix::Vector<float, NUM_ACTUATORS> &actuator_min = _control_allocation[matrix_index]->getActuatorMin();
+	const matrix::Vector<float, NUM_ACTUATORS> &actuator_max = _control_allocation[matrix_index]->getActuatorMax();
 
 	for (int i = 0; i < NUM_ACTUATORS; i++) {
 		if (actuator_sp(i) > (actuator_max(i) - FLT_EPSILON)) {
@@ -620,12 +647,16 @@ ControlAllocator::publish_control_allocator_status()
 	// Handled motor failures
 	control_allocator_status.handled_motor_failure_mask = _handled_motor_failure_bitmask;
 
-	_control_allocator_status_pub.publish(control_allocator_status);
+	_control_allocator_status_pub[matrix_index].publish(control_allocator_status);
 }
 
 void
 ControlAllocator::publish_actuator_controls()
 {
+	if (!_publish_controls) {
+		return;
+	}
+
 	actuator_motors_s actuator_motors;
 	actuator_motors.timestamp = hrt_absolute_time();
 	actuator_motors.timestamp_sample = _timestamp_sample;
@@ -830,7 +861,7 @@ This implements control allocation. It takes torque and thrust setpoints
 as inputs and outputs actuator setpoint messages.
 )DESCR_STR");
 
-	PRINT_MODULE_USAGE_NAME(MODULE_NAME, "controller");
+	PRINT_MODULE_USAGE_NAME("control_allocator", "controller");
 	PRINT_MODULE_USAGE_COMMAND("start");
 	PRINT_MODULE_USAGE_DEFAULT_COMMANDS();
 

@@ -53,7 +53,6 @@
 #include <uORB/PublicationMulti.hpp>
 #include <uORB/Subscription.hpp>
 #include <uORB/SubscriptionCallback.hpp>
-#include <uORB/topics/actuator_controls.h>
 #include <uORB/topics/manual_control_setpoint.h>
 #include <uORB/topics/manual_control_switches.h>
 #include <uORB/topics/input_rc.h>
@@ -90,6 +89,7 @@ public:
 
 	int print_status() override;
 
+protected:
 	static constexpr uint64_t VALID_DATA_MIN_INTERVAL_US{1_s / 3}; // assume valid RC input is at least 3 Hz
 
 	void Run() override;
@@ -110,7 +110,7 @@ public:
 	/**
 	 * Update our local parameter cache.
 	 */
-	void		parameters_updated();
+	void updateParams() override;
 
 	/**
 	 * Get and limit value for specified RC function. Returns NAN if not mapped.
@@ -118,15 +118,16 @@ public:
 	float		get_rc_value(uint8_t func, float min_value, float max_value) const;
 
 	/**
-	 * Get switch position for specified function.
+	 * Get on/off switch position from the RC channel of the specified function
+	 *
+	 * @param function according to rc_channels_s::FUNCTION_XXX
+	 * @param threshold according to RC_XXX_TH parameters, negative means on and off are flipped
 	 */
-	switch_pos_t	get_rc_sw2pos_position(uint8_t func, float on_th) const;
+	switch_pos_t getRCSwitchOnOffPosition(uint8_t function, float threshold) const;
 
 	/**
 	 * Update parameters from RC channels if the functionality is activated and the
 	 * input has changed since the last update
-	 *
-	 * @param
 	 */
 	void		set_params_from_rc();
 
@@ -163,16 +164,15 @@ public:
 	uORB::SubscriptionInterval _parameter_update_sub{ORB_ID(parameter_update), 1_s};
 
 	uORB::Subscription _rc_parameter_map_sub{ORB_ID(rc_parameter_map)};
-	uORB::Subscription _actuator_controls_3_sub{ORB_ID(actuator_controls_3)};
 
 	uORB::Publication<rc_channels_s> _rc_channels_pub{ORB_ID(rc_channels)};
 	uORB::PublicationMulti<manual_control_setpoint_s> _manual_control_input_pub{ORB_ID(manual_control_input)};
 	uORB::Publication<manual_control_switches_s> _manual_control_switches_pub{ORB_ID(manual_control_switches)};
-	uORB::Publication<actuator_controls_s> _actuator_group_3_pub{ORB_ID(actuator_controls_3)};
 
 	manual_control_switches_s _manual_switches_previous{};
 	manual_control_switches_s _manual_switches_last_publish{};
 	rc_channels_s _rc{};
+	bool _rc_calibrated{false};
 
 	rc_parameter_map_s _rc_parameter_map {};
 	float _param_rc_values[rc_parameter_map_s::RC_PARAM_MAP_NCHAN] {};	/**< parameter values for RC control */
@@ -226,6 +226,8 @@ public:
 		(ParamInt<px4::params::RC_MAP_AUX5>) _param_rc_map_aux5,
 		(ParamInt<px4::params::RC_MAP_AUX6>) _param_rc_map_aux6,
 
+		(ParamInt<px4::params::RC_MAP_ENG_MOT>) _param_rc_map_eng_mot,
+
 		(ParamInt<px4::params::RC_FAILS_THR>) _param_rc_fails_thr,
 
 		(ParamFloat<px4::params::RC_LOITER_TH>) _param_rc_loiter_th,
@@ -235,6 +237,7 @@ public:
 		(ParamFloat<px4::params::RC_TRANS_TH>) _param_rc_trans_th,
 		(ParamFloat<px4::params::RC_GEAR_TH>) _param_rc_gear_th,
 		(ParamFloat<px4::params::RC_RETURN_TH>) _param_rc_return_th,
+		(ParamFloat<px4::params::RC_ENG_MOT_TH>) _param_rc_eng_mot_th,
 
 		(ParamInt<px4::params::RC_CHAN_CNT>) _param_rc_chan_cnt
 	)

@@ -41,35 +41,38 @@
 
 
 /**
- * Enable/disable usage of fixed-wing actuators in hover to generate forward force (instead of pitching down).
+ * Use fixed-wing actuation in hover to accelerate forward
  *
- * This technique can be used to avoid the plane having to pitch down in order to move forward.
- * This prevents large, negative lift values being created when facing strong winds.
+ * This feature can be used to avoid the plane having to pitch nose down in order to move forward.
+ * Prevents large, negative lift from pitching nose down into wind.
  * Fixed-wing forward actuators refers to puller/pusher (standard VTOL), or forward-tilt (tiltrotor VTOL).
- * Only active if demaded down pitch is below VT_PITCH_MIN, and uses VT_FWD_THRUST_SC to get from
- * demanded down pitch to fixed-wing actuation.
+ * Only active if demanded down pitch is below VT_PITCH_MIN.
+ * Use VT_FWD_THRUST_SC to tune it.
  *
- * @value 0 Disable FW forward actuation in hover.
- * @value 1 Enable FW forward actuation in hover in altitude, position and auto modes (except LANDING).
- * @value 2 Enable FW forward actuation in hover in altitude, position and auto modes if above MPC_LAND_ALT1.
- * @value 3 Enable FW forward actuation in hover in altitude, position and auto modes if above MPC_LAND_ALT2.
- * @value 4 Enable FW forward actuation in hover in altitude, position and auto modes.
- * @value 5 Enable FW forward actuation in hover in altitude, position and auto modes if above MPC_LAND_ALT1 (except LANDING).
- * @value 6 Enable FW forward actuation in hover in altitude, position and auto modes if above MPC_LAND_ALT2 (except LANDING).
+ * Only active (if enabled) in Altitude, Position and Auto modes, not in Stabilized.
+ *
+ * @value 0 Disabled
+ * @value 1 Enabled (except LANDING)
+ * @value 2 Enabled if distance to ground above MPC_LAND_ALT1
+ * @value 3 Enabled if distance to ground above MPC_LAND_ALT2
+ * @value 4 Enabled constantly
+ * @value 5 Enabled if distance to ground above MPC_LAND_ALT1 (except LANDING)
+ * @value 6 Enabled if distance to ground above MPC_LAND_ALT2 (except LANDING)
  *
  * @group VTOL Attitude Control
  */
 PARAM_DEFINE_INT32(VT_FWD_THRUST_EN, 0);
 
 /**
- * Fixed-wing actuator thrust scale for hover forward flight.
+ * Fixed-wing actuation thrust scale for hover forward flight
  *
  * Scale applied to the demanded down-pitch to get the fixed-wing forward actuation in hover mode.
- * Only active if demaded down pitch is below VT_PITCH_MIN.
  * Enabled via VT_FWD_THRUST_EN.
  *
  * @min 0.0
  * @max 2.0
+ * @increment 0.01
+ * @decimal 2
  * @group VTOL Attitude Control
  */
 PARAM_DEFINE_FLOAT(VT_FWD_THRUST_SC, 0.7f);
@@ -82,48 +85,23 @@ PARAM_DEFINE_FLOAT(VT_FWD_THRUST_SC, 0.7f);
  * @unit s
  * @min 0.0
  * @max 20.0
+ * @increment 0.1
+ * @decimal 1
  * @group VTOL Attitude Control
  */
 PARAM_DEFINE_FLOAT(VT_B_TRANS_RAMP, 3.0f);
 
 /**
- * Output on airbrakes channel during back transition
+ * Pusher throttle ramp up slew rate
  *
- * Used for airbrakes or with ESCs that have reverse thrust enabled on a seperate channel
- * Airbrakes need to be enables for your selected model/mixer
+ * Defines the slew rate of the puller/pusher throttle during transitions.
+ * Zero will deactivate the slew rate limiting and thus produce an instant throttle
+ * rise to the transition throttle VT_F_TRANS_THR.
  *
+ * @unit 1/s
  * @min 0
- * @max 1
  * @increment 0.01
  * @decimal 2
  * @group VTOL Attitude Control
  */
-PARAM_DEFINE_FLOAT(VT_B_REV_OUT, 0.0f);
-
-
-/**
- * Delay in seconds before applying back transition throttle
- *
- * Set this to a value greater than 0 to give the motor time to spin down.
- *
- * unit s
- * @min 0
- * @max 10
- * @increment 1
- * @decimal 2
- * @group VTOL Attitude Control
- */
-PARAM_DEFINE_FLOAT(VT_B_REV_DEL, 0.0f);
-
-/**
- * Pusher throttle ramp up window
- *
- * Defines the time window during which the pusher throttle will be ramped up linearly to VT_F_TRANS_THR during a transition
- * to fixed wing mode. Zero or negative values will produce an instant throttle rise to VT_F_TRANS_THR.
- *
- * @max 20
- * @increment 0.01
- * @decimal 2
- * @group VTOL Attitude Control
- */
-PARAM_DEFINE_FLOAT(VT_PSHER_RMP_DT, 3.0f);
+PARAM_DEFINE_FLOAT(VT_PSHER_SLEW, 0.33f);

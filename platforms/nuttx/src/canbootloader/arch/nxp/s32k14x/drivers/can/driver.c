@@ -53,7 +53,7 @@
 #include <arch/board/board.h>
 #include "flexcan.h"
 
-#include <lib/systemlib/crc.h>
+#include <lib/crc/crc.h>
 
 
 #define CAN_TX_TIMEOUT_MS     (200 /(1000/(1000000/CONFIG_USEC_PER_TICK)))
@@ -289,9 +289,9 @@ int can_autobaud(can_speed_t *can_speed, bl_timer_id timeout)
 	int rv = CAN_ERROR;
 
 	while (rv == CAN_ERROR) {
-		for (can_speed_t speed = CAN_125KBAUD; rv == CAN_ERROR  && speed <= CAN_1MBAUD; speed++) {
+		for (can_speed_t speed = CAN_1MBAUD; rv == CAN_ERROR  && speed >=  CAN_125KBAUD; speed--) {
 
-			can_init(speed, CAN_Mode_Silent);
+			can_init(speed, CAN_Mode_Normal);
 
 			bl_timer_id baudtimer = timer_allocate(modeTimeout | modeStarted, 600, 0);
 

@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2019 ECL Development Team. All rights reserved.
+ *   Copyright (c) 2019-2023 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -53,14 +53,18 @@ public:
 
 	void setData(const extVisionSample &vio_data);
 	void setVelocityVariance(const Vector3f &velVar);
-	void setVelocityCovariance(const Matrix3f &velCov);
 	void setPositionVariance(const Vector3f &posVar);
 	void setAngularVariance(float angVar);
 	void setVelocity(const Vector3f &vel);
 	void setPosition(const Vector3f &pos);
 	void setOrientation(const Quatf &quat);
-	void setVelocityFrameToLocal();
+
+	void setVelocityFrameToLocalNED();
+	void setVelocityFrameToLocalFRD();
 	void setVelocityFrameToBody();
+
+	void setPositionFrameToLocalNED();
+	void setPositionFrameToLocalFRD();
 
 	extVisionSample dataAtRest();
 

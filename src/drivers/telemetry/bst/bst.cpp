@@ -49,7 +49,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <uORB/Subscription.hpp>
-#include <uORB/topics/vehicle_gps_position.h>
+#include <uORB/topics/sensor_gps.h>
 #include <uORB/topics/battery_status.h>
 #include <uORB/topics/vehicle_attitude.h>
 #include <matrix/math.hpp>
@@ -262,15 +262,15 @@ void BST::RunImpl()
 	}
 
 	if (_gps_sub.updated()) {
-		vehicle_gps_position_s gps;
+		sensor_gps_s gps;
 		_gps_sub.copy(&gps);
 
 		if (gps.fix_type >= 3 && gps.eph < 50.0f) {
 			BSTPacket<BSTGPSPosition> bst_gps = {};
 			bst_gps.type = 0x02;
-			bst_gps.payload.lat = swap_int32(gps.lat);
-			bst_gps.payload.lon = swap_int32(gps.lon);
-			bst_gps.payload.alt = swap_int16(gps.alt / 1000 + 1000);
+			bst_gps.payload.lat = swap_int32(static_cast<int32_t>(round(gps.latitude_deg * 1e7)));
+			bst_gps.payload.lon = swap_int32(static_cast<int32_t>(round(gps.longitude_deg * 1e7)));
+			bst_gps.payload.alt = swap_int16(static_cast<int16_t>(round(gps.altitude_msl_m)) + 1000);
 			bst_gps.payload.gs = swap_int16(gps.vel_m_s * 360.0f);
 			bst_gps.payload.heading = swap_int16(gps.cog_rad * 18000.0f / M_PI_F);
 			bst_gps.payload.sats = gps.satellites_used;

@@ -51,7 +51,7 @@
 #include <uORB/topics/actuator_motors.h>
 #include <uORB/topics/home_position.h>
 #include <uORB/topics/vehicle_air_data.h>
-#include <uORB/topics/vehicle_gps_position.h>
+#include <uORB/topics/sensor_gps.h>
 
 #include <drivers/drv_hrt.h>
 
@@ -213,7 +213,7 @@ void
 build_gps_response(uint8_t *buffer, size_t *size)
 {
 	/* get a local copy of the battery data */
-	struct vehicle_gps_position_s gps;
+	struct sensor_gps_s gps;
 	memset(&gps, 0, sizeof(gps));
 	orb_copy(ORB_ID(vehicle_gps_position), _gps_sub, &gps);
 
@@ -242,14 +242,14 @@ build_gps_response(uint8_t *buffer, size_t *size)
 		msg.gps_speed_H = (uint8_t)(speed >> 8) & 0xff;
 
 		/* Get latitude in degrees, minutes and seconds */
-		double lat = ((double)(gps.lat)) * 1e-7d;
+		double lat = gps.latitude_deg;
 
 		/* Set the N or S specifier */
 		msg.latitude_ns = 0;
 
 		if (lat < 0) {
 			msg.latitude_ns = 1;
-			lat = abs(lat);
+			lat = fabs(lat);
 		}
 
 		int deg;
@@ -265,7 +265,7 @@ build_gps_response(uint8_t *buffer, size_t *size)
 		msg.latitude_sec_H = (uint8_t)(lat_sec >> 8) & 0xff;
 
 		/* Get longitude in degrees, minutes and seconds */
-		double lon = ((double)(gps.lon)) * 1e-7d;
+		double lon = gps.longitude_deg;
 
 		/* Set the E or W specifier */
 		msg.longitude_ew = 0;
@@ -285,7 +285,7 @@ build_gps_response(uint8_t *buffer, size_t *size)
 		msg.longitude_sec_H = (uint8_t)(lon_sec >> 8) & 0xff;
 
 		/* Altitude */
-		uint16_t alt = (uint16_t)(gps.alt * 1e-3f + 500.0f);
+		uint16_t alt = (uint16_t)(round(gps.altitude_msl_m) + 500.0);
 		msg.altitude_L = (uint8_t)alt & 0xff;
 		msg.altitude_H = (uint8_t)(alt >> 8) & 0xff;
 

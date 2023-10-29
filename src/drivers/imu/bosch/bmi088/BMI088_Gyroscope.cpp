@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2020-2021 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2020-2023 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,8 +32,6 @@
  ****************************************************************************/
 
 #include "BMI088_Gyroscope.hpp"
-
-#include <px4_platform/board_dma_alloc.h>
 
 using namespace time_literals;
 
@@ -102,6 +100,7 @@ void BMI088_Gyroscope::RunImpl()
 		// GYRO_SOFTRESET: Writing a value of 0xB6 to this register resets the sensor.
 		// Following a delay of 30 ms, all configuration settings are overwritten with their reset value.
 		RegisterWrite(Register::GYRO_SOFTRESET, 0xB6);
+		DataReadyInterruptDisable();
 		_reset_timestamp = now;
 		_failure_count = 0;
 		_state = STATE::WAIT_FOR_RESET;
@@ -112,7 +111,7 @@ void BMI088_Gyroscope::RunImpl()
 		if ((RegisterRead(Register::GYRO_CHIP_ID) == ID)) {
 			// if reset succeeded then configure
 			_state = STATE::CONFIGURE;
-			ScheduleDelayed(1_ms);
+			ScheduleDelayed(10_ms);
 
 		} else {
 			// RESET not complete
@@ -131,21 +130,9 @@ void BMI088_Gyroscope::RunImpl()
 
 	case STATE::CONFIGURE:
 		if (Configure()) {
-			// if configure succeeded then start reading from FIFO
-			_state = STATE::FIFO_READ;
-
-			if (DataReadyInterruptConfigure()) {
-				_data_ready_interrupt_enabled = true;
-
-				// backup schedule as a watchdog timeout
-				ScheduleDelayed(100_ms);
-
-			} else {
-				_data_ready_interrupt_enabled = false;
-				ScheduleOnInterval(_fifo_empty_interval_us, _fifo_empty_interval_us);
-			}
-
-			FIFOReset();
+			// if configure succeeded then reset the FIFO
+			_state = STATE::FIFO_RESET;
+			ScheduleDelayed(10_ms);
 
 		} else {
 			// CONFIGURE not complete
@@ -158,6 +145,25 @@ void BMI088_Gyroscope::RunImpl()
 			}
 
 			ScheduleDelayed(100_ms);
+		}
+
+		break;
+
+	case STATE::FIFO_RESET:
+		// if configure succeeded then start reading from FIFO
+		_state = STATE::FIFO_READ;
+
+		FIFOReset();
+
+		if (DataReadyInterruptConfigure()) {
+			_data_ready_interrupt_enabled = true;
+
+			// backup schedule as a watchdog timeout
+			ScheduleDelayed(100_ms);
+
+		} else {
+			_data_ready_interrupt_enabled = false;
+			ScheduleOnInterval(_fifo_empty_interval_us, _fifo_empty_interval_us);
 		}
 
 		break;
@@ -419,6 +425,8 @@ bool BMI088_Gyroscope::FIFORead(const hrt_abstime &timestamp_sample, uint8_t sam
 	gyro.samples = samples;
 	gyro.dt = FIFO_SAMPLE_DT;
 
+	int index = 0;
+
 	for (int i = 0; i < samples; i++) {
 		const FIFO::DATA &fifo_sample = buffer.f[i];
 
@@ -428,15 +436,20 @@ bool BMI088_Gyroscope::FIFORead(const hrt_abstime &timestamp_sample, uint8_t sam
 
 		// sensor's frame is +x forward, +y left, +z up
 		//  flip y & z to publish right handed with z down (x forward, y right, z down)
-		gyro.x[i] = gyro_x;
-		gyro.y[i] = (gyro_y == INT16_MIN) ? INT16_MAX : -gyro_y;
-		gyro.z[i] = (gyro_z == INT16_MIN) ? INT16_MAX : -gyro_z;
+		if (!(gyro_x == INT16_MIN && gyro_y == INT16_MIN && gyro_z == INT16_MIN)) {
+			gyro.x[index] = gyro_x;
+			gyro.y[index] = (gyro_y == INT16_MIN) ? INT16_MAX : -gyro_y;
+			gyro.z[index] = (gyro_z == INT16_MIN) ? INT16_MAX : -gyro_z;
+			++index;
+		}
 	}
 
 	_px4_gyro.set_error_count(perf_event_count(_bad_register_perf) + perf_event_count(_bad_transfer_perf) +
 				  perf_event_count(_fifo_empty_perf) + perf_event_count(_fifo_overflow_perf));
 
-	_px4_gyro.updateFIFO(gyro);
+	if (index > 0) {
+		_px4_gyro.updateFIFO(gyro);
+	}
 
 	return true;
 }

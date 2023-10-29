@@ -9,10 +9,10 @@ pipeline {
         script {
           def build_nodes = [:]
           def docker_images = [
-            armhf: "px4io/px4-dev-armhf:2021-09-08",
-            arm64: "px4io/px4-dev-aarch64:2021-09-08",
-            base: "px4io/px4-dev-base-bionic:2021-09-08",
-            nuttx: "px4io/px4-dev-nuttx-focal:2021-09-08",
+            armhf: "px4io/px4-dev-armhf:2023-06-26",
+            arm64: "px4io/px4-dev-aarch64:2022-08-12",
+            base: "px4io/px4-dev-ros2-foxy:2022-08-12",
+            nuttx: "px4io/px4-dev-nuttx-focal:2022-08-12",
           ]
 
           def armhf_builds = [
@@ -40,8 +40,12 @@ pipeline {
                      "ark_can-flow_default",
                      "ark_can-gps_canbootloader",
                      "ark_can-gps_default",
+                     "ark_cannode_canbootloader",
+                     "ark_cannode_default",
                      "ark_can-rtk-gps_canbootloader",
                      "ark_can-rtk-gps_default",
+                     "ark_fmu-v6x_bootloader",
+                     "ark_fmu-v6x_default",
                      "atl_mantis-edu_default",
                      "av_x-v1_default",
                      "bitcraze_crazyflie_default",
@@ -51,8 +55,10 @@ pipeline {
                      "cuav_nora_default",
                      "cuav_x7pro_default",
                      "cubepilot_cubeorange_default",
+                     "cubepilot_cubeorangeplus_default",
                      "cubepilot_cubeyellow_default",
                      "diatone_mamba-f405-mk2_default",
+                     "flywoo_gn-f405_default",
                      "freefly_can-rtk-gps_canbootloader",
                      "freefly_can-rtk-gps_default",
                      "holybro_can-gps-v1_canbootloader",
@@ -60,6 +66,8 @@ pipeline {
                      "holybro_durandal-v1_default",
                      "holybro_kakutef7_default",
                      "holybro_kakuteh7_default",
+                     "holybro_kakuteh7v2_default",
+                     "holybro_kakuteh7mini_default",
                      "holybro_pix32v5_default",
                      "matek_gnss-m9n-f4_canbootloader",
                      "matek_gnss-m9n-f4_default",
@@ -67,25 +75,21 @@ pipeline {
                      "matek_h743-slim_default",
                      "matek_h743_default",
                      "modalai_fc-v1_default",
-                     "modalai_fc-v1_rtps",
                      "modalai_fc-v2_default",
+                     "mro_ctrl-zero-classic_default",
                      "mro_ctrl-zero-f7_default",
                      "mro_ctrl-zero-f7-oem_default",
                      "mro_ctrl-zero-h7-oem_default",
-                     "mro_ctrl-zero-h7-oem_rtps",
                      "mro_ctrl-zero-h7_default",
-                     "mro_ctrl-zero-h7_rtps",
                      "mro_pixracerpro_default",
-                     "mro_pixracerpro_rtps",
                      "mro_x21-777_default",
                      "mro_x21_default",
                      "nxp_fmuk66-e_default",
-                     "nxp_fmuk66-e_rtps",
                      "nxp_fmuk66-e_socketcan",
                      "nxp_fmuk66-v3_default",
-                     "nxp_fmuk66-v3_rtps",
                      "nxp_fmuk66-v3_socketcan",
                      "nxp_fmurt1062-v1_default",
+                     "nxp_mr-canhubk3_default",
                      "nxp_ucans32k146_canbootloader",
                      "nxp_ucans32k146_default",
                      "omnibus_f4sd_default",
@@ -101,7 +105,6 @@ pipeline {
                      "px4_fmu-v5_debug",
                      "px4_fmu-v5_default",
                      "px4_fmu-v5_lto",
-                     "px4_fmu-v5_rtps",
                      "px4_fmu-v5_stackcheck",
                      "px4_fmu-v5_uavcanv0periph",
                      "px4_fmu-v5x_default",
@@ -112,7 +115,10 @@ pipeline {
                      "raspberrypi_pico_default",
                      "sky-drones_smartap-airlink_default",
                      "spracing_h7extreme_default",
-                     "uvify_core_default"
+                     "thepeach_k1_default",
+                     "thepeach_r1_default",
+                     "uvify_core_default",
+                     "siyi_n7_default"
             ],
             image: docker_images.nuttx,
             archive: true
@@ -164,7 +170,7 @@ pipeline {
   }
   options {
     buildDiscarder(logRotator(numToKeepStr: '5', artifactDaysToKeepStr: '14'))
-    timeout(time: 90, unit: 'MINUTES')
+    timeout(time: 120, unit: 'MINUTES')
   }
 }
 

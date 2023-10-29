@@ -36,6 +36,8 @@
 
 #include <uORB/topics/sensor_gps.h>
 
+using namespace time_literals;
+
 class MavlinkStreamGPSRawInt : public MavlinkStream
 {
 public:
@@ -56,19 +58,21 @@ private:
 	explicit MavlinkStreamGPSRawInt(Mavlink *mavlink) : MavlinkStream(mavlink) {}
 
 	uORB::Subscription _sensor_gps_sub{ORB_ID(sensor_gps), 0};
+	hrt_abstime _last_send_ts {};
+	static constexpr hrt_abstime kNoGpsSendInterval {1_s};
 
 	bool send() override
 	{
 		sensor_gps_s gps;
+		mavlink_gps_raw_int_t msg{};
+		hrt_abstime now{};
 
 		if (_sensor_gps_sub.update(&gps)) {
-			mavlink_gps_raw_int_t msg{};
-
 			msg.time_usec = gps.timestamp;
 			msg.fix_type = gps.fix_type;
-			msg.lat = gps.lat;
-			msg.lon = gps.lon;
-			msg.alt = gps.alt;
+			msg.lat = static_cast<int32_t>(round(gps.latitude_deg * 1e7));
+			msg.lon = static_cast<int32_t>(round(gps.longitude_deg * 1e7));
+			msg.alt = static_cast<int32_t>(round(gps.altitude_msl_m * 1e3)); // convert [m] to [mm]
 			msg.eph = gps.hdop * 100; // GPS HDOP horizontal dilution of position (unitless)
 			msg.epv = gps.vdop * 100; // GPS VDOP vertical dilution of position (unitless)
 
@@ -81,7 +85,7 @@ private:
 
 			msg.cog = math::degrees(matrix::wrap_2pi(gps.cog_rad)) * 1e2f;
 			msg.satellites_visible = gps.satellites_used;
-			msg.alt_ellipsoid = gps.alt_ellipsoid;
+			msg.alt_ellipsoid = static_cast<int32_t>(round(gps.altitude_ellipsoid_m * 1e3)); // convert [m] to [mm]
 			msg.h_acc = gps.eph * 1e3f;              // position uncertainty in mm
 			msg.v_acc = gps.epv * 1e3f;              // altitude uncertainty in mm
 			msg.vel_acc = gps.s_variance_m_s * 1e3f; // speed uncertainty in mm
@@ -100,6 +104,19 @@ private:
 			}
 
 			mavlink_msg_gps_raw_int_send_struct(_mavlink->get_channel(), &msg);
+			_last_send_ts = gps.timestamp;
+
+			return true;
+
+		} else if (_last_send_ts != 0 && (now = hrt_absolute_time()) > _last_send_ts + kNoGpsSendInterval) {
+			msg.fix_type = GPS_FIX_TYPE_NO_GPS;
+			msg.eph = UINT16_MAX;
+			msg.epv = UINT16_MAX;
+			msg.vel = UINT16_MAX;
+			msg.cog = UINT16_MAX;
+			msg.satellites_visible = UINT8_MAX;
+			mavlink_msg_gps_raw_int_send_struct(_mavlink->get_channel(), &msg);
+			_last_send_ts = now;
 
 			return true;
 		}

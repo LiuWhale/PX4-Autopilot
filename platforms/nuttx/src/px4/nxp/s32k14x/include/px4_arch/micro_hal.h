@@ -41,7 +41,7 @@ __BEGIN_DECLS
 
 // Fixme: using ??
 #define PX4_BBSRAM_SIZE             2048
-#define PX4_BBSRAM_GETDESC_IOCTL    0
+#define PX4_HF_GETDESC_IOCTL        0
 #define PX4_NUMBER_I2C_BUSES        2
 
 #define GPIO_OUTPUT_SET             GPIO_OUTPUT_ONE
@@ -103,7 +103,9 @@ __BEGIN_DECLS
 #define px4_arch_gpioread(pinset)               s32k1xx_gpioread(pinset)
 #define px4_arch_gpiowrite(pinset, value)       s32k1xx_gpiowrite(pinset, value)
 
-/* s32k1xx_gpiosetevent is not implemented and will need to be added */
+/* s32k1xx_gpiosetevent is added at PX4 level */
+
+int s32k1xx_gpiosetevent(uint32_t pinset, bool risingedge, bool fallingedge, bool event, xcpt_t func, void *arg);
 
 #define px4_arch_gpiosetevent(pinset,r,f,e,fp,a)  s32k1xx_gpiosetevent(pinset,r,f,e,fp,a)
 
@@ -114,10 +116,14 @@ __BEGIN_DECLS
 #define TIMER_HRT_CYCLES_PER_US (STM32_HCLK_FREQUENCY/1000000)
 #define TIMER_HRT_CYCLES_PER_MS (STM32_HCLK_FREQUENCY/1000)
 
-#define crc_HiLOC       S32K1XX_CAN0_RXIMR27
-#define crc_LoLOC       S32K1XX_CAN0_RXIMR28
-#define signature_LOC   S32K1XX_CAN0_RXIMR29
-#define bus_speed_LOC   S32K1XX_CAN0_RXIMR30
-#define node_id_LOC     S32K1XX_CAN0_RXIMR31
+#define crc_HiLOC       S32K1XX_CAN0_RXIMR(27)
+#define crc_LoLOC       S32K1XX_CAN0_RXIMR(28)
+#define signature_LOC   S32K1XX_CAN0_RXIMR(29)
+#define bus_speed_LOC   S32K1XX_CAN0_RXIMR(30)
+#define node_id_LOC     S32K1XX_CAN0_RXIMR(31)
+
+#define shared_unlock()  do { modreg32(CAN_MCR_FRZ|CAN_MCR_HALT, CAN_MCR_FRZ|CAN_MCR_HALT, S32K1XX_CAN0_MCR); up_udelay(1000);} while (0);
+#define shared_lock()    do { modreg32(0, CAN_MCR_FRZ|CAN_MCR_HALT,S32K1XX_CAN0_MCR ); } while (0);
+
 
 __END_DECLS

@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2020, 2021 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2020-2023 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -43,6 +43,8 @@ void ICM42688P::print_usage()
 	PRINT_MODULE_USAGE_COMMAND("start");
 	PRINT_MODULE_USAGE_PARAMS_I2C_SPI_DRIVER(false, true);
 	PRINT_MODULE_USAGE_PARAM_INT('R', 0, 0, 35, "Rotation", true);
+	PRINT_MODULE_USAGE_PARAM_INT('C', 0, 0, 35000, "Input clock frequency (Hz)", true);
+	PRINT_MODULE_USAGE_PARAM_FLAG('6', "Drive ICM-42686", true);
 	PRINT_MODULE_USAGE_DEFAULT_COMMANDS();
 }
 
@@ -53,10 +55,18 @@ extern "C" int icm42688p_main(int argc, char *argv[])
 	BusCLIArguments cli{false, true};
 	cli.default_spi_frequency = SPI_SPEED;
 
-	while ((ch = cli.getOpt(argc, argv, "R:")) != EOF) {
+	while ((ch = cli.getOpt(argc, argv, "C:R:6")) != EOF) {
 		switch (ch) {
+		case 'C':
+			cli.custom1 = atoi(cli.optArg());
+			break;
+
 		case 'R':
 			cli.rotation = (enum Rotation)atoi(cli.optArg());
+			break;
+
+		case '6':
+			cli.custom2 = DRV_IMU_DEVTYPE_ICM42686P;
 			break;
 		}
 	}
@@ -68,7 +78,8 @@ extern "C" int icm42688p_main(int argc, char *argv[])
 		return -1;
 	}
 
-	BusInstanceIterator iterator(MODULE_NAME, cli, DRV_IMU_DEVTYPE_ICM42688P);
+	BusInstanceIterator iterator(cli.custom2 == DRV_IMU_DEVTYPE_ICM42686P ? "icm42686p" : MODULE_NAME, cli,
+				     cli.custom2 == DRV_IMU_DEVTYPE_ICM42686P ? DRV_IMU_DEVTYPE_ICM42686P : DRV_IMU_DEVTYPE_ICM42688P);
 
 	if (!strcmp(verb, "start")) {
 		return ThisDriver::module_start(cli, iterator);

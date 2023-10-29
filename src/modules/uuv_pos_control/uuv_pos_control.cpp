@@ -195,16 +195,6 @@ void UUVPOSControl::Run()
 		}
 	}
 
-	/* Manual Control mode (e.g. gamepad,...) - raw feedthrough no assistance */
-	if (_manual_control_setpoint_sub.update(&_manual_control_setpoint)) {
-		// This should be copied even if not in manual mode. Otherwise, the poll(...) call will keep
-		// returning immediately and this loop will eat up resources.
-		if (_vcontrol_mode.flag_control_manual_enabled && !_vcontrol_mode.flag_control_rates_enabled) {
-			/* manual/direct control */
-		}
-
-	}
-
 	/* Only publish if any of the proper modes are enabled */
 	if (_vcontrol_mode.flag_control_manual_enabled ||
 	    _vcontrol_mode.flag_control_attitude_enabled) {
@@ -252,7 +242,7 @@ int UUVPOSControl::print_usage(const char *reason)
 		R"DESCR_STR(
 ### Description
 Controls the attitude of an unmanned underwater vehicle (UUV).
-Publishes `actuator_controls_0` messages at a constant 250Hz.
+Publishes `attitude_setpoint` messages.
 ### Implementation
 Currently, this implementation supports only a few modes:
  * Full manual: Roll, pitch, yaw, and throttle controls are passed directly through to the actuators

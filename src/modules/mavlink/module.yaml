@@ -68,6 +68,7 @@ parameters:
                 #9: External Vision Minimal # hidden
                 10: Gimbal
                 11: Onboard Low Bandwidth
+                12: uAvionix
             reboot_required: true
             num_instances: *max_num_config_instances
             default: [0, 2, 0]
@@ -167,7 +168,7 @@ parameters:
                 short: Enable serial flow control for instance ${i}
                 long: |
                     This is used to force flow control on or off for the the mavlink
-                    instance. By default it is auto detected. Use when auto detction fails.
+                    instance. By default it is auto detected. Use when auto detection fails.
 
             type: enum
             values:
@@ -176,3 +177,4 @@ parameters:
                 2: Auto-detected
             num_instances: *max_num_config_instances
             default: [2, 2, 2]
+            reboot_required: true

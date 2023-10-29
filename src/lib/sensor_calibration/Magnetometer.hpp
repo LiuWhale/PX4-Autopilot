@@ -38,8 +38,8 @@
 #include <px4_platform_common/px4_config.h>
 #include <px4_platform_common/log.h>
 #include <uORB/Subscription.hpp>
-#include <uORB/topics/actuator_controls.h>
 #include <uORB/topics/battery_status.h>
+#include <uORB/topics/sensor_correction.h>
 
 namespace calibration
 {
@@ -65,7 +65,20 @@ public:
 	bool set_offset(const matrix::Vector3f &offset);
 	bool set_scale(const matrix::Vector3f &scale);
 	bool set_offdiagonal(const matrix::Vector3f &offdiagonal);
+
+	/**
+	 * @brief Set the rotation enum & corresponding rotation matrix for Magnetometer
+	 *
+	 * @param rotation Rotation enum
+	 */
 	void set_rotation(Rotation rotation);
+
+	/**
+	 * @brief Set the custom rotation & rotation enum to ROTATION_CUSTOM for Magnetometer
+	 *
+	 * @param rotation Rotation euler angles
+	 */
+	void set_custom_rotation(const matrix::Eulerf &rotation);
 
 	bool calibrated() const { return (_device_id != 0) && (_calibration_index >= 0); }
 	uint8_t calibration_count() const { return _calibration_count; }
@@ -89,7 +102,8 @@ public:
 	// Compute sensor offset from bias (board frame)
 	matrix::Vector3f BiasCorrectedSensorOffset(const matrix::Vector3f &bias) const
 	{
-		return _scale.I() * _rotation.I() * bias + _offset;
+		// updated calibration offset = existing offset + bias rotated to sensor frame and unscaled
+		return _offset + (_scale.I() * _rotation.I() * bias);
 	}
 
 	bool ParametersLoad();
@@ -98,15 +112,27 @@ public:
 
 	void Reset();
 
+	void SensorCorrectionsUpdate(bool force = false);
+
 	void UpdatePower(float power) { _power = power; }
 
 private:
+	uORB::Subscription _sensor_correction_sub{ORB_ID(sensor_correction)};
+
 	Rotation _rotation_enum{ROTATION_NONE};
 
+	/**
+	 * @brief 3 x 3 Rotation matrix that translates from sensor frame (XYZ) to vehicle body frame (FRD)
+	 */
 	matrix::Dcmf _rotation;
+
+	matrix::Eulerf _rotation_custom_euler{0.f, 0.f, 0.f}; // custom rotation euler angles (optional)
+
 	matrix::Vector3f _offset;
 	matrix::Matrix3f _scale;
+	matrix::Vector3f _thermal_offset;
 	matrix::Vector3f _power_compensation;
+
 	float _power{0.f};
 
 	int8_t _calibration_index{-1};

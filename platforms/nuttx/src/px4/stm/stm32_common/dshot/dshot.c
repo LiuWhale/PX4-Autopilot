@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- * Copyright (C) 2019, 2021 PX4 Development Team. All rights reserved.
+ * Copyright (C) 2019-2021 PX4 Development Team. All rights reserved.
  * Author: Igor Misic <igy1000mb@gmail.com>
  *
  * Redistribution and use in source and binary forms, with or without
@@ -43,7 +43,7 @@
 #include <stm32_tim.h>
 #include <px4_arch/dshot.h>
 #include <px4_arch/io_timer.h>
-#include <drivers/drv_pwm_output.h>
+#include <drivers/drv_dshot.h>
 
 
 #define MOTOR_PWM_BIT_1				14u

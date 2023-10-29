@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (C) 2015-2018 PX4 Development Team. All rights reserved.
+ *   Copyright (C) 2015-2022 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -105,7 +105,8 @@ static int create_dirs();
 static int run_startup_script(const std::string &commands_file, const std::string &absolute_binary_path, int instance);
 static std::string get_absolute_binary_path(const std::string &argv0);
 static void wait_to_exit();
-static bool is_server_running(int instance, bool server);
+static int get_server_running(int instance, bool *is_running);
+static int set_server_running(int instance);
 static void print_usage();
 static bool dir_exists(const std::string &path);
 static bool file_exists(const std::string &name);
@@ -124,12 +125,16 @@ int main(int argc, char **argv)
 {
 	bool is_client = false;
 	bool pxh_off = false;
+	bool server_is_running = false;
 
 	/* Symlinks point to all commands that can be used as a client with a prefix. */
 	const char prefix[] = PX4_SHELL_COMMAND_PREFIX;
 	int path_length = 0;
 
 	std::string absolute_binary_path; // full path to the px4 binary being executed
+
+	int ret = PX4_OK;
+	int instance = 0;
 
 	if (argc > 0) {
 		/* The executed binary name could start with a path, so strip it away */
@@ -146,8 +151,6 @@ int main(int argc, char **argv)
 	}
 
 	if (is_client) {
-		int instance = 0;
-
 		if (argc >= 3 && strcmp(argv[1], "--instance") == 0) {
 			instance = strtoul(argv[2], nullptr, 10);
 			/* update argv so that "--instance <instance>" is not visible anymore */
@@ -160,15 +163,16 @@ int main(int argc, char **argv)
 
 		PX4_DEBUG("instance: %i", instance);
 
-		if (!is_server_running(instance, false)) {
-			if (errno) {
-				PX4_ERR("Failed to communicate with daemon: %s", strerror(errno));
+		ret = get_server_running(instance, &server_is_running);
 
-			} else {
-				PX4_ERR("PX4 daemon not running yet");
-			}
+		if (ret != PX4_OK) {
+			PX4_ERR("PX4 client failed to get server status");
+			return ret;
+		}
 
-			return -1;
+		if (!server_is_running) {
+			PX4_ERR("PX4 server not running");
+			return PX4_ERROR;
 		}
 
 		/* Remove the path and prefix. */
@@ -195,12 +199,14 @@ int main(int argc, char **argv)
 #endif // (_POSIX_MEMLOCK > 0) && !ENABLE_LOCKSTEP_SCHEDULER
 
 		/* Server/daemon apps need to parse the command line arguments. */
-
 		std::string data_path{};
-		std::string commands_file = "etc/init.d/rcS";
-		std::string test_data_path{};
 		std::string working_directory{};
-		int instance = 0;
+		std::string test_data_path{};
+		std::string commands_file{};
+
+		bool working_directory_default = false;
+
+		bool instance_provided = false;
 
 		int myoptind = 1;
 		int ch;
@@ -226,6 +232,7 @@ int main(int argc, char **argv)
 
 			case 'i':
 				instance = strtoul(myoptarg, nullptr, 10);
+				instance_provided = true;
 				break;
 
 			case 'w':
@@ -239,17 +246,6 @@ int main(int argc, char **argv)
 			}
 		}
 
-		PX4_DEBUG("instance: %i", instance);
-
-		// change the CWD befre setting up links and other directories
-		if (!working_directory.empty()) {
-			int ret = change_directory(working_directory);
-
-			if (ret != PX4_OK) {
-				return ret;
-			}
-		}
-
 		if (myoptind < argc) {
 			std::string optional_arg = argv[myoptind];
 
@@ -258,13 +254,68 @@ int main(int argc, char **argv)
 			} // else: ROS argument (in the form __<name>:=<value>)
 		}
 
-		if (is_server_running(instance, true)) {
-			// allow running multiple instances, but the server is only started for the first
-			PX4_INFO("PX4 daemon already running for instance %i (%s)", instance, strerror(errno));
-			return -1;
+		if (instance_provided) {
+			PX4_INFO("instance: %i", instance);
 		}
 
-		int ret = create_symlinks_if_needed(data_path);
+#if defined(PX4_BINARY_DIR)
+
+		// data_path & working_directory: if no commands specified or in current working directory),
+		//  rootfs, or working directory specified then default to build directory (if it still exists)
+		if (commands_file.empty() && data_path.empty() && working_directory.empty()
+		    && dir_exists(PX4_BINARY_DIR"/etc")
+		   ) {
+			data_path = PX4_BINARY_DIR"/etc";
+			working_directory = PX4_BINARY_DIR"/rootfs";
+
+			working_directory_default = true;
+		}
+
+#endif // PX4_BINARY_DIR
+
+#if defined(PX4_SOURCE_DIR)
+
+		// test_data_path: default to build source test_data directory (if it exists)
+		if (test_data_path.empty() && dir_exists(PX4_SOURCE_DIR"/test_data")) {
+			test_data_path = PX4_SOURCE_DIR"/test_data";
+		}
+
+#endif // PX4_SOURCE_DIR
+
+		if (commands_file.empty()) {
+			commands_file = "etc/init.d-posix/rcS";
+		}
+
+		// change the CWD befre setting up links and other directories
+		if (!working_directory.empty()) {
+
+			// if instance specified, but
+			if (instance_provided && working_directory_default) {
+				working_directory += "/" + std::to_string(instance);
+				PX4_INFO("working directory %s", working_directory.c_str());
+			}
+
+			ret = change_directory(working_directory);
+
+			if (ret != PX4_OK) {
+				return ret;
+			}
+		}
+
+		ret = get_server_running(instance, &server_is_running);
+
+		if (ret != PX4_OK) {
+			PX4_ERR("Failed to get server status");
+			return ret;
+		}
+
+		if (server_is_running) {
+			// allow running multiple instances, but the server is only started for the first
+			PX4_INFO("PX4 server already running for instance %i", instance);
+			return PX4_ERROR;
+		}
+
+		ret = create_symlinks_if_needed(data_path);
 
 		if (ret != PX4_OK) {
 			return ret;
@@ -302,24 +353,42 @@ int main(int argc, char **argv)
 		px4::init_once();
 		px4::init(argc, argv, "px4");
 
+		// Don't set this up until PX4 is up and running
+		ret = set_server_running(instance);
+
+		if (ret != PX4_OK) {
+			return ret;
+		}
+
 		ret = run_startup_script(commands_file, absolute_binary_path, instance);
+
+		if (ret == 0) {
+			// We now block here until we need to exit.
+			if (pxh_off) {
+				wait_to_exit();
+
+			} else {
+				px4_daemon::Pxh pxh;
+				pxh.run_pxh();
+			}
+		}
+
+		// delete lock
+		const std::string file_lock_path = std::string(LOCK_FILE_PATH) + '-' + std::to_string(instance);
+		int fd_flock = open(file_lock_path.c_str(), O_RDWR, 0666);
+
+		if (fd_flock >= 0) {
+			unlink(file_lock_path.c_str());
+			flock(fd_flock, LOCK_UN);
+			close(fd_flock);
+		}
 
 		if (ret != 0) {
 			return PX4_ERROR;
 		}
 
-		// We now block here until we need to exit.
-		if (pxh_off) {
-			wait_to_exit();
-
-		} else {
-			px4_daemon::Pxh pxh;
-			pxh.run_pxh();
-		}
-
 		std::string cmd("shutdown");
 		px4_daemon::Pxh::process_line(cmd, true);
-
 	}
 
 	return PX4_OK;
@@ -362,7 +431,7 @@ int create_symlinks_if_needed(std::string &data_path)
 
 	}
 
-	PX4_INFO_RAW("Creating symlink %s -> %s\n", src_path.c_str(), dest_path.c_str());
+	PX4_DEBUG("Creating symlink %s -> %s\n", src_path.c_str(), dest_path.c_str());
 
 	// create sym-link
 	int ret = symlink(src_path.c_str(), dest_path.c_str());
@@ -412,7 +481,7 @@ void register_sig_handler()
 	// SIGINT
 	struct sigaction sig_int {};
 	sig_int.sa_handler = sig_int_handler;
-	sig_int.sa_flags = 0;// not SA_RESTART!
+	sig_int.sa_flags = 0; // not SA_RESTART!
 
 	// SIGPIPE
 	// We want to ignore if a PIPE has been closed.
@@ -517,7 +586,7 @@ int run_startup_script(const std::string &commands_file, const std::string &abso
 	}
 
 
-	PX4_INFO("Calling startup script: %s", shell_command.c_str());
+	PX4_INFO("startup script: %s", shell_command.c_str());
 
 	int ret = 0;
 
@@ -541,7 +610,7 @@ int run_startup_script(const std::string &commands_file, const std::string &abso
 void wait_to_exit()
 {
 	while (!_exit_requested) {
-		// needs to be a regular sleep not dependant on lockstep (not px4_usleep)
+		// needs to be a regular sleep not dependent on lockstep (not px4_usleep)
 		usleep(100000);
 	}
 }
@@ -552,7 +621,7 @@ void print_usage()
 	printf("\n");
 	printf("    px4 [-h|-d] [-s <startup_file>] [-t <test_data_directory>] [<rootfs_directory>] [-i <instance>] [-w <working_directory>]\n");
 	printf("\n");
-	printf("    -s <startup_file>      shell script to be used as startup (default=etc/init.d/rcS)\n");
+	printf("    -s <startup_file>      shell script to be used as startup (default=etc/init.d-posix/rcS)\n");
 	printf("    <rootfs_directory>     directory where startup files and mixers are located,\n");
 	printf("                           (if not given, CWD is used)\n");
 	printf("    -i <instance>          px4 instance id to run multiple instances [0...N], default=0\n");
@@ -566,39 +635,73 @@ void print_usage()
 	printf("        e.g.: px4-commander status\n");
 }
 
-bool is_server_running(int instance, bool server)
+int get_server_running(int instance, bool *is_server_running)
 {
 	const std::string file_lock_path = std::string(LOCK_FILE_PATH) + '-' + std::to_string(instance);
 	int fd = open(file_lock_path.c_str(), O_RDWR | O_CREAT, 0666);
 
 	if (fd < 0) {
-		PX4_ERR("is_server_running: failed to create lock file: %s, reason=%s", file_lock_path.c_str(), strerror(errno));
-		return false;
+		PX4_ERR("%s: failed to create lock file: %s, reason=%s", __func__, file_lock_path.c_str(), strerror(errno));
+		return PX4_ERROR;
 	}
 
-	bool result = false;
+	int status = PX4_OK;
+	struct flock lock;
+	memset(&lock, 0, sizeof(struct flock));
 
-	// Server is running if the file is already locked.
-	if (flock(fd, LOCK_EX | LOCK_NB) < 0) {
-		if (errno == EWOULDBLOCK) {
-			// a server is running!
-			result = true;
+	// Exclusive write lock, cover the entire file (regardless of size)
+	lock.l_type = F_WRLCK;
+	lock.l_whence = SEEK_SET;
+
+	if (fcntl(fd, F_GETLK, &lock) < 0) {
+		PX4_ERR("%s: failed to get check for lock on file: %s, reason=%s", __func__, file_lock_path.c_str(), strerror(errno));
+		status = PX4_ERROR;
+
+	} else {
+		// F_GETLK will set l_type to F_UNLCK if no one had a lock on the file. Otherwise,
+		// it means that the server is running and has a lock on the file
+		if (lock.l_type != F_UNLCK) {
+			*is_server_running = true;
 
 		} else {
-			PX4_ERR("is_server_running: failed to get lock on file: %s, reason=%s", file_lock_path.c_str(), strerror(errno));
-			result = false;
+			*is_server_running = false;
 		}
 	}
 
-	if (result || !server) {
+	close(fd);
+
+	return status;
+}
+
+int set_server_running(int instance)
+{
+	const std::string file_lock_path = std::string(LOCK_FILE_PATH) + '-' + std::to_string(instance);
+	int fd = open(file_lock_path.c_str(), O_RDWR | O_CREAT, 0666);
+
+	if (fd < 0) {
+		PX4_ERR("%s: failed to create lock file: %s, reason=%s", __func__, file_lock_path.c_str(), strerror(errno));
+		return PX4_ERROR;
+	}
+
+	int status = PX4_OK;
+
+	struct flock lock;
+	memset(&lock, 0, sizeof(struct flock));
+
+	// Exclusive lock, cover the entire file (regardless of size).
+	lock.l_type = F_WRLCK;
+	lock.l_whence = SEEK_SET;
+
+	if (fcntl(fd, F_SETLK, &lock) < 0) {
+		PX4_ERR("%s: failed to set lock on file: %s, reason=%s", __func__, file_lock_path.c_str(), strerror(errno));
+		status = PX4_ERROR;
 		close(fd);
 	}
 
-	// note: server leaks the file handle once, on purpose, in order to keep the lock on the file until the process terminates.
+	// note: server leaks the file handle, on purpose, in order to keep the lock on the file until the process terminates.
 	// In this case we return false so the server code path continues now that we have the lock.
 
-	errno = 0;
-	return result;
+	return status;
 }
 
 bool file_exists(const std::string &name)

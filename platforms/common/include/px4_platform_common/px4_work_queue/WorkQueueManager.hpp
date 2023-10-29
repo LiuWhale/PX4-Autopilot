@@ -50,13 +50,13 @@ namespace wq_configurations
 {
 static constexpr wq_config_t rate_ctrl{"wq:rate_ctrl", 3150, 0}; // PX4 inner loop highest priority
 
-static constexpr wq_config_t SPI0{"wq:SPI0", 2336, -1};
-static constexpr wq_config_t SPI1{"wq:SPI1", 2336, -2};
-static constexpr wq_config_t SPI2{"wq:SPI2", 2336, -3};
-static constexpr wq_config_t SPI3{"wq:SPI3", 2336, -4};
-static constexpr wq_config_t SPI4{"wq:SPI4", 2336, -5};
-static constexpr wq_config_t SPI5{"wq:SPI5", 2336, -6};
-static constexpr wq_config_t SPI6{"wq:SPI6", 2336, -7};
+static constexpr wq_config_t SPI0{"wq:SPI0", 2392, -1};
+static constexpr wq_config_t SPI1{"wq:SPI1", 2392, -2};
+static constexpr wq_config_t SPI2{"wq:SPI2", 2392, -3};
+static constexpr wq_config_t SPI3{"wq:SPI3", 2392, -4};
+static constexpr wq_config_t SPI4{"wq:SPI4", 2392, -5};
+static constexpr wq_config_t SPI5{"wq:SPI5", 2392, -6};
+static constexpr wq_config_t SPI6{"wq:SPI6", 2392, -7};
 
 static constexpr wq_config_t I2C0{"wq:I2C0", 2336, -8};
 static constexpr wq_config_t I2C1{"wq:I2C1", 2336, -9};
@@ -72,22 +72,22 @@ static constexpr wq_config_t INS1{"wq:INS1", 6000, -15};
 static constexpr wq_config_t INS2{"wq:INS2", 6000, -16};
 static constexpr wq_config_t INS3{"wq:INS3", 6000, -17};
 
-static constexpr wq_config_t hp_default{"wq:hp_default", 1900, -18};
+static constexpr wq_config_t hp_default{"wq:hp_default", 2392, -18};
 
 static constexpr wq_config_t uavcan{"wq:uavcan", 3624, -19};
 
-static constexpr wq_config_t ttyS0{"wq:ttyS0", 1632, -21};
-static constexpr wq_config_t ttyS1{"wq:ttyS1", 1632, -22};
-static constexpr wq_config_t ttyS2{"wq:ttyS2", 1632, -23};
-static constexpr wq_config_t ttyS3{"wq:ttyS3", 1632, -24};
-static constexpr wq_config_t ttyS4{"wq:ttyS4", 1632, -25};
-static constexpr wq_config_t ttyS5{"wq:ttyS5", 1632, -26};
-static constexpr wq_config_t ttyS6{"wq:ttyS6", 1632, -27};
-static constexpr wq_config_t ttyS7{"wq:ttyS7", 1632, -28};
-static constexpr wq_config_t ttyS8{"wq:ttyS8", 1632, -29};
-static constexpr wq_config_t ttyS9{"wq:ttyS9", 1632, -30};
-static constexpr wq_config_t ttyACM0{"wq:ttyACM0", 1632, -31};
-static constexpr wq_config_t ttyUnknown{"wq:ttyUnknown", 1632, -32};
+static constexpr wq_config_t ttyS0{"wq:ttyS0", 1728, -21};
+static constexpr wq_config_t ttyS1{"wq:ttyS1", 1728, -22};
+static constexpr wq_config_t ttyS2{"wq:ttyS2", 1728, -23};
+static constexpr wq_config_t ttyS3{"wq:ttyS3", 1728, -24};
+static constexpr wq_config_t ttyS4{"wq:ttyS4", 1728, -25};
+static constexpr wq_config_t ttyS5{"wq:ttyS5", 1728, -26};
+static constexpr wq_config_t ttyS6{"wq:ttyS6", 1728, -27};
+static constexpr wq_config_t ttyS7{"wq:ttyS7", 1728, -28};
+static constexpr wq_config_t ttyS8{"wq:ttyS8", 1728, -29};
+static constexpr wq_config_t ttyS9{"wq:ttyS9", 1728, -30};
+static constexpr wq_config_t ttyACM0{"wq:ttyACM0", 1728, -31};
+static constexpr wq_config_t ttyUnknown{"wq:ttyUnknown", 1728, -32};
 
 static constexpr wq_config_t lp_default{"wq:lp_default", 1920, -50};
 

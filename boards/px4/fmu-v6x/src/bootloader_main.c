@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2019, 2021 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2019-2021 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -49,19 +49,6 @@
 #include <px4_platform_common/init.h>
 
 extern int sercon_main(int c, char **argv);
-
-__EXPORT void board_on_reset(int status) {}
-
-__EXPORT void stm32_boardinitialize(void)
-{
-	/* configure USB interfaces */
-	stm32_usbinitialize();
-}
-
-__EXPORT int board_app_initialize(uintptr_t arg)
-{
-	return 0;
-}
 
 void board_late_initialize(void)
 {
