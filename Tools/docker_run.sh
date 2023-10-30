@@ -27,7 +27,7 @@ fi
 
 # otherwise default to nuttx
 if [ -z ${PX4_DOCKER_REPO+x} ]; then
-	PX4_DOCKER_REPO="liuwhale/px4-dev-ros2-humble:cuda12.2.2-cudnn8"
+	PX4_DOCKER_REPO="liuwhale/px4-dev-ros2-humble:cuda12.2.2-cudnn8-test"
 fi
 
 # docker hygiene
@@ -45,8 +45,47 @@ SRC_DIR=$PWD/../../
 
 CCACHE_DIR=${HOME}/.ccache
 mkdir -p "${CCACHE_DIR}"
+## common use
+# docker run -it --rm -w "${SRC_DIR}" \
+# 	--env=AWS_ACCESS_KEY_ID \
+# 	--env=AWS_SECRET_ACCESS_KEY \
+# 	--env=BRANCH_NAME \
+# 	--env=CCACHE_DIR="${CCACHE_DIR}" \
+# 	--env=CI \
+# 	--env=CODECOV_TOKEN \
+# 	--env=COVERALLS_REPO_TOKEN \
+# 	--env=LOCAL_USER_ID="$(id -u)" \
+# 	--env=PX4_ASAN \
+# 	--env=PX4_MSAN \
+# 	--env=PX4_TSAN \
+# 	--gpus all \
+# 	-v /tmp/.x11-unix:/tmp/.x11-unix \
+# 	-e DISPLAY=10.147.18.222:0.0 \
+# 	-e QT_DEBUG_PLUGINS=1 \
+# 	--shm-size=1g \
+# 	--ulimit memlock=-1 \
+# 	--ulimit stack=67108864 \
+# 	--env=PX4_UBSAN \
+# 	--env=TRAVIS_BRANCH \
+# 	--env=TRAVIS_BUILD_ID \
+# 	--publish 14556:14556/udp \
+# 	--volume=${CCACHE_DIR}:${CCACHE_DIR}:rw \
+# 	--volume=${SRC_DIR}:${SRC_DIR}:rw \
+# 	${PX4_DOCKER_REPO} /bin/bash -c "$1 $2 $3"
 
-docker run -it --rm -w "${SRC_DIR}" \
+## proxy commands
+# -e http_proxy=http://10.147.18.222:7890 \
+# -e https_proxy=http://10.147.18.222:7890 \
+# --publish 7890:7890 \
+
+## install nvidia driver in container
+# apt install kmod -y
+# ./NVIDIA-DRIVER.run -a -N --ui=none --no-kernel-module
+# __GL_SYNC_TO_VBLANK=0 glxgears
+
+## mostly for wsl
+sudo rocker --nvidia --x11 \
+	--user --home \
 	--env=AWS_ACCESS_KEY_ID \
 	--env=AWS_SECRET_ACCESS_KEY \
 	--env=BRANCH_NAME \
@@ -58,14 +97,9 @@ docker run -it --rm -w "${SRC_DIR}" \
 	--env=PX4_ASAN \
 	--env=PX4_MSAN \
 	--env=PX4_TSAN \
-	--gpus all \
-	--shm-size=1g \
-	--ulimit memlock=-1 \
-	--ulimit stack=67108864 \
 	--env=PX4_UBSAN \
 	--env=TRAVIS_BRANCH \
 	--env=TRAVIS_BUILD_ID \
-	--publish 14556:14556/udp \
 	--volume=${CCACHE_DIR}:${CCACHE_DIR}:rw \
 	--volume=${SRC_DIR}:${SRC_DIR}:rw \
-	${PX4_DOCKER_REPO} /bin/bash -c "$1 $2 $3"
+	${PX4_DOCKER_REPO}
