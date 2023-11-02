@@ -87,7 +87,9 @@ mkdir -p "${CCACHE_DIR}"
 ## if you wanna use rootless mode, you need to edit /etc/nvidia-container-runtime/config.toml
 ## [nvidia-container-cli]
 ## no-cgroups = true
-rocker --nvidia --x11 \
+## but it'll lead to an issue: Failed to initialize NVML: Unknown Error with nvidia-smi
+
+sudo rocker --nvidia --x11 \
 	--home \
 	--env=AWS_ACCESS_KEY_ID \
 	--env=AWS_SECRET_ACCESS_KEY \
