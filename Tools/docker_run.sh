@@ -27,7 +27,7 @@ fi
 
 # otherwise default to nuttx
 if [ -z ${PX4_DOCKER_REPO+x} ]; then
-	PX4_DOCKER_REPO="liuwhale/px4-dev-ros2-humble:cuda12.2.2-cudnn8-test"
+	PX4_DOCKER_REPO="liuwhale/px4-dev-ros2-humble:cuda12.2.2-cudnn8"
 fi
 
 # docker hygiene
@@ -84,8 +84,11 @@ mkdir -p "${CCACHE_DIR}"
 # __GL_SYNC_TO_VBLANK=0 glxgears
 
 ## mostly for wsl
-sudo rocker --nvidia --x11 \
-	--user --home \
+## if you wanna use rootless mode, you need to edit /etc/nvidia-container-runtime/config.toml
+## [nvidia-container-cli]
+## no-cgroups = true
+rocker --nvidia --x11 \
+	--home \
 	--env=AWS_ACCESS_KEY_ID \
 	--env=AWS_SECRET_ACCESS_KEY \
 	--env=BRANCH_NAME \
@@ -93,7 +96,6 @@ sudo rocker --nvidia --x11 \
 	--env=CI \
 	--env=CODECOV_TOKEN \
 	--env=COVERALLS_REPO_TOKEN \
-	--env=LOCAL_USER_ID="$(id -u)" \
 	--env=PX4_ASAN \
 	--env=PX4_MSAN \
 	--env=PX4_TSAN \
