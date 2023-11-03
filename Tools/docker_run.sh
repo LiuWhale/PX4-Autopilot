@@ -107,3 +107,9 @@ sudo rocker --nvidia --x11 \
 	--volume=${CCACHE_DIR}:${CCACHE_DIR}:rw \
 	--volume=${SRC_DIR}:${SRC_DIR}:rw \
 	${PX4_DOCKER_REPO}
+
+## gazebo client run on host, not on docker(make sure container can ping host ip)
+## on host execute commands below
+#  export GZ_PARTITION=Cetacea:user  
+## Cetacea is hostname, user is username in container
+#  gz sim -v 1 -g
