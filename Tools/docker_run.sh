@@ -104,12 +104,43 @@ sudo rocker --nvidia --x11 \
 	--env=PX4_UBSAN \
 	--env=TRAVIS_BRANCH \
 	--env=TRAVIS_BUILD_ID \
+	--env=GZ_IP=10.147.18.157 \
+	--env=GZ_VERBOSE=0 \
+	--net=host \
 	--volume=${CCACHE_DIR}:${CCACHE_DIR}:rw \
 	--volume=${SRC_DIR}:${SRC_DIR}:rw \
 	${PX4_DOCKER_REPO}
 
-## gazebo client run on host, not on docker(make sure container can ping host ip)
-## on host execute commands below
+#########################################
+##									   ##
+##    If gz's client and server are    ##
+##	  naturally in same pc or wlan,    ##
+##    dont need to set env like,       ##
+##    GZ_IP, --net=host or             ##
+##    GZ_SIM_RESOURCE_PATH. 		   ##
+##	  Recommend zerotier.		       ##
+##									   ##
+#########################################
+
+## It can make container use host IPs and ports
+#  --net=host
+
+## gazebo client run on host, not on docker
+## (make sure container can ping host ip)
+## execute commands below on host
 #  export GZ_PARTITION=Cetacea:user  
+
 ## Cetacea is hostname, user is username in container
-#  gz sim -v 1 -g
+## this env variable is for resource path
+#  export GZ_SIM_RESOURCE_PATH=$GZ_SIM_RESOURCE_PATH:\
+#  $HOME/humble_src/PX4-Autopilot/Tools/simulation/gz/models 
+
+## this env vari make sure client and server in same route
+#  export GZ_IP=10.147.18.221\157
+
+## this env is for debug switch
+#  export  GZ_VERBOSE=1
+
+## Other commands
+#  gz sim -v 4 -g
+#  HEADLESS=1 make px4_sitl gz_x500
