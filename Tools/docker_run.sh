@@ -144,3 +144,9 @@ sudo rocker --nvidia --x11 \
 ## Other commands
 #  gz sim -v 4 -g
 #  HEADLESS=1 make px4_sitl gz_x500
+
+##Troubleshooting
+## If gz shows the color in white or glxgears in black
+##work-around Methods
+# 1. GALLIUM_DRIVER=llvmpipe glxgears 
+# 2. LIBGL_ALWAYS_SOFTWARE=1 glxgears
