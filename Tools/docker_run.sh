@@ -112,14 +112,16 @@ sudo rocker --nvidia --x11 \
 	${PX4_DOCKER_REPO}
 
 #########################################
-##									   ##
+##			               ##
 ##    If gz's client and server are    ##
-##	  naturally in same pc or wlan,    ##
-##    dont need to set env like,       ##
+##    naturally in same pc or wlan,    ##
+##    dont need to set env like        ##
 ##    GZ_IP, --net=host or             ##
-##    GZ_SIM_RESOURCE_PATH. 		   ##
-##	  Recommend zerotier.		       ##
-##									   ##
+##    GZ_SIM_RESOURCE_PATH. 	       ##
+#########################################
+##				       ##
+##	   Recommend zerotier.	       ##
+##				       ##
 #########################################
 
 ## It can make container use host IPs and ports
