@@ -128,12 +128,12 @@ sudo rocker --nvidia --x11 \
 ## gazebo client run on host, not on docker
 ## (make sure container can ping host ip)
 ## execute commands below on host
-#  export GZ_PARTITION=Cetacea:user  
+#  export GZ_PARTITION=Cetacea:user
 
 ## Cetacea is hostname, user is username in container
 ## this env variable is for resource path
 #  export GZ_SIM_RESOURCE_PATH=$GZ_SIM_RESOURCE_PATH:\
-#  $HOME/humble_src/PX4-Autopilot/Tools/simulation/gz/models 
+#  $HOME/humble_src/PX4-Autopilot/Tools/simulation/gz/models
 
 ## this env vari make sure client and server in same route
 #  export GZ_IP=10.147.18.221\157
@@ -148,5 +148,5 @@ sudo rocker --nvidia --x11 \
 ##Troubleshooting
 ## If gz shows the color in white or glxgears in black
 ##work-around Methods
-# 1. GALLIUM_DRIVER=llvmpipe glxgears 
+# 1. GALLIUM_DRIVER=llvmpipe glxgears
 # 2. LIBGL_ALWAYS_SOFTWARE=1 glxgears
