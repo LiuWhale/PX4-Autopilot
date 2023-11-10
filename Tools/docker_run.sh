@@ -118,6 +118,7 @@ sudo rocker --nvidia --x11 \
 ##    dont need to set env like        ##
 ##    GZ_IP, --net=host or             ##
 ##    GZ_SIM_RESOURCE_PATH. 	       ##
+##				       ##
 #########################################
 ##				       ##
 ##	   Recommend zerotier.	       ##
